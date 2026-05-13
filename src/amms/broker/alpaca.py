@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 import httpx
 
+from amms.clock import ClockStatus, parse_alpaca_dt
 from amms.config import PAPER_HOST_MARKER
 
 Side = Literal["buy", "sell"]
@@ -103,9 +104,10 @@ class AlpacaClient:
         path: str,
         *,
         json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> Any:
         url = f"{self._base_url}{path}"
-        resp = self._client.request(method, url, json=json_body)
+        resp = self._client.request(method, url, json=json_body, params=params)
         if resp.status_code >= 400:
             raise AlpacaError(
                 f"Alpaca {method} {path} -> {resp.status_code}: {resp.text}"
@@ -169,6 +171,28 @@ class AlpacaClient:
 
     def cancel_order(self, order_id: str) -> None:
         self._request("DELETE", f"/v2/orders/{order_id}")
+
+    def list_orders(
+        self,
+        *,
+        status: str = "open",
+        symbols: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[Order]:
+        params: dict[str, Any] = {"status": status, "limit": limit}
+        if symbols:
+            params["symbols"] = ",".join(s.upper() for s in symbols)
+        data = self._request("GET", "/v2/orders", params=params) or []
+        return [self._order_from_payload(d) for d in data]
+
+    def get_clock(self) -> ClockStatus:
+        data = self._request("GET", "/v2/clock")
+        return ClockStatus(
+            timestamp=parse_alpaca_dt(data["timestamp"]),
+            is_open=bool(data["is_open"]),
+            next_open=parse_alpaca_dt(data["next_open"]),
+            next_close=parse_alpaca_dt(data["next_close"]),
+        )
 
     @staticmethod
     def _order_from_payload(data: dict[str, Any]) -> Order:

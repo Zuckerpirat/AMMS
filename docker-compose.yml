@@ -10,7 +10,11 @@ services:
         required: false
     volumes:
       - amms-data:/data
-    restart: "no"
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      AMMS_CONFIG_PATH: /app/config.yaml
+    command: ["run"]
+    restart: unless-stopped
 
 volumes:
   amms-data:

@@ -6,7 +6,6 @@ import httpx
 import respx
 from typer.testing import CliRunner
 
-from amms import __version__
 from amms.cli import app
 
 runner = CliRunner()
@@ -19,10 +18,20 @@ def test_help_works() -> None:
     assert "paper trading" in result.stdout.lower()
 
 
-def test_run_prints_ready_banner() -> None:
-    result = runner.invoke(app, ["run"])
+def test_run_help_advertises_execute_flag() -> None:
+    result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert f"amms {__version__} ready" in result.stdout
+    assert "--execute" in result.stdout
+    assert "dry run" in result.stdout.lower()
+
+
+def test_run_refuses_without_paper_url(monkeypatch) -> None:
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_API_SECRET", "s")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://api.alpaca.markets")
+    result = runner.invoke(app, ["run"])
+    assert result.exit_code == 2
+    assert "paper" in result.stdout.lower()
 
 
 def test_status_refuses_without_paper_url(monkeypatch) -> None:
@@ -203,6 +212,7 @@ def test_tick_dry_run_prints_signals_without_orders(paper_env_with_config) -> No
         )
     )
     respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
     orders_route = respx.post(f"{PAPER_URL}/v2/orders")
 
     result = runner.invoke(app, ["tick"])
@@ -236,6 +246,7 @@ def test_tick_execute_places_order_when_allowed(paper_env_with_config) -> None:
         )
     )
     respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
     orders_route = respx.post(f"{PAPER_URL}/v2/orders").mock(
         return_value=httpx.Response(
             200,
@@ -294,6 +305,7 @@ def test_tick_does_not_buy_when_already_holding(paper_env_with_config) -> None:
             ],
         )
     )
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
     orders_route = respx.post(f"{PAPER_URL}/v2/orders")
 
     result = runner.invoke(app, ["tick", "--execute"])
