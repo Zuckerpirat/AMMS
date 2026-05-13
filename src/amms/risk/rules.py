@@ -10,6 +10,7 @@ class RiskConfig:
     daily_loss_pct: float = -0.03
     blackout_minutes_after_open: int = 5
     blackout_minutes_before_close: int = 5
+    max_buys_per_tick: int | None = None
 
     def __post_init__(self) -> None:
         if not 0 < self.max_position_pct <= 1:
@@ -18,6 +19,10 @@ class RiskConfig:
             raise ValueError(f"daily_loss_pct must be negative, got {self.daily_loss_pct}")
         if self.max_open_positions <= 0:
             raise ValueError(f"max_open_positions must be > 0, got {self.max_open_positions}")
+        if self.max_buys_per_tick is not None and self.max_buys_per_tick <= 0:
+            raise ValueError(
+                f"max_buys_per_tick must be > 0 or None, got {self.max_buys_per_tick}"
+            )
 
 
 @dataclass(frozen=True)

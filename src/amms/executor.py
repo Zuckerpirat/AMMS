@@ -8,7 +8,8 @@ from datetime import UTC, datetime, timedelta
 from amms.broker import AlpacaClient
 from amms.config import AppConfig
 from amms.data import MarketDataClient, upsert_bars
-from amms.db import insert_equity_snapshot, upsert_order
+from amms.db import insert_equity_snapshot, upsert_features, upsert_order
+from amms.features import standard_features
 from amms.risk import check_buy
 from amms.strategy import Signal, Strategy
 
@@ -30,13 +31,14 @@ def record_signal(conn: sqlite3.Connection, strategy_name: str, signal: Signal) 
     ts = datetime.now(UTC).isoformat()
     conn.execute(
         """
-        INSERT INTO signals(ts, symbol, strategy, signal, reason)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO signals(ts, symbol, strategy, signal, reason, score)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(ts, symbol, strategy) DO UPDATE SET
             signal = excluded.signal,
-            reason = excluded.reason
+            reason = excluded.reason,
+            score = excluded.score
         """,
-        (ts, signal.symbol, strategy_name, signal.kind, signal.reason),
+        (ts, signal.symbol, strategy_name, signal.kind, signal.reason, signal.score),
     )
 
 
@@ -65,6 +67,7 @@ def run_tick(
         o.symbol for o in broker.list_orders(status="open") if o.side == "buy"
     }
 
+    feature_ts = datetime.now(UTC).isoformat()
     result = TickResult()
     for symbol in config.watchlist:
         bars = data.get_bars(
@@ -75,12 +78,27 @@ def run_tick(
             limit=bars_back,
         )
         upsert_bars(conn, bars)
+        features = standard_features(bars)
+        upsert_features(conn, feature_ts, symbol, features)
         signal = strategy.evaluate(symbol, bars)
         result.signals.append(signal)
         record_signal(conn, strategy.name, signal)
 
-    open_positions_count = len(positions)
+    # Highest-scoring buys first so max_buys_per_tick keeps the best candidates.
+    ranked_buys = sorted(result.buy_signals, key=lambda s: s.score, reverse=True)
+    if config.risk.max_buys_per_tick is not None:
+        ranked_buys = ranked_buys[: config.risk.max_buys_per_tick]
+    eligible_buy_symbols = {s.symbol for s in ranked_buys}
+
+    top_n = config.risk.max_buys_per_tick
     for signal in result.buy_signals:
+        if signal.symbol not in eligible_buy_symbols:
+            result.blocked.append(
+                (signal.symbol, f"score {signal.score:.4f} not in top-{top_n}")
+            )
+
+    open_positions_count = len(positions)
+    for signal in ranked_buys:
         if signal.symbol in pending_buys:
             result.blocked.append((signal.symbol, "open buy order already pending"))
             continue

@@ -3,7 +3,14 @@ from __future__ import annotations
 import pytest
 
 from amms.data.bars import Bar
-from amms.features import atr, n_day_return, realized_vol, relative_volume, rsi
+from amms.features import (
+    atr,
+    n_day_return,
+    realized_vol,
+    relative_volume,
+    rsi,
+    standard_features,
+)
 
 
 def _bar(
@@ -136,3 +143,26 @@ def test_relative_volume_returns_none_when_short() -> None:
 def test_relative_volume_returns_none_when_prior_avg_zero() -> None:
     bars = [_bar(close=10, volume=v) for v in [0, 0, 0, 0, 100]]
     assert relative_volume(bars, n=4) is None
+
+
+# ---- standard_features ----------------------------------------------------
+
+
+def test_standard_features_returns_all_when_history_sufficient() -> None:
+    bars = _bars_from_closes([100.0 + i for i in range(25)])
+    out = standard_features(bars)
+    assert set(out) == {"momentum_20d", "rsi_14", "atr_14", "realized_vol_20d", "rvol_20"}
+    for value in out.values():
+        assert isinstance(value, float)
+
+
+def test_standard_features_returns_subset_when_history_short() -> None:
+    bars = _bars_from_closes([100.0 + i for i in range(15)])
+    out = standard_features(bars)
+    # 15 bars: enough for rsi_14 (needs 15) but not momentum_20d (needs 21).
+    assert "rsi_14" in out
+    assert "momentum_20d" not in out
+
+
+def test_standard_features_empty_for_no_history() -> None:
+    assert standard_features([]) == {}

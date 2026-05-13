@@ -22,6 +22,9 @@ risk:
   daily_loss_pct: -0.03
   blackout_minutes_after_open: 5
   blackout_minutes_before_close: 5
+  # Optional. Caps how many buys a single tick may submit. With the composite
+  # strategy, the highest-scoring signals win. Comment out to disable.
+  # max_buys_per_tick: 3
 
 scheduler:
   tick_seconds: 60

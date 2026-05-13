@@ -124,12 +124,15 @@ def load_app_config(path: Path | None = None) -> AppConfig:
     )
 
     risk_raw = raw.get("risk") or {}
+    max_buys_raw = risk_raw.get("max_buys_per_tick")
+    max_buys_per_tick = int(max_buys_raw) if max_buys_raw is not None else None
     risk = RiskConfig(
         max_open_positions=int(risk_raw.get("max_open_positions", 5)),
         max_position_pct=float(risk_raw.get("max_position_pct", 0.02)),
         daily_loss_pct=float(risk_raw.get("daily_loss_pct", -0.03)),
         blackout_minutes_after_open=int(risk_raw.get("blackout_minutes_after_open", 5)),
         blackout_minutes_before_close=int(risk_raw.get("blackout_minutes_before_close", 5)),
+        max_buys_per_tick=max_buys_per_tick,
     )
 
     sched_raw = raw.get("scheduler") or {}

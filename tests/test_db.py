@@ -25,7 +25,30 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     assert applied_second == 0
     rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     table_names = {r[0] for r in rows}
-    assert {"bars", "orders", "equity_snapshots", "signals"} <= table_names
+    assert {"bars", "orders", "equity_snapshots", "signals", "features"} <= table_names
+    signal_cols = {r[1] for r in conn.execute("PRAGMA table_info(signals)")}
+    assert "score" in signal_cols
+    conn.close()
+
+
+def test_upsert_features_inserts_and_updates(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    db.upsert_features(conn, "2026-05-13T14:00:00Z", "AAPL", {"momentum_20d": 0.05})
+    db.upsert_features(conn, "2026-05-13T14:00:00Z", "AAPL", {"momentum_20d": 0.07})
+    rows = conn.execute(
+        "SELECT name, value FROM features WHERE symbol=?", ("AAPL",)
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "momentum_20d"
+    assert rows[0]["value"] == pytest.approx(0.07)
+    conn.close()
+
+
+def test_upsert_features_handles_empty(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    assert db.upsert_features(conn, "ts", "AAPL", {}) == 0
     conn.close()
 
 

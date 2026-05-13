@@ -82,6 +82,27 @@ def upsert_order(conn: sqlite3.Connection, order: Order) -> None:
     )
 
 
+def upsert_features(
+    conn: sqlite3.Connection,
+    ts: str,
+    symbol: str,
+    features: dict[str, float],
+) -> int:
+    """Persist a per-symbol feature snapshot. Returns row count written."""
+    if not features:
+        return 0
+    rows = [(ts, symbol, name, float(value)) for name, value in features.items()]
+    conn.executemany(
+        """
+        INSERT INTO features(ts, symbol, name, value)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(ts, symbol, name) DO UPDATE SET value = excluded.value
+        """,
+        rows,
+    )
+    return len(rows)
+
+
 def insert_equity_snapshot(conn: sqlite3.Connection, account: Account) -> str:
     ts = datetime.now(UTC).isoformat()
     conn.execute(

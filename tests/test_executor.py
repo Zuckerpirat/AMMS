@@ -189,6 +189,132 @@ def test_run_tick_skips_when_pending_order_exists(tmp_path: Path) -> None:
 
 
 @respx.mock
+def test_run_tick_persists_features(tmp_path: Path) -> None:
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(200, json=_account_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
+    # 25 bars so all standard features can be computed.
+    closes = [100.0 + i for i in range(25)]
+    respx.get(f"{DATA_URL}/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_bars_payload("AAPL", closes))
+    )
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=_config(),
+            strategy=SmaCross(fast=3, slow=5),
+            execute=False,
+        )
+    rows = conn.execute(
+        "SELECT name FROM features WHERE symbol=?", ("AAPL",)
+    ).fetchall()
+    names = {r["name"] for r in rows}
+    assert {"momentum_20d", "rsi_14", "atr_14", "realized_vol_20d", "rvol_20"} <= names
+    conn.close()
+
+
+class _ScoredFakeStrategy:
+    """Inline strategy whose evaluate() returns a controlled per-symbol buy score."""
+
+    name = "fake_scored"
+
+    def __init__(self, scores: dict[str, float]) -> None:
+        self._scores = scores
+
+    @property
+    def lookback(self) -> int:
+        return 1
+
+    def evaluate(self, symbol, bars):
+        from amms.strategy.base import Signal
+
+        return Signal(
+            symbol=symbol,
+            kind="buy",
+            reason="fake",
+            price=bars[-1].close,
+            score=self._scores.get(symbol, 0.0),
+        )
+
+
+@respx.mock
+def test_run_tick_top_n_keeps_highest_scoring_buys(tmp_path: Path) -> None:
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(200, json=_account_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
+
+    def _bars_route(request):
+        symbol = request.url.params["symbols"]
+        payload = _bars_payload(symbol, [10.0])
+        return httpx.Response(200, json=payload)
+
+    respx.get(f"{DATA_URL}/v2/stocks/bars").mock(side_effect=_bars_route)
+    orders_post = respx.post(f"{PAPER_URL}/v2/orders")
+    orders_post.mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "ord-x",
+                "client_order_id": "cid-x",
+                "symbol": "MSFT",
+                "side": "buy",
+                "qty": "1",
+                "type": "market",
+                "status": "accepted",
+                "submitted_at": "2026-05-13T14:00:00Z",
+            },
+        )
+    )
+
+    cfg = AppConfig(
+        watchlist=("AAPL", "MSFT", "NVDA"),
+        strategy=StrategyConfig(name="sma_cross", params={"fast": 3, "slow": 5}),
+        risk=RiskConfig(
+            max_open_positions=5,
+            max_position_pct=0.5,  # generous so risk doesn't block sizing
+            daily_loss_pct=-0.99,
+            max_buys_per_tick=1,
+        ),
+        scheduler=SchedulerConfig(tick_seconds=60),
+    )
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    fake = _ScoredFakeStrategy({"AAPL": 1.0, "MSFT": 5.0, "NVDA": 3.0})
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        result = run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=cfg,
+            strategy=fake,
+            execute=True,
+        )
+    conn.close()
+
+    # Only the highest-scoring symbol (MSFT, score=5.0) was submitted.
+    assert orders_post.call_count == 1
+    assert result.placed_order_ids == ["ord-x"]
+    blocked_symbols = {s for s, _ in result.blocked}
+    assert blocked_symbols == {"AAPL", "NVDA"}
+
+
+@respx.mock
 def test_build_daily_summary_includes_equity_and_counts(tmp_path: Path) -> None:
     respx.get(f"{PAPER_URL}/v2/account").mock(
         return_value=httpx.Response(200, json=_account_payload(equity=123_456))
