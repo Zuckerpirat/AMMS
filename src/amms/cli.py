@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
+from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from amms import __version__, db
+from amms.backtest import (
+    BacktestConfig,
+    BacktestStats,
+    compute_stats,
+    run_backtest,
+    write_trades_csv,
+)
+from amms.backtest.stats import write_equity_curve_csv
 from amms.broker import AlpacaClient
 from amms.config import ConfigError, load_app_config, load_settings
 from amms.data import MarketDataClient, upsert_bars
@@ -320,9 +330,98 @@ def _render_signals(signals: list[Signal]) -> None:
 
 
 @app.command()
-def backtest() -> None:
-    """Run a historical backtest against the configured strategy."""
-    raise NotImplementedError("backtest is implemented in Phase 3.")
+def backtest(
+    start: str = typer.Option(..., "--from", help="Start date, ISO format, e.g. 2024-01-01"),
+    end: str = typer.Option(..., "--to", help="End date, ISO format, e.g. 2025-12-31"),
+    symbols: str | None = typer.Option(
+        None,
+        "--symbols",
+        help="Comma-separated tickers. Defaults to config.yaml watchlist.",
+    ),
+    initial_equity: float = typer.Option(
+        100_000.0, "--initial-equity", help="Starting cash for the backtest."
+    ),
+    output: Path | None = typer.Option(
+        None, "--output", help="Write the trade log to this CSV path."
+    ),
+    equity_output: Path | None = typer.Option(
+        None, "--equity-output", help="Write the equity curve to this CSV path."
+    ),
+    fetch: bool = typer.Option(
+        False,
+        "--fetch",
+        help="Fetch missing daily bars from Alpaca before running the backtest.",
+    ),
+) -> None:
+    """Backtest the configured strategy on historical bars stored in SQLite."""
+    config = _app_config_or_die()
+    symbols_tuple = (
+        tuple(s.strip().upper() for s in symbols.split(",") if s.strip())
+        if symbols
+        else config.watchlist
+    )
+
+    bt_config = BacktestConfig(
+        start=date.fromisoformat(start),
+        end=date.fromisoformat(end),
+        symbols=symbols_tuple,
+        initial_equity=initial_equity,
+        risk=config.risk,
+        strategy=build_strategy(config.strategy.name, config.strategy.params),
+    )
+
+    settings = _settings_or_die()
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    try:
+        if fetch:
+            with MarketDataClient(
+                settings.alpaca_api_key,
+                settings.alpaca_api_secret,
+                settings.alpaca_data_url,
+            ) as data_client:
+                for sym in symbols_tuple:
+                    bars = data_client.get_bars(sym, "1Day", start, end)
+                    upsert_bars(conn, bars)
+                    console.print(f"Fetched [bold]{len(bars)}[/bold] daily bars for {sym}")
+
+        try:
+            result = run_backtest(bt_config, conn)
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(code=1) from e
+    finally:
+        conn.close()
+
+    stats = compute_stats(result)
+    _render_backtest_stats(stats, symbols_tuple, start, end)
+
+    if output is not None:
+        n = write_trades_csv(result.trades, output)
+        console.print(f"Wrote {n} trades to {output}")
+    if equity_output is not None:
+        n = write_equity_curve_csv(result.equity_curve, equity_output)
+        console.print(f"Wrote {n} equity points to {equity_output}")
+
+
+def _render_backtest_stats(
+    stats: BacktestStats,
+    symbols: tuple[str, ...],
+    start: str,
+    end: str,
+) -> None:
+    table = Table(title=f"Backtest {start} → {end}  ({', '.join(symbols)})")
+    table.add_column("metric")
+    table.add_column("value", justify="right")
+    table.add_row("initial equity", f"${stats.initial_equity:,.2f}")
+    table.add_row("final equity", f"${stats.final_equity:,.2f}")
+    table.add_row("total return", f"{stats.total_return_pct:+.2f}%")
+    table.add_row("max drawdown", f"{stats.max_drawdown_pct:.2f}%")
+    table.add_row("trades", str(stats.num_trades))
+    table.add_row("buys / sells", f"{stats.num_buys} / {stats.num_sells}")
+    table.add_row("closed round-trips", str(stats.closed_round_trips))
+    table.add_row("win rate", f"{stats.win_rate:.2%}")
+    console.print(table)
 
 
 def main() -> None:
