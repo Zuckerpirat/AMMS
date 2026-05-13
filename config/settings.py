@@ -22,9 +22,22 @@ WATCHLIST: list[str] = [
     ).split(",") if t.strip()
 ]
 
-# Strategy
+# Strategy — Momentum
 MOMENTUM_LOOKBACK: int = int(os.getenv("MOMENTUM_LOOKBACK", "20"))
 VOLUME_MULTIPLIER: float = float(os.getenv("VOLUME_MULTIPLIER", "1.5"))
+
+# Strategy — RSI
+RSI_PERIOD: int = int(os.getenv("RSI_PERIOD", "14"))
+RSI_OVERSOLD: float = float(os.getenv("RSI_OVERSOLD", "30.0"))
+
+# Strategy — Combiner
+# How many strategies must agree before a BUY is placed (1 = any single strategy triggers)
+STRATEGY_MIN_AGREEMENT: int = int(os.getenv("STRATEGY_MIN_AGREEMENT", "1"))
+
+# Volatility filter — ATR as % of price; outside this band the symbol is skipped
+ATR_PERIOD: int = int(os.getenv("ATR_PERIOD", "14"))
+ATR_MIN_PCT: float = float(os.getenv("ATR_MIN_PCT", "0.005"))   # 0.5% min movement
+ATR_MAX_PCT: float = float(os.getenv("ATR_MAX_PCT", "0.08"))    # 8%  max movement
 
 # Risk
 MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "0.05"))

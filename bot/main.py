@@ -6,6 +6,9 @@ from bot.api.server import app, is_paused
 from bot.broker import alpaca as broker
 from bot.data import market
 from bot.strategy.momentum import MomentumStrategy
+from bot.strategy.rsi import RSIStrategy
+from bot.strategy.combiner import StrategySignalCombiner
+from bot.strategy.filters import atr_filter
 from bot.risk import manager as risk
 from bot.db import repository
 from bot.alerts import telegram
@@ -17,7 +20,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_strategy = MomentumStrategy()
+_strategy = StrategySignalCombiner(
+    strategies=[MomentumStrategy(), RSIStrategy()],
+    min_agreement=settings.STRATEGY_MIN_AGREEMENT,
+)
 
 
 def morning_scan() -> None:
@@ -31,6 +37,7 @@ def morning_scan() -> None:
     held = {p.symbol for p in open_positions}
 
     candidates = [s for s in settings.WATCHLIST if s not in held]
+    candidates = atr_filter(candidates)
     signals = _strategy.generate_signals(candidates)
 
     for signal in signals:
