@@ -368,6 +368,7 @@ def backtest(
         initial_equity=initial_equity,
         risk=config.risk,
         strategy=build_strategy(config.strategy.name, config.strategy.params),
+        timeframe=config.strategy.timeframe,
     )
 
     settings = _settings_or_die()
@@ -381,9 +382,12 @@ def backtest(
                 settings.alpaca_data_url,
             ) as data_client:
                 for sym in symbols_tuple:
-                    bars = data_client.get_bars(sym, "1Day", start, end)
+                    bars = data_client.get_bars(sym, config.strategy.timeframe, start, end)
                     upsert_bars(conn, bars)
-                    console.print(f"Fetched [bold]{len(bars)}[/bold] daily bars for {sym}")
+                    console.print(
+                        f"Fetched [bold]{len(bars)}[/bold] "
+                        f"{config.strategy.timeframe} bars for {sym}"
+                    )
 
         try:
             result = run_backtest(bt_config, conn)

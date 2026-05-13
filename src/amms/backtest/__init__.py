@@ -1,5 +1,6 @@
 from amms.backtest.engine import (
     BacktestConfig,
+    BacktestPosition,
     BacktestResult,
     Portfolio,
     Trade,
@@ -9,6 +10,7 @@ from amms.backtest.stats import BacktestStats, compute_stats, write_trades_csv
 
 __all__ = [
     "BacktestConfig",
+    "BacktestPosition",
     "BacktestResult",
     "BacktestStats",
     "Portfolio",

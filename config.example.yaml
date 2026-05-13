@@ -12,6 +12,10 @@ watchlist:
 
 strategy:
   name: sma_cross
+  # 1Day for swing/positions, 5Min or 15Min for day trading. Whatever you
+  # pick here is fetched live and used in the backtest, so the two stay
+  # in lockstep.
+  timeframe: 1Day
   params:
     fast: 10
     slow: 30

@@ -70,6 +70,11 @@ def load_settings(env_file: Path | None = None) -> Settings:
 class StrategyConfig:
     name: str
     params: dict[str, Any] = field(default_factory=dict)
+    timeframe: str = "1Day"
+
+    def __post_init__(self) -> None:
+        if not self.timeframe.strip():
+            raise ConfigError("strategy.timeframe must not be empty")
 
 
 @dataclass(frozen=True)
@@ -121,6 +126,7 @@ def load_app_config(path: Path | None = None) -> AppConfig:
     strategy = StrategyConfig(
         name=str(strategy_raw["name"]),
         params=dict(strategy_raw.get("params") or {}),
+        timeframe=str(strategy_raw.get("timeframe", "1Day")),
     )
 
     risk_raw = raw.get("risk") or {}

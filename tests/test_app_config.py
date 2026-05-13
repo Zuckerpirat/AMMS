@@ -33,9 +33,24 @@ def test_load_app_config_parses_full_yaml(tmp_path: Path) -> None:
     assert cfg.watchlist == ("AAPL", "MSFT", "NVDA")
     assert cfg.strategy.name == "sma_cross"
     assert cfg.strategy.params == {"fast": 10, "slow": 30}
+    assert cfg.strategy.timeframe == "1Day"  # default when omitted
     assert cfg.risk.max_open_positions == 3
     assert cfg.risk.daily_loss_pct == pytest.approx(-0.02)
     assert cfg.scheduler.tick_seconds == 30
+
+
+def test_load_app_config_reads_strategy_timeframe(tmp_path: Path) -> None:
+    yaml_text = """
+watchlist: [AAPL]
+strategy:
+  name: sma_cross
+  timeframe: 5Min
+  params: {fast: 3, slow: 8}
+"""
+    p = tmp_path / "config.yaml"
+    p.write_text(yaml_text, encoding="utf-8")
+    cfg = load_app_config(p)
+    assert cfg.strategy.timeframe == "5Min"
 
 
 def test_load_app_config_missing_file(tmp_path: Path) -> None:

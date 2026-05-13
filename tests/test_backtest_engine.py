@@ -167,3 +167,116 @@ def test_trade_dataclass_is_immutable() -> None:
     t = Trade(date="2025-01-01", symbol="AAPL", side="buy", qty=1, price=1.0, reason="x")
     with pytest.raises(AttributeError):
         t.price = 2.0  # type: ignore[misc]
+
+
+def test_position_carries_entry_date_from_first_buy(tmp_path: Path) -> None:
+    """The entry_date should record when the position first opened, not the latest top-up."""
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    data = [
+        ("2025-01-02", 1.0, 1.0),
+        ("2025-01-03", 1.0, 1.0),
+        ("2025-01-06", 1.0, 1.0),
+        ("2025-01-07", 1.0, 1.0),
+        ("2025-01-08", 1.0, 1.0),
+        ("2025-01-09", 1.0, 1.0),
+        ("2025-01-10", 10.0, 10.0),
+        ("2025-01-13", 10.0, 11.0),  # buy fills here
+        ("2025-01-14", 11.0, 12.0),
+    ]
+    _seed_bars(conn, "AAPL", data)
+    result = run_backtest(_config(), conn)
+    conn.close()
+
+    assert "AAPL" in result.portfolio.positions
+    position = result.portfolio.positions["AAPL"]
+    assert position.entry_date == "2025-01-13"  # first fill day
+
+
+def test_backtest_only_reads_configured_timeframe(tmp_path: Path) -> None:
+    """A backtest configured for one timeframe must ignore bars at another."""
+    from amms.data.bars import Bar
+    from amms.data.bars import upsert_bars as upsert_bars_fn
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    # Plenty of 1Day bars in range, but config asks for 5Min.
+    upsert_bars_fn(
+        conn,
+        [
+            Bar("AAPL", "1Day", f"2025-01-{d:02d}T05:00:00Z", 1, 1, 1, 1, 100)
+            for d in range(2, 30)
+        ],
+    )
+
+    cfg = BacktestConfig(
+        start=date.fromisoformat("2025-01-01"),
+        end=date.fromisoformat("2025-01-31"),
+        symbols=("AAPL",),
+        initial_equity=1000,
+        risk=RiskConfig(),
+        strategy=SmaCross(fast=2, slow=3),
+        timeframe="5Min",
+    )
+    with pytest.raises(ValueError, match="5Min"):
+        run_backtest(cfg, conn)
+    conn.close()
+
+
+def test_backtest_min_hold_days_blocks_premature_sell(tmp_path: Path) -> None:
+    """An immediate sell signal after a buy must be blocked when min_hold_days > 0."""
+
+    class _SellAfterBuy:
+        name = "fake"
+        _step = 0
+
+        @property
+        def lookback(self) -> int:
+            return 1
+
+        def evaluate(self, symbol, bars):
+            from amms.strategy.base import Signal
+
+            self._step += 1
+            # Day 1: buy. Day 2+: keep saying sell. With min_hold_days=3, the
+            # backtester should refuse to sell until day 4.
+            kind = "buy" if self._step == 1 else "sell"
+            return Signal(symbol, kind, kind, bars[-1].close)
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    _seed_bars(
+        conn,
+        "AAPL",
+        [
+            ("2025-01-02", 10.0, 10.0),
+            ("2025-01-03", 10.0, 10.0),  # buy fills here
+            ("2025-01-06", 10.0, 10.0),  # day 1 held, sell signal blocked
+            ("2025-01-07", 10.0, 10.0),  # day 2 held, sell signal blocked
+            ("2025-01-08", 10.0, 10.0),  # day 3 held, sell signal blocked
+            ("2025-01-09", 10.0, 10.0),  # day 4 held; sell allowed → fill 2025-01-10
+            ("2025-01-10", 10.0, 10.0),
+        ],
+    )
+
+    cfg = BacktestConfig(
+        start=date.fromisoformat("2025-01-01"),
+        end=date.fromisoformat("2025-01-31"),
+        symbols=("AAPL",),
+        initial_equity=1000,
+        risk=RiskConfig(
+            max_open_positions=5,
+            max_position_pct=0.5,
+            daily_loss_pct=-0.99,
+            min_hold_days=4,
+        ),
+        strategy=_SellAfterBuy(),
+    )
+    result = run_backtest(cfg, conn)
+    conn.close()
+
+    sells = [t for t in result.trades if t.side == "sell"]
+    assert len(sells) == 1
+    # Buy fills 2025-01-03; first day held 4d is 2025-01-07 (sell enqueued);
+    # fills at the next bar's open on 2025-01-08.
+    assert sells[0].date == "2025-01-08"

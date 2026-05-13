@@ -189,6 +189,50 @@ def test_run_tick_skips_when_pending_order_exists(tmp_path: Path) -> None:
 
 
 @respx.mock
+def test_run_tick_passes_configured_timeframe(tmp_path: Path) -> None:
+    """Executor must call get_bars with config.strategy.timeframe, not '1Day' hardcoded."""
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(200, json=_account_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
+    bars_route = respx.get(f"{DATA_URL}/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_bars_payload("AAPL", [10.0]))
+    )
+
+    cfg = AppConfig(
+        watchlist=("AAPL",),
+        strategy=StrategyConfig(
+            name="sma_cross",
+            params={"fast": 3, "slow": 5},
+            timeframe="5Min",
+        ),
+        risk=RiskConfig(),
+        scheduler=SchedulerConfig(tick_seconds=60),
+    )
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=cfg,
+            strategy=SmaCross(fast=3, slow=5),
+            execute=False,
+        )
+    conn.close()
+
+    assert bars_route.called
+    qs = bars_route.calls.last.request.url.params
+    assert qs["timeframe"] == "5Min"
+
+
+@respx.mock
 def test_run_tick_persists_features(tmp_path: Path) -> None:
     respx.get(f"{PAPER_URL}/v2/account").mock(
         return_value=httpx.Response(200, json=_account_payload())

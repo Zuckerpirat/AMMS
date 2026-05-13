@@ -77,11 +77,12 @@ def run_tick(
     pending_sells = {o.symbol for o in open_orders if o.side == "sell"}
 
     feature_ts = datetime.now(UTC).isoformat()
+    timeframe = config.strategy.timeframe
     result = TickResult()
     for symbol in config.watchlist:
         bars = data.get_bars(
             symbol,
-            "1Day",
+            timeframe,
             start.date().isoformat(),
             end.date().isoformat(),
             limit=bars_back,
