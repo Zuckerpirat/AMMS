@@ -1,0 +1,16 @@
+services:
+  amms:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: amms:dev
+    container_name: amms
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - amms-data:/data
+    restart: "no"
+
+volumes:
+  amms-data:
