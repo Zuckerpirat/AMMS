@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from amms.data.bars import Bar
 from amms.strategy.base import Signal
 
 
@@ -28,15 +29,16 @@ class SmaCross:
     def lookback(self) -> int:
         return self.slow + 1
 
-    def evaluate(self, symbol: str, closes: list[float]) -> Signal:
-        price = closes[-1] if closes else 0.0
-        if len(closes) < self.lookback:
+    def evaluate(self, symbol: str, bars: list[Bar]) -> Signal:
+        price = bars[-1].close if bars else 0.0
+        if len(bars) < self.lookback:
             return Signal(
                 symbol,
                 "hold",
-                f"need {self.lookback} bars, have {len(closes)}",
+                f"need {self.lookback} bars, have {len(bars)}",
                 price,
             )
+        closes = [b.close for b in bars]
 
         def sma(window: int, offset: int) -> float:
             window_slice = (

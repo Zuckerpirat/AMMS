@@ -75,8 +75,7 @@ def run_tick(
             limit=bars_back,
         )
         upsert_bars(conn, bars)
-        closes = [b.close for b in bars]
-        signal = strategy.evaluate(symbol, closes)
+        signal = strategy.evaluate(symbol, bars)
         result.signals.append(signal)
         record_signal(conn, strategy.name, signal)
 

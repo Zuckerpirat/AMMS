@@ -1,4 +1,12 @@
 from amms.strategy.base import Signal, SignalKind, Strategy, build_strategy
+from amms.strategy.composite import CompositeStrategy
 from amms.strategy.sma_cross import SmaCross
 
-__all__ = ["Signal", "SignalKind", "Strategy", "SmaCross", "build_strategy"]
+__all__ = [
+    "CompositeStrategy",
+    "Signal",
+    "SignalKind",
+    "SmaCross",
+    "Strategy",
+    "build_strategy",
+]

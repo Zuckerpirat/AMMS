@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date as Date
 
+from amms.data.bars import Bar
 from amms.risk import RiskConfig, check_buy
 from amms.strategy import Strategy
 
@@ -65,20 +66,29 @@ def _load_bars(
     symbols: tuple[str, ...],
     start: Date,
     end: Date,
-) -> dict[str, dict[str, tuple[float, float]]]:
-    """Return {symbol: {date_iso: (open, close)}} for daily bars in range."""
-    out: dict[str, dict[str, tuple[float, float]]] = {sym: {} for sym in symbols}
+) -> dict[str, dict[str, Bar]]:
+    """Return {symbol: {date_iso: Bar}} for daily bars in range."""
+    out: dict[str, dict[str, Bar]] = {sym: {} for sym in symbols}
     end_iso = end.isoformat() + "T23:59:59Z"
     for sym in symbols:
         rows = conn.execute(
-            "SELECT ts, open, close FROM bars "
+            "SELECT ts, open, high, low, close, volume FROM bars "
             "WHERE symbol = ? AND timeframe = '1Day' AND ts BETWEEN ? AND ? "
             "ORDER BY ts ASC",
             (sym, start.isoformat(), end_iso),
         ).fetchall()
         for row in rows:
             d = row["ts"][:10]
-            out[sym][d] = (row["open"], row["close"])
+            out[sym][d] = Bar(
+                symbol=sym,
+                timeframe="1Day",
+                ts=row["ts"],
+                open=row["open"],
+                high=row["high"],
+                low=row["low"],
+                close=row["close"],
+                volume=row["volume"],
+            )
     return out
 
 
@@ -101,7 +111,7 @@ def run_backtest(config: BacktestConfig, conn: sqlite3.Connection) -> BacktestRe
     trades: list[Trade] = []
     equity_curve: list[tuple[str, float]] = []
     pending: list[PendingOrder] = []
-    closes_running: dict[str, list[float]] = {sym: [] for sym in config.symbols}
+    bars_running: dict[str, list[Bar]] = {sym: [] for sym in config.symbols}
     last_close: dict[str, float] = {}
 
     for today in all_dates:
@@ -112,27 +122,27 @@ def run_backtest(config: BacktestConfig, conn: sqlite3.Connection) -> BacktestRe
             if bar_today is None:
                 remaining.append(order)
                 continue
-            price = bar_today[0]
+            price = bar_today.open
             if order.side == "buy":
                 _fill_buy(portfolio, trades, order, price, today)
             else:
                 _fill_sell(portfolio, trades, order, price, today)
         pending = remaining
 
-        # 2. Roll running closes forward.
+        # 2. Roll running bars forward.
         for sym in config.symbols:
             bar = bars[sym].get(today)
             if bar is not None:
-                closes_running[sym].append(bar[1])
-                last_close[sym] = bar[1]
+                bars_running[sym].append(bar)
+                last_close[sym] = bar.close
 
         # 3. Evaluate the strategy and queue new orders.
         equity_now = portfolio.equity(last_close)
         for sym in config.symbols:
-            closes = closes_running[sym]
-            if len(closes) < config.strategy.lookback:
+            symbol_bars = bars_running[sym]
+            if len(symbol_bars) < config.strategy.lookback:
                 continue
-            signal = config.strategy.evaluate(sym, closes)
+            signal = config.strategy.evaluate(sym, symbol_bars)
             held = portfolio.holds(sym)
 
             if signal.kind == "buy" and not held:
