@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from amms import __version__, db
 from amms.broker import AlpacaClient
-from amms.config import ConfigError, load_settings
+from amms.config import ConfigError, load_app_config, load_settings
 from amms.data import MarketDataClient, upsert_bars
+from amms.risk import check_buy
+from amms.strategy import Signal, build_strategy
 
 app = typer.Typer(
     help="AI-assisted paper trading bot for US equities (paper-only, long-only).",
@@ -183,6 +187,133 @@ def fetch_bars(
     console.print(
         f"Fetched [bold]{len(bars)}[/bold] {timeframe} bars for {symbol.upper()}, "
         f"wrote {written} to DB."
+    )
+
+
+@app.command()
+def tick(
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help="Place paper orders for approved buys. Without this flag, tick is a dry run.",
+    ),
+    bars_back: int = typer.Option(
+        90,
+        "--bars-back",
+        help="Number of daily bars to pull per symbol for the strategy.",
+    ),
+) -> None:
+    """Run one pass of the strategy over the watchlist.
+
+    Without --execute this is a dry run: it prints what it would do but
+    submits no orders. With --execute, approved BUY signals are placed as
+    paper market orders.
+    """
+    settings = _settings_or_die()
+    try:
+        app_config = load_app_config()
+    except ConfigError as e:
+        console.print(f"[red]Configuration error:[/red] {e}")
+        raise typer.Exit(code=2) from e
+
+    strategy = build_strategy(app_config.strategy.name, app_config.strategy.params)
+
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    try:
+        end = datetime.now(UTC)
+        start = end - timedelta(days=bars_back * 2)  # weekends/holidays cushion
+        with (
+            AlpacaClient(
+                settings.alpaca_api_key,
+                settings.alpaca_api_secret,
+                settings.alpaca_base_url,
+            ) as broker,
+            MarketDataClient(
+                settings.alpaca_api_key,
+                settings.alpaca_api_secret,
+                settings.alpaca_data_url,
+            ) as data,
+        ):
+            account = broker.get_account()
+            positions = {p.symbol: p for p in broker.get_positions()}
+
+            signals: list[Signal] = []
+            for symbol in app_config.watchlist:
+                bars = data.get_bars(
+                    symbol,
+                    "1Day",
+                    start.date().isoformat(),
+                    end.date().isoformat(),
+                    limit=bars_back,
+                )
+                upsert_bars(conn, bars)
+                closes = [b.close for b in bars]
+                signal = strategy.evaluate(symbol, closes)
+                signals.append(signal)
+                _record_signal(conn, strategy.name, signal)
+
+            _render_signals(signals)
+
+            buys = [s for s in signals if s.kind == "buy"]
+            if not buys:
+                console.print("No buy signals this tick.")
+                return
+
+            for signal in buys:
+                decision = check_buy(
+                    equity=account.equity,
+                    price=signal.price,
+                    cash=account.cash,
+                    open_positions=len(positions),
+                    daily_pnl_pct=0.0,
+                    already_holds=signal.symbol in positions,
+                    config=app_config.risk,
+                )
+                tag = "[green]ALLOWED[/green]" if decision.allowed else "[red]BLOCKED[/red]"
+                console.print(
+                    f"{tag} {signal.symbol}: {decision.reason}"
+                )
+                if execute and decision.allowed:
+                    order = broker.submit_order(signal.symbol, decision.qty, "buy")
+                    db.upsert_order(conn, order)
+                    positions[signal.symbol] = order  # type: ignore[assignment]
+                    console.print(
+                        f"  [green]Placed BUY[/green] {decision.qty} {signal.symbol} "
+                        f"(order {order.id}, status={order.status})"
+                    )
+
+            if not execute:
+                console.print(
+                    "[dim]Dry run. Re-run with --execute to place approved buys.[/dim]"
+                )
+    finally:
+        conn.close()
+
+
+def _render_signals(signals: list[Signal]) -> None:
+    table = Table(title="Signals")
+    table.add_column("symbol")
+    table.add_column("signal")
+    table.add_column("price", justify="right")
+    table.add_column("reason")
+    for s in signals:
+        color = {"buy": "green", "sell": "yellow", "hold": "dim"}[s.kind]
+        table.add_row(s.symbol, f"[{color}]{s.kind}[/{color}]", f"${s.price:,.2f}", s.reason)
+    console.print(table)
+
+
+def _record_signal(conn, strategy_name: str, signal: Signal) -> None:
+    ts = datetime.now(UTC).isoformat()
+    conn.execute(
+        """
+        INSERT INTO signals(ts, symbol, strategy, signal, reason)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(ts, symbol, strategy) DO UPDATE SET
+            signal = excluded.signal,
+            reason = excluded.reason
+        """,
+        (ts, signal.symbol, strategy_name, signal.kind, signal.reason),
     )
 
 

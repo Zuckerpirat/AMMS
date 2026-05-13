@@ -165,6 +165,144 @@ def test_sell_submits_when_position_held(paper_env) -> None:
     assert "SELL" in result.stdout
 
 
+def _bars_response_for(symbol: str, closes: list[float]) -> dict:
+    return {
+        "bars": {
+            symbol.upper(): [
+                {
+                    "t": f"2025-01-{i + 1:02d}T05:00:00Z",
+                    "o": c,
+                    "h": c,
+                    "l": c,
+                    "c": c,
+                    "v": 100,
+                }
+                for i, c in enumerate(closes)
+            ]
+        },
+        "next_page_token": None,
+    }
+
+
+@respx.mock
+def test_tick_dry_run_prints_signals_without_orders(paper_env_with_config) -> None:
+    # Closes engineered so SMA(3) crosses above SMA(5) on the last bar.
+    closes = [1, 1, 1, 1, 1, 1, 10]
+    respx.get("https://data.alpaca.markets/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_bars_response_for("AAPL", closes))
+    )
+    account_route = respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "equity": "100000",
+                "cash": "100000",
+                "buying_power": "100000",
+                "status": "ACTIVE",
+            },
+        )
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    orders_route = respx.post(f"{PAPER_URL}/v2/orders")
+
+    result = runner.invoke(app, ["tick"])
+    assert result.exit_code == 0, result.stdout
+    assert "buy" in result.stdout.lower()
+    assert "Dry run" in result.stdout
+    assert account_route.called
+    assert not orders_route.called
+
+    conn = sqlite3.connect(paper_env_with_config["AMMS_DB_PATH"])
+    rows = conn.execute("SELECT signal FROM signals WHERE symbol=?", ("AAPL",)).fetchall()
+    conn.close()
+    assert rows and rows[-1][0] == "buy"
+
+
+@respx.mock
+def test_tick_execute_places_order_when_allowed(paper_env_with_config) -> None:
+    closes = [1, 1, 1, 1, 1, 1, 10]
+    respx.get("https://data.alpaca.markets/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_bars_response_for("AAPL", closes))
+    )
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "equity": "100000",
+                "cash": "100000",
+                "buying_power": "100000",
+                "status": "ACTIVE",
+            },
+        )
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    orders_route = respx.post(f"{PAPER_URL}/v2/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "ord-1",
+                "client_order_id": "cid-1",
+                "symbol": "AAPL",
+                "side": "buy",
+                "qty": "400",
+                "type": "market",
+                "status": "accepted",
+                "submitted_at": "2026-05-13T14:00:00Z",
+            },
+        )
+    )
+
+    result = runner.invoke(app, ["tick", "--execute"])
+    assert result.exit_code == 0, result.stdout
+    assert orders_route.called
+    assert "Placed BUY" in result.stdout
+
+    conn = sqlite3.connect(paper_env_with_config["AMMS_DB_PATH"])
+    row = conn.execute("SELECT symbol, side, status FROM orders").fetchone()
+    conn.close()
+    assert row == ("AAPL", "buy", "accepted")
+
+
+@respx.mock
+def test_tick_does_not_buy_when_already_holding(paper_env_with_config) -> None:
+    closes = [1, 1, 1, 1, 1, 1, 10]
+    respx.get("https://data.alpaca.markets/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_bars_response_for("AAPL", closes))
+    )
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "equity": "100000",
+                "cash": "100000",
+                "buying_power": "100000",
+                "status": "ACTIVE",
+            },
+        )
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "symbol": "AAPL",
+                    "qty": "10",
+                    "avg_entry_price": "5",
+                    "market_value": "50",
+                    "unrealized_pl": "0",
+                }
+            ],
+        )
+    )
+    orders_route = respx.post(f"{PAPER_URL}/v2/orders")
+
+    result = runner.invoke(app, ["tick", "--execute"])
+    assert result.exit_code == 0, result.stdout
+    assert "BLOCKED" in result.stdout
+    assert "already long" in result.stdout
+    assert not orders_route.called
+
+
 @respx.mock
 def test_fetch_bars_stores_in_db(paper_env) -> None:
     respx.get("https://data.alpaca.markets/v2/stocks/bars").mock(
