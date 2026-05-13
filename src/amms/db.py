@@ -103,6 +103,23 @@ def upsert_features(
     return len(rows)
 
 
+def latest_buy_submitted_at(
+    conn: sqlite3.Connection, symbol: str
+) -> str | None:
+    """ISO timestamp of the most recent BUY we recorded for ``symbol``, or None.
+
+    Used to enforce min_hold_days: even if a sell signal fires, we refuse
+    to close a position we just opened.
+    """
+    row = conn.execute(
+        "SELECT max(submitted_at) FROM orders WHERE symbol = ? AND side = 'buy'",
+        (symbol,),
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    return row[0]
+
+
 def insert_equity_snapshot(conn: sqlite3.Connection, account: Account) -> str:
     ts = datetime.now(UTC).isoformat()
     conn.execute(

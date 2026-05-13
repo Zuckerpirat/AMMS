@@ -25,6 +25,10 @@ risk:
   # Optional. Caps how many buys a single tick may submit. With the composite
   # strategy, the highest-scoring signals win. Comment out to disable.
   # max_buys_per_tick: 3
+  # Optional. Refuse to act on sell signals before a position has been held
+  # this many days. 0 (default) = exit as soon as the strategy says so. Use
+  # ~2 for swing trading so small dips don't shake you out.
+  min_hold_days: 0
 
 scheduler:
   tick_seconds: 60

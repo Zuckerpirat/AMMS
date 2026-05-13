@@ -11,6 +11,7 @@ class RiskConfig:
     blackout_minutes_after_open: int = 5
     blackout_minutes_before_close: int = 5
     max_buys_per_tick: int | None = None
+    min_hold_days: int = 0
 
     def __post_init__(self) -> None:
         if not 0 < self.max_position_pct <= 1:
@@ -23,6 +24,8 @@ class RiskConfig:
             raise ValueError(
                 f"max_buys_per_tick must be > 0 or None, got {self.max_buys_per_tick}"
             )
+        if self.min_hold_days < 0:
+            raise ValueError(f"min_hold_days must be >= 0, got {self.min_hold_days}")
 
 
 @dataclass(frozen=True)

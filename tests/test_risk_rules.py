@@ -33,6 +33,15 @@ def test_risk_config_accepts_none_max_buys_per_tick() -> None:
     assert cfg.max_buys_per_tick is None
 
 
+def test_risk_config_rejects_negative_min_hold_days() -> None:
+    with pytest.raises(ValueError, match="min_hold_days"):
+        RiskConfig(min_hold_days=-1)
+
+
+def test_risk_config_min_hold_days_defaults_to_zero() -> None:
+    assert RiskConfig().min_hold_days == 0
+
+
 def _cfg(**kwargs) -> RiskConfig:
     return RiskConfig(**{
         "max_open_positions": 5,

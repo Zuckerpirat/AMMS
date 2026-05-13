@@ -52,6 +52,35 @@ def test_upsert_features_handles_empty(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_latest_buy_submitted_at_returns_none_when_no_buys(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    assert db.latest_buy_submitted_at(conn, "AAPL") is None
+    conn.close()
+
+
+def test_latest_buy_submitted_at_returns_max_for_symbol(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    rows = [
+        ("o-1", "c-1", "AAPL", "buy", 1.0, "market", "filled", "2026-05-10T14:00:00Z"),
+        ("o-2", "c-2", "AAPL", "buy", 1.0, "market", "filled", "2026-05-12T14:00:00Z"),
+        ("o-3", "c-3", "MSFT", "buy", 1.0, "market", "filled", "2026-05-13T14:00:00Z"),
+        ("o-4", "c-4", "AAPL", "sell", 1.0, "market", "filled", "2026-05-14T14:00:00Z"),
+    ]
+    for row in rows:
+        conn.execute(
+            "INSERT INTO orders("
+            "id, client_order_id, symbol, side, qty, type, status, submitted_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            row,
+        )
+    assert db.latest_buy_submitted_at(conn, "AAPL") == "2026-05-12T14:00:00Z"
+    assert db.latest_buy_submitted_at(conn, "MSFT") == "2026-05-13T14:00:00Z"
+    assert db.latest_buy_submitted_at(conn, "NVDA") is None
+    conn.close()
+
+
 def test_upsert_order_inserts_then_updates(conn) -> None:
     order = Order(
         id="order-1",

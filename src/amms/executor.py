@@ -8,7 +8,12 @@ from datetime import UTC, datetime, timedelta
 from amms.broker import AlpacaClient
 from amms.config import AppConfig
 from amms.data import MarketDataClient, upsert_bars
-from amms.db import insert_equity_snapshot, upsert_features, upsert_order
+from amms.db import (
+    insert_equity_snapshot,
+    latest_buy_submitted_at,
+    upsert_features,
+    upsert_order,
+)
 from amms.features import standard_features
 from amms.risk import check_buy
 from amms.strategy import Signal, Strategy
@@ -25,6 +30,10 @@ class TickResult:
     @property
     def buy_signals(self) -> list[Signal]:
         return [s for s in self.signals if s.kind == "buy"]
+
+    @property
+    def sell_signals(self) -> list[Signal]:
+        return [s for s in self.signals if s.kind == "sell"]
 
 
 def record_signal(conn: sqlite3.Connection, strategy_name: str, signal: Signal) -> None:
@@ -63,9 +72,9 @@ def run_tick(
     account = broker.get_account()
     insert_equity_snapshot(conn, account)
     positions = {p.symbol: p for p in broker.get_positions()}
-    pending_buys = {
-        o.symbol for o in broker.list_orders(status="open") if o.side == "buy"
-    }
+    open_orders = broker.list_orders(status="open")
+    pending_buys = {o.symbol for o in open_orders if o.side == "buy"}
+    pending_sells = {o.symbol for o in open_orders if o.side == "sell"}
 
     feature_ts = datetime.now(UTC).isoformat()
     result = TickResult()
@@ -122,7 +131,73 @@ def run_tick(
         result.placed_order_ids.append(order.id)
         pending_buys.add(signal.symbol)
         open_positions_count += 1
+
+    _process_sell_signals(
+        broker=broker,
+        conn=conn,
+        config=config,
+        result=result,
+        positions=positions,
+        pending_sells=pending_sells,
+        execute=execute,
+    )
     return result
+
+
+def _process_sell_signals(
+    *,
+    broker: AlpacaClient,
+    conn: sqlite3.Connection,
+    config: AppConfig,
+    result: TickResult,
+    positions: dict,
+    pending_sells: set[str],
+    execute: bool,
+) -> None:
+    for signal in result.sell_signals:
+        if signal.symbol not in positions:
+            result.blocked.append(
+                (signal.symbol, "sell signal but no position held")
+            )
+            continue
+        if signal.symbol in pending_sells:
+            result.blocked.append(
+                (signal.symbol, "open sell order already pending")
+            )
+            continue
+        if config.risk.min_hold_days > 0:
+            days_held = _days_since_last_buy(conn, signal.symbol)
+            if days_held is not None and days_held < config.risk.min_hold_days:
+                result.blocked.append(
+                    (
+                        signal.symbol,
+                        f"held {days_held}d < min_hold_days {config.risk.min_hold_days}d",
+                    )
+                )
+                continue
+        qty = positions[signal.symbol].qty
+        if qty <= 0:
+            result.blocked.append((signal.symbol, "position qty is zero"))
+            continue
+        if not execute:
+            result.blocked.append(
+                (signal.symbol, f"dry-run: would sell {qty:g}")
+            )
+            continue
+        order = broker.submit_order(signal.symbol, qty, "sell")
+        upsert_order(conn, order)
+        result.placed_order_ids.append(order.id)
+        pending_sells.add(signal.symbol)
+
+
+def _days_since_last_buy(conn: sqlite3.Connection, symbol: str) -> int | None:
+    ts = latest_buy_submitted_at(conn, symbol)
+    if ts is None:
+        return None
+    last = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - last).days
 
 
 def build_daily_summary(broker: AlpacaClient, conn: sqlite3.Connection) -> str:

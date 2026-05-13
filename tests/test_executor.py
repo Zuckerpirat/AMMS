@@ -314,6 +314,274 @@ def test_run_tick_top_n_keeps_highest_scoring_buys(tmp_path: Path) -> None:
     assert blocked_symbols == {"AAPL", "NVDA"}
 
 
+class _SellSignalStrategy:
+    """Always emits a sell signal for the watchlist symbol."""
+
+    name = "fake_sell"
+
+    @property
+    def lookback(self) -> int:
+        return 1
+
+    def evaluate(self, symbol, bars):
+        from amms.strategy.base import Signal
+
+        return Signal(
+            symbol=symbol,
+            kind="sell",
+            reason="fake sell",
+            price=bars[-1].close,
+            score=0.0,
+        )
+
+
+def _populate_one_bar(symbol: str = "AAPL") -> dict:
+    return {
+        "bars": {
+            symbol.upper(): [
+                {
+                    "t": "2025-01-02T05:00:00Z",
+                    "o": 10.0, "h": 10.0, "l": 10.0, "c": 10.0, "v": 100,
+                }
+            ]
+        },
+        "next_page_token": None,
+    }
+
+
+def _position_payload(symbol: str = "AAPL", qty: float = 5.0) -> list[dict]:
+    return [
+        {
+            "symbol": symbol,
+            "qty": str(qty),
+            "avg_entry_price": "10.0",
+            "market_value": str(qty * 10.0),
+            "unrealized_pl": "0.0",
+        }
+    ]
+
+
+@respx.mock
+def test_run_tick_executes_sell_when_signal_and_position_held(tmp_path: Path) -> None:
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(200, json=_account_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(
+        return_value=httpx.Response(200, json=_position_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{DATA_URL}/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_populate_one_bar())
+    )
+    sell_route = respx.post(f"{PAPER_URL}/v2/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "sell-1",
+                "client_order_id": "cid-sell-1",
+                "symbol": "AAPL",
+                "side": "sell",
+                "qty": "5",
+                "type": "market",
+                "status": "accepted",
+                "submitted_at": "2026-05-13T14:00:00Z",
+            },
+        )
+    )
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        result = run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=_config(),
+            strategy=_SellSignalStrategy(),
+            execute=True,
+        )
+    conn.close()
+
+    assert sell_route.called
+    assert result.placed_order_ids == ["sell-1"]
+
+
+@respx.mock
+def test_run_tick_skips_sell_when_no_position(tmp_path: Path) -> None:
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(200, json=_account_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{DATA_URL}/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_populate_one_bar())
+    )
+    sell_route = respx.post(f"{PAPER_URL}/v2/orders")
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        result = run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=_config(),
+            strategy=_SellSignalStrategy(),
+            execute=True,
+        )
+    conn.close()
+
+    assert not sell_route.called
+    blocked_reasons = {r for _, r in result.blocked}
+    assert any("no position" in r for r in blocked_reasons)
+
+
+@respx.mock
+def test_run_tick_sell_dry_run_does_not_submit(tmp_path: Path) -> None:
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(200, json=_account_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(
+        return_value=httpx.Response(200, json=_position_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{DATA_URL}/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_populate_one_bar())
+    )
+    sell_route = respx.post(f"{PAPER_URL}/v2/orders")
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        result = run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=_config(),
+            strategy=_SellSignalStrategy(),
+            execute=False,
+        )
+    conn.close()
+
+    assert not sell_route.called
+    assert any("would sell" in r for _, r in result.blocked)
+
+
+@respx.mock
+def test_run_tick_sell_blocked_when_min_hold_days_unmet(tmp_path: Path) -> None:
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(200, json=_account_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(
+        return_value=httpx.Response(200, json=_position_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{DATA_URL}/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_populate_one_bar())
+    )
+    sell_route = respx.post(f"{PAPER_URL}/v2/orders")
+
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    cfg = AppConfig(
+        watchlist=("AAPL",),
+        strategy=StrategyConfig(name="sma_cross", params={"fast": 3, "slow": 5}),
+        risk=RiskConfig(
+            max_open_positions=5,
+            max_position_pct=0.02,
+            daily_loss_pct=-0.03,
+            min_hold_days=3,
+        ),
+        scheduler=SchedulerConfig(tick_seconds=60),
+    )
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    recent = _datetime.now(_UTC).isoformat()
+    conn.execute(
+        "INSERT INTO orders(id, client_order_id, symbol, side, qty, type, status, submitted_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("manual-buy-1", "cid-buy-1", "AAPL", "buy", 5.0, "market", "filled", recent),
+    )
+
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        result = run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=cfg,
+            strategy=_SellSignalStrategy(),
+            execute=True,
+        )
+    conn.close()
+
+    assert not sell_route.called
+    assert any("min_hold_days" in r for _, r in result.blocked)
+
+
+@respx.mock
+def test_run_tick_sell_skipped_when_already_pending(tmp_path: Path) -> None:
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(200, json=_account_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(
+        return_value=httpx.Response(200, json=_position_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "pending-sell",
+                    "client_order_id": "cid-ps",
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "qty": "5",
+                    "type": "market",
+                    "status": "new",
+                    "submitted_at": "2026-05-13T14:00:00Z",
+                }
+            ],
+        )
+    )
+    respx.get(f"{DATA_URL}/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_populate_one_bar())
+    )
+    sell_route = respx.post(f"{PAPER_URL}/v2/orders")
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        result = run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=_config(),
+            strategy=_SellSignalStrategy(),
+            execute=True,
+        )
+    conn.close()
+
+    assert not sell_route.called
+    assert any("pending" in r for _, r in result.blocked)
+
+
 @respx.mock
 def test_build_daily_summary_includes_equity_and_counts(tmp_path: Path) -> None:
     respx.get(f"{PAPER_URL}/v2/account").mock(
