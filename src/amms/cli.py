@@ -590,6 +590,64 @@ def equity_log(limit: int = typer.Option(20, "--limit")) -> None:
     console.print(table)
 
 
+@app.command(name="compare-strategies")
+def compare_strategies(
+    start: str = typer.Option(..., "--from"),
+    end: str = typer.Option(..., "--to"),
+    symbols: str | None = typer.Option(None, "--symbols"),
+    initial_equity: float = typer.Option(100_000.0, "--initial-equity"),
+) -> None:
+    """A/B SMA vs Composite over the same window. Same risk + universe."""
+    config = _app_config_or_die()
+    settings = _settings_or_die()
+    symbols_tuple = (
+        tuple(s.strip().upper() for s in symbols.split(",") if s.strip())
+        if symbols
+        else config.watchlist
+    )
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    rows: list[tuple[str, BacktestStats]] = []
+    for label, strat in (
+        ("sma_cross", build_strategy("sma_cross", {})),
+        ("composite", build_strategy("composite", {})),
+    ):
+        bt = BacktestConfig(
+            start=date.fromisoformat(start),
+            end=date.fromisoformat(end),
+            symbols=symbols_tuple,
+            initial_equity=initial_equity,
+            risk=config.risk,
+            strategy=strat,
+            timeframe=config.strategy.timeframe,
+            universe=config.universe,
+        )
+        try:
+            result = run_backtest(bt, conn)
+        except ValueError as e:
+            console.print(f"[red]{label}: {e}[/red]")
+            continue
+        rows.append((label, compute_stats(result)))
+    conn.close()
+    if not rows:
+        raise typer.Exit(code=1)
+    table = Table(title=f"Comparison {start} → {end}")
+    table.add_column("strategy")
+    table.add_column("return", justify="right")
+    table.add_column("max_dd", justify="right")
+    table.add_column("trades", justify="right")
+    table.add_column("win_rate", justify="right")
+    for label, s in rows:
+        table.add_row(
+            label,
+            f"{s.total_return_pct:+.2f}%",
+            f"{s.max_drawdown_pct:.2f}%",
+            str(s.num_trades),
+            f"{s.win_rate:.0%}",
+        )
+    console.print(table)
+
+
 def main() -> None:
     app()
 

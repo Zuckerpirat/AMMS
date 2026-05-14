@@ -37,6 +37,10 @@ class LoopState:
     last_saw_open: bool | None = None
     sent_summary_dates: set[str] = field(default_factory=set)
     last_sentiment_refresh_ts: float = 0.0
+    consecutive_tick_errors: int = 0
+
+
+MAX_CONSECUTIVE_TICK_ERRORS = 5
 
 
 SENTIMENT_REFRESH_SECONDS = 3600  # hourly
@@ -171,9 +175,20 @@ def run_loop(
                         paused=pause.paused,
                     )
                     _announce_tick(notifier, result)
+                    state.consecutive_tick_errors = 0
                 except Exception:
                     logger.exception("tick failed")
-                    notifier.send("amms tick failed; see logs")
+                    state.consecutive_tick_errors += 1
+                    notifier.send(
+                        f"amms tick failed "
+                        f"({state.consecutive_tick_errors}/{MAX_CONSECUTIVE_TICK_ERRORS})"
+                    )
+                    if state.consecutive_tick_errors >= MAX_CONSECUTIVE_TICK_ERRORS:
+                        pause.set_paused(True)
+                        notifier.send(
+                            "amms auto-paused after repeated tick errors. "
+                            "Use /resume after investigating."
+                        )
 
                 if stop.wait(config.scheduler.tick_seconds):
                     break
