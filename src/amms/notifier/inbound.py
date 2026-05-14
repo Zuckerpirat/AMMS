@@ -25,7 +25,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-CommandHandler = Callable[[], str]
+CommandHandler = Callable[[list[str]], str]
 TickPreview = Callable[[], object]  # returns a TickResult
 
 
@@ -113,15 +113,17 @@ class TelegramInbound:
         text = (message.get("text") or "").strip()
         if not text.startswith("/"):
             return
-        cmd = text.split()[0].lower().lstrip("/")
+        parts = text.split()
+        cmd = parts[0].lower().lstrip("/")
         # Strip any @bot suffix Telegram appends in groups (/status@mybot).
         cmd = cmd.split("@", 1)[0]
+        args = parts[1:]
         handler = self._handlers.get(cmd)
         if handler is None:
             self._reply(f"unknown command: /{cmd}")
             return
         try:
-            reply = handler()
+            reply = handler(args)
         except Exception as e:
             reply = f"command failed: {e!r}"
             logger.exception("telegram handler crashed for /%s", cmd)
@@ -145,6 +147,9 @@ def build_command_handlers(
     pause: PauseFlag,
     conn=None,
     preview: TickPreview | None = None,
+    db_path=None,
+    static_watchlist: tuple[str, ...] | list[str] = (),
+    get_wsb_extras: Callable[[], set[str]] | None = None,
 ) -> dict[str, CommandHandler]:
     """Construct the default command handler table.
 
@@ -155,9 +160,14 @@ def build_command_handlers(
     (typically a closure over the scheduler's broker/data/config/strategy).
     When wired, /buylist runs an immediate read-only tick and reports what
     the bot would do right now without waiting for the next scheduled tick.
+
+    ``db_path`` enables the dynamic-watchlist commands (/add, /remove,
+    /watchlist) by pointing them at the persistence file location.
+    ``static_watchlist`` and ``get_wsb_extras`` are used to render
+    /watchlist with all three layers visible.
     """
 
-    def _status() -> str:
+    def _status(_args: list[str]) -> str:
         acc = broker.get_account()
         positions = broker.get_positions()
         lines = [
@@ -169,7 +179,7 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
-    def _positions() -> str:
+    def _positions(_args: list[str]) -> str:
         positions = broker.get_positions()
         if not positions:
             return "no open positions"
@@ -179,18 +189,18 @@ def build_command_handlers(
             for p in positions
         )
 
-    def _equity() -> str:
+    def _equity(_args: list[str]) -> str:
         return f"${broker.get_account().equity:,.2f}"
 
-    def _pause() -> str:
+    def _pause(_args: list[str]) -> str:
         pause.set_paused(True)
         return "paused: scheduler will skip placing orders"
 
-    def _resume() -> str:
+    def _resume(_args: list[str]) -> str:
         pause.set_paused(False)
         return "resumed: scheduler may place orders again"
 
-    def _signals() -> str:
+    def _signals(_args: list[str]) -> str:
         if conn is None:
             return "DB not wired."
         rows = conn.execute(
@@ -204,7 +214,7 @@ def build_command_handlers(
             for r in rows
         )
 
-    def _buylist() -> str:
+    def _buylist(_args: list[str]) -> str:
         if preview is None:
             return (
                 "preview not wired (only available when launched from "
@@ -241,7 +251,7 @@ def build_command_handlers(
                 lines.append(f"{sym}: {reason}")
         return "\n".join(lines)
 
-    def _scan() -> str:
+    def _scan(_args: list[str]) -> str:
         # Lazy import to avoid circular deps and to keep the inbound module
         # cheap to import (it is loaded even when WSB scanning is unused).
         from amms.data.wsb_scanner import WSBScanner, format_summary
@@ -255,7 +265,7 @@ def build_command_handlers(
             return f"WSB scan failed: {e!r}"
         return format_summary(results)
 
-    def _lastorders() -> str:
+    def _lastorders(_args: list[str]) -> str:
         if conn is None:
             return "DB not wired."
         rows = conn.execute(
@@ -270,11 +280,49 @@ def build_command_handlers(
             for r in rows
         )
 
-    def _help() -> str:
+    def _add(args: list[str]) -> str:
+        if db_path is None:
+            return "watchlist commands not wired (no db_path)."
+        if not args:
+            return "usage: /add SYMBOL  (e.g. /add NVDA)"
+        from amms.data.dynamic_watchlist import add as add_symbol
+
+        try:
+            _, msg = add_symbol(db_path, args[0], blocked=set(static_watchlist))
+        except ValueError as e:
+            return str(e)
+        return msg
+
+    def _remove(args: list[str]) -> str:
+        if db_path is None:
+            return "watchlist commands not wired (no db_path)."
+        if not args:
+            return "usage: /remove SYMBOL  (e.g. /remove NVDA)"
+        from amms.data.dynamic_watchlist import remove as remove_symbol
+
+        try:
+            _, msg = remove_symbol(db_path, args[0])
+        except ValueError as e:
+            return str(e)
+        return msg
+
+    def _watchlist(_args: list[str]) -> str:
+        if db_path is None:
+            return "watchlist commands not wired (no db_path)."
+        from amms.data.dynamic_watchlist import format_summary, load
+
+        user_extras = load(db_path)
+        wsb_extras = get_wsb_extras() if get_wsb_extras is not None else set()
+        return format_summary(static_watchlist, wsb_extras, user_extras)
+
+    def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
             "/positions — list open positions\n"
             "/equity — just the equity number\n"
+            "/watchlist — show static + WSB + user-added tickers\n"
+            "/add SYM — add ticker to dynamic watchlist\n"
+            "/remove SYM — remove ticker from dynamic watchlist\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -294,6 +342,9 @@ def build_command_handlers(
         "wsb": _scan,  # alias
         "buylist": _buylist,
         "preview": _buylist,  # alias
+        "add": _add,
+        "remove": _remove,
+        "watchlist": _watchlist,
         "pause": _pause,
         "resume": _resume,
         "help": _help,
