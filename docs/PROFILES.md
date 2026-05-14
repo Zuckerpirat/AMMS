@@ -136,6 +136,65 @@ the bot still trades — it just skips the sentiment overlay.
 
 ---
 
+## WSB profile
+
+Curated WSB favorites (large-cap memes + crypto-adjacent + classic tickers),
+composite strategy weighted toward Reddit sentiment, and **per-position
+stop-loss + trailing stop are enabled by default** because these names move
+fast in both directions.
+
+```yaml
+watchlist:
+  - NVDA
+  - TSLA
+  - AMD
+  - PLTR
+  - SMCI
+  - MSTR
+  - COIN
+  - MARA
+  - RIOT
+  - GME
+  - AMC
+  - SOFI
+  - RIVN
+
+strategy:
+  name: composite
+  timeframe: 1Day
+  params:
+    momentum_n: 10
+    momentum_min: 0.04
+    rsi_max: 75
+    vol_max: 0.80
+    rvol_min: 1.5
+    sentiment_weight: 0.4
+    sentiment_min: -0.2
+
+risk:
+  max_open_positions: 5
+  max_position_pct: 0.03
+  daily_loss_pct: -0.04
+  min_hold_days: 1
+  max_buys_per_tick: 2
+  stop_loss_pct: 0.06
+  trailing_stop_pct: 0.12
+
+universe:
+  min_price: 2.00
+  min_avg_dollar_volume: 5000000
+  adv_lookback: 20
+  require_tradable: true
+
+scheduler:
+  tick_seconds: 1800
+```
+
+Use `amms wsb-scan` periodically to discover *additional* trending tickers
+worth adding to the watchlist by hand.
+
+---
+
 ## How to choose
 
 - Just starting? **Swing.** Lets the bot trade ~1-3 times per week per
@@ -144,5 +203,7 @@ the bot still trades — it just skips the sentiment overlay.
   longer locks you out.
 - Hunting volatility? **Penny.** Smaller positions, strict filters, accept
   more whipsaw.
+- Want WSB-driven trades with safety nets? **WSB.** Stop-loss baked in,
+  sentiment-weighted scoring, ~30-min check interval.
 
 Always run a week in dry-run mode first (`amms run` without `--execute`).
