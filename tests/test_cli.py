@@ -19,10 +19,22 @@ def test_help_works() -> None:
 
 
 def test_run_help_advertises_execute_flag() -> None:
-    result = runner.invoke(app, ["run", "--help"])
+    # Disable Rich's pretty-printing so the output is stable across runners.
+    # Without this, narrow CI terminals wrap "--execute" across lines and
+    # decorate it with ANSI codes, both of which break a substring match.
+    result = runner.invoke(
+        app,
+        ["run", "--help"],
+        env={"NO_COLOR": "1", "TERM": "dumb", "COLUMNS": "200"},
+    )
     assert result.exit_code == 0
-    assert "--execute" in result.stdout
-    assert "dry run" in result.stdout.lower()
+    # Strip ANSI escape codes defensively in case Rich still emits them,
+    # then collapse whitespace so wrapped lines like "--\nexecute" match.
+    import re
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    collapsed = re.sub(r"\s+", "", plain)
+    assert "--execute" in collapsed
+    assert "dryrun" in collapsed.lower()
 
 
 def test_run_refuses_without_paper_url(monkeypatch) -> None:
