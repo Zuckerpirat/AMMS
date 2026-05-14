@@ -56,6 +56,32 @@ docker compose logs -f           # watch what it does
 | `amms doctor` | Pre-flight self-check (env, config, DB, Alpaca, Telegram) |
 | `amms compare-strategies --from --to` | A/B SMA vs Composite on the same window |
 
+## What it does
+
+- **Strategies**: SMA crossover, multi-feature composite (momentum + RSI +
+  volatility + relative volume + optional Reddit sentiment overlay), Bollinger
+  mean reversion, Donchian breakout. Pluggable: `register_strategy("name", cls)`.
+- **Features**: 20-day momentum, RSI, ATR, realized vol, relative volume,
+  Reddit/WSB sentiment with built-in tiny lexicon.
+- **Risk**: configurable max positions, max position pct, daily-loss kill
+  switch, top-N buys per tick, min hold days, PDT-rule guard for sub-$25k
+  accounts, force-close-before-close for day trading.
+- **Universe filter**: min/max price, min average dollar volume, optional
+  "must be tradable on Alpaca" check.
+- **Backtesters**: daily-stepping (default) and timestamp-stepping
+  (intraday, `--intraday`). Walk-forward harness for out-of-sample
+  validation. `amms compare-strategies` A/Bs all registered strategies on
+  the same window.
+- **Operations**: Telegram outbound alerts, inbound commands (`/status`,
+  `/positions`, `/signals`, `/lastorders`, `/equity`, `/pause`, `/resume`,
+  `/help`), Prometheus `/metrics` + `/healthz`, auto-pause circuit breaker
+  after 5 consecutive tick errors, optional LLM-augmented daily summary
+  via Anthropic API.
+- **Data**: Alpaca Paper Trading API for orders, Alpaca market data v2
+  for bars, SEC EDGAR for fundamentals, Reddit OAuth for sentiment.
+  Local SQLite holds bars, orders, signals (with score), equity snapshots,
+  features audit trail.
+
 ## Safety guarantees
 
 - The bot refuses to start if `ALPACA_BASE_URL` does not contain `paper-api`.
