@@ -807,6 +807,34 @@ def preview_signal(
     )
 
 
+@app.command(name="cancel-all")
+def cancel_all(
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
+) -> None:
+    """Cancel every open order on the paper account. Confirmation required."""
+    if not yes:
+        console.print(
+            "[yellow]This will cancel every open order. "
+            "Re-run with --yes to confirm.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    settings = _settings_or_die()
+    cancelled = 0
+    with AlpacaClient(
+        settings.alpaca_api_key,
+        settings.alpaca_api_secret,
+        settings.alpaca_base_url,
+    ) as broker:
+        for order in broker.list_orders(status="open"):
+            try:
+                broker.cancel_order(order.id)
+                cancelled += 1
+                console.print(f"cancelled {order.id} ({order.side} {order.symbol})")
+            except Exception as e:
+                console.print(f"[red]could not cancel {order.id}: {e}[/red]")
+    console.print(f"[green]cancelled {cancelled} open order(s)[/green]")
+
+
 @app.command(name="apply-profile")
 def apply_profile(
     name: str = typer.Argument(..., help="swing | day-trade | penny | <path>"),
