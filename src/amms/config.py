@@ -144,6 +144,9 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         min_hold_days=int(risk_raw.get("min_hold_days", 0)),
         pdt_min_equity=float(risk_raw.get("pdt_min_equity", 25_000)),
         pdt_max_day_trades=int(risk_raw.get("pdt_max_day_trades", 3)),
+        force_close_minutes_before_close=int(
+            risk_raw.get("force_close_minutes_before_close", 0)
+        ),
     )
 
     sched_raw = raw.get("scheduler") or {}

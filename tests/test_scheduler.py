@@ -163,6 +163,24 @@ def test_run_loop_idles_when_market_closed(tmp_path: Path) -> None:
     assert any("started" in m for m in notifier.messages)
 
 
+def test_in_force_close_window_disabled_when_zero() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from amms.clock import ClockStatus
+    from amms.scheduler import _in_force_close_window
+
+    now = datetime(2026, 5, 13, 19, 50, tzinfo=UTC)
+    clock = ClockStatus(
+        timestamp=now,
+        is_open=True,
+        next_open=now + timedelta(days=1),
+        next_close=now + timedelta(minutes=10),
+    )
+    assert _in_force_close_window(clock, 0) is False
+    assert _in_force_close_window(clock, 15) is True
+    assert _in_force_close_window(clock, 5) is False
+
+
 def test_announce_tick_is_silent_with_null_notifier() -> None:
     from amms.executor import TickResult
 

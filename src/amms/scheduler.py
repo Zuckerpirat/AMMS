@@ -92,6 +92,17 @@ def run_loop(
                     continue
 
                 state.last_saw_open = True
+                # Force-close window: flatten remaining positions just before
+                # market close if config.risk.force_close_minutes_before_close
+                # is set. Day-trade profiles use this to avoid overnight risk.
+                if _in_force_close_window(clock, config.risk.force_close_minutes_before_close):
+                    try:
+                        ids = _force_close_all(broker, conn, execute=execute)
+                        for oid in ids:
+                            notifier.send(f"amms force-close placed sell {oid}")
+                    except Exception:
+                        logger.exception("force_close failed")
+
                 try:
                     result = run_tick(
                         broker=broker,
@@ -139,3 +150,39 @@ def _announce_tick(notifier: Notifier, result: TickResult) -> None:
         return
     for order_id in result.placed_order_ids:
         notifier.send(f"amms placed BUY order {order_id}")
+
+
+def _in_force_close_window(clock: ClockStatus, minutes_before_close: int) -> bool:
+    """True if `minutes_before_close > 0` and we are within that window."""
+    if minutes_before_close <= 0:
+        return False
+    remaining_seconds = (clock.next_close - clock.timestamp).total_seconds()
+    return 0 < remaining_seconds <= minutes_before_close * 60
+
+
+def _force_close_all(
+    broker: AlpacaClient,
+    conn: sqlite3.Connection,
+    *,
+    execute: bool,
+) -> list[str]:
+    """Close every open position via market sell. Returns submitted order IDs."""
+    from amms.db import upsert_order
+
+    positions = broker.get_positions()
+    open_sells = {
+        o.symbol for o in broker.list_orders(status="open") if o.side == "sell"
+    }
+    placed: list[str] = []
+    for pos in positions:
+        if pos.symbol in open_sells:
+            continue
+        if pos.qty <= 0:
+            continue
+        if not execute:
+            logger.info("force-close dry-run: would sell %s %s", pos.qty, pos.symbol)
+            continue
+        order = broker.submit_order(pos.symbol, pos.qty, "sell")
+        upsert_order(conn, order)
+        placed.append(order.id)
+    return placed
