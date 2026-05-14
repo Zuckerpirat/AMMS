@@ -147,6 +147,8 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         force_close_minutes_before_close=int(
             risk_raw.get("force_close_minutes_before_close", 0)
         ),
+        stop_loss_pct=float(risk_raw.get("stop_loss_pct", 0.0)),
+        trailing_stop_pct=float(risk_raw.get("trailing_stop_pct", 0.0)),
     )
 
     sched_raw = raw.get("scheduler") or {}

@@ -17,7 +17,7 @@ from amms.db import (
 )
 from amms.features import standard_features
 from amms.metrics import metrics
-from amms.risk import check_buy
+from amms.risk import STOP_LOSS_REASON_PREFIX, check_buy, check_stop_losses
 from amms.strategy import Signal, Strategy
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,23 @@ def run_tick(
     feature_ts = datetime.now(UTC).isoformat()
     timeframe = config.strategy.timeframe
     result = TickResult()
+
+    # Stop-loss runs first: synthetic SELL signals for any position that has
+    # breached its loss cap. They flow through _process_sell_signals like
+    # strategy sells but bypass min_hold_days (handled by reason-prefix check).
+    for trigger in check_stop_losses(
+        positions=list(positions.values()), config=config.risk
+    ):
+        sl_signal = Signal(
+            symbol=trigger.symbol,
+            kind="sell",
+            reason=trigger.reason,
+            price=trigger.current_price,
+            score=trigger.loss_pct,
+        )
+        result.signals.append(sl_signal)
+        record_signal(conn, "stop_loss", sl_signal)
+        metrics.labeled_inc("amms_stop_loss_triggers_total", {"kind": trigger.kind})
     bars_by_symbol: dict[str, list] = {}
     for symbol in config.watchlist:
         bars = data.get_bars(
@@ -196,7 +213,8 @@ def _process_sell_signals(
                 (signal.symbol, "open sell order already pending")
             )
             continue
-        if config.risk.min_hold_days > 0:
+        is_stop_loss = signal.reason.startswith(STOP_LOSS_REASON_PREFIX)
+        if config.risk.min_hold_days > 0 and not is_stop_loss:
             days_held = _days_since_last_buy(conn, signal.symbol)
             if days_held is not None and days_held < config.risk.min_hold_days:
                 result.blocked.append(
