@@ -420,6 +420,53 @@ def test_today_handler_without_db_still_runs() -> None:
     assert "Open positions" in out
 
 
+def test_risk_handler_shows_defaults_when_no_overrides() -> None:
+    import sqlite3 as _sqlite
+    conn = _sqlite.connect(":memory:")
+    conn.row_factory = _sqlite.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["risk"]([])
+    assert "Active risk settings" in out
+    assert "stop_loss: 0 (disabled)" in out
+
+
+def test_risk_handler_shows_overrides_distinctly() -> None:
+    import sqlite3 as _sqlite
+    from amms.runtime_overrides import set_override
+    conn = _sqlite.connect(":memory:")
+    conn.row_factory = _sqlite.Row
+    set_override(conn, "stop_loss", "0.05")
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["risk"]([])
+    assert "stop_loss: 0.05  (override)" in out
+
+
+def test_stops_handler_without_stop_loss() -> None:
+    import sqlite3 as _sqlite
+    conn = _sqlite.connect(":memory:")
+    conn.row_factory = _sqlite.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["stops"]([])
+    assert "Stop-loss not active" in out
+
+
+def test_stops_handler_with_active_stop_loss() -> None:
+    import sqlite3 as _sqlite
+    from amms.runtime_overrides import set_override
+    conn = _sqlite.connect(":memory:")
+    conn.row_factory = _sqlite.Row
+    set_override(conn, "stop_loss", "0.05")
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["stops"]([])
+    assert "AAPL" in out
+    assert "trigger $" in out
+    assert "5.0%" in out
+
+
 def test_backtest_handler_renders_stats() -> None:
     class _Stats:
         initial_equity = 100_000.0

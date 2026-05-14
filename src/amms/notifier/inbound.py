@@ -453,6 +453,77 @@ def build_command_handlers(
             lines.append(f"  {k} = {v}")
         return "\n".join(lines)
 
+    def _risk(_args: list[str]) -> str:
+        """Show the currently active risk + override settings."""
+        try:
+            from amms.runtime_overrides import get_overrides
+            if conn is not None:
+                overrides = get_overrides(conn)
+            else:
+                overrides = {}
+        except Exception:
+            overrides = {}
+        lines = ["Active risk settings:"]
+        defaults = {
+            "stop_loss": "0 (disabled)",
+            "trailing_stop": "0 (disabled)",
+            "max_buys": "config default",
+            "drawdown_alert": "5.0%",
+            "macro_enabled": "True (default)",
+            "macro_day_threshold": "5.0%",
+            "macro_week_threshold": "15.0%",
+            "sentiment_weight": "config default",
+            "wsb_enabled": "config default",
+            "wsb_top_n": "config default",
+            "wsb_min_mentions": "config default",
+        }
+        for key, default in defaults.items():
+            if key in overrides:
+                lines.append(f"  {key}: {overrides[key]}  (override)")
+            else:
+                lines.append(f"  {key}: {default}")
+        return "\n".join(lines)
+
+    def _stops(_args: list[str]) -> str:
+        """Show, per position, the distance to its stop-loss trigger."""
+        positions = broker.get_positions()
+        if not positions:
+            return "no open positions"
+        # Effective stop-loss percentage from overrides (or unknown).
+        stop_pct: float | None = None
+        try:
+            from amms.runtime_overrides import get_overrides
+            if conn is not None:
+                stop_pct = get_overrides(conn).get("stop_loss")
+        except Exception:
+            pass
+        if not stop_pct:
+            return (
+                "Stop-loss not active. Enable with /set stop_loss 0.05 "
+                "(5% per-position cap)."
+            )
+        lines = [f"Stop-loss watch ({stop_pct * 100:.1f}% cap):"]
+        for p in positions:
+            entry = float(p.avg_entry_price)
+            # Use market_value/qty as the live price proxy (broker returns
+            # both, and their ratio is the current mark).
+            mv = float(p.market_value)
+            qty = float(p.qty)
+            if qty <= 0:
+                continue
+            current = mv / qty
+            pnl_pct = (current - entry) / entry * 100 if entry > 0 else 0.0
+            trigger = entry * (1 - stop_pct)
+            distance_pct = (current - trigger) / current * 100 if current else 0.0
+            icon = "🟢" if pnl_pct > -stop_pct * 100 * 0.5 else (
+                "🟡" if pnl_pct > -stop_pct * 100 * 0.85 else "🔴"
+            )
+            lines.append(
+                f"  {icon} {p.symbol}: ${current:.2f} (P&L {pnl_pct:+.2f}%), "
+                f"trigger ${trigger:.2f} ({distance_pct:.2f}% above)"
+            )
+        return "\n".join(lines)
+
     def _backtest(args: list[str]) -> str:
         """Run a backtest of the current strategy on the watchlist using
         whatever bars are stored locally. Days default to 90."""
@@ -695,6 +766,8 @@ def build_command_handlers(
             "/explain SYM — show why the bot's last decision on SYM was made\n"
             "/macro — current market stress regime (calm/elevated/stressed)\n"
             "/backtest [DAYS] — run a quick backtest of the current strategy\n"
+            "/risk — show currently active risk settings + overrides\n"
+            "/stops — show distance to stop-loss trigger per position\n"
             "/set KEY VALUE — change a safe runtime setting (stop_loss, trailing_stop, max_buys)\n"
             "/unset KEY — remove a runtime override\n"
             "/show — list active runtime overrides\n"
@@ -724,6 +797,8 @@ def build_command_handlers(
         "explain": _explain,
         "macro": _macro,
         "backtest": _backtest,
+        "risk": _risk,
+        "stops": _stops,
         "set": _set,
         "unset": _unset,
         "show": _show,
