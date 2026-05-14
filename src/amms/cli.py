@@ -1013,8 +1013,38 @@ def doctor() -> None:
     if cfg is not None and cfg.strategy.timeframe != "1Day":
         console.print(
             f"[yellow]⚠[/yellow] strategy.timeframe={cfg.strategy.timeframe} — "
-            "backtester groups bars by day; live executor handles intraday correctly."
+            "default backtester groups bars by day. Use `amms backtest --intraday` "
+            "or run_intraday_backtest for proper intraday simulation."
         )
+
+    # 8. Stale bars
+    if cfg is not None:
+        try:
+            from datetime import UTC, datetime
+
+            conn2 = db.connect(settings.db_path)
+            row = conn2.execute(
+                "SELECT max(ts) FROM bars WHERE timeframe = ?",
+                (cfg.strategy.timeframe,),
+            ).fetchone()
+            conn2.close()
+            latest = row[0] if row else None
+            if latest:
+                latest_dt = datetime.fromisoformat(latest.replace("Z", "+00:00"))
+                age_days = (datetime.now(UTC) - latest_dt).days
+                if age_days <= 2:
+                    console.print(f"[green]✓[/green] bars fresh (newest {latest})")
+                else:
+                    console.print(
+                        f"[yellow]⚠[/yellow] newest bar is {age_days}d old "
+                        f"({latest}); run `amms fetch-bars` per symbol."
+                    )
+            else:
+                console.print(
+                    "[dim]·[/dim] no bars cached yet; first `amms tick` will fetch."
+                )
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] bars-age check failed: {e}")
 
     if failures:
         console.print(f"\n[red]doctor: {failures} failure(s).[/red]")
