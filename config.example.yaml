@@ -40,6 +40,13 @@ risk:
   # Day-trading profile: flatten ALL positions this many minutes before
   # market close. 0 (default) = off; use ~15 for an intraday profile.
   force_close_minutes_before_close: 0
+  # Per-position stop-loss as a positive fraction. Force-sell when the
+  # unrealized loss vs entry exceeds this. Bypasses min_hold_days.
+  # 0.0 (default) = disabled; 0.05 = sell at 5% loss; common: 0.03 - 0.10.
+  # stop_loss_pct: 0.05
+  # Per-position trailing stop. Sell when price drops this fraction below the
+  # high-water mark since entry. Locks in gains. 0 (default) = disabled.
+  # trailing_stop_pct: 0.10
 
 scheduler:
   tick_seconds: 60

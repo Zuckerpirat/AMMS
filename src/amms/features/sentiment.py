@@ -38,7 +38,22 @@ _LEXICON = {**_POSITIVE, **_NEGATIVE}
 
 _TOKEN_RE = re.compile(r"[A-Za-z!\$🚀🌝💎🙌💀]+")
 _TICKER_RE = re.compile(r"\$?\b([A-Z]{1,5})\b")
-_STOP_TICKERS = {"A", "I", "DD", "WSB", "USA", "CEO", "IPO", "ETF", "YOLO"}
+# Known noise — common acronyms / slang on WSB that look like tickers but
+# almost never refer to the actual listed company. Conservative on purpose:
+# anything plausibly traded (AI, EV, AGI...) is left out so we don't filter
+# real signal.
+_STOP_TICKERS = {
+    "A", "I", "DD", "WSB", "USA", "CEO", "CFO", "IPO", "ETF", "YOLO",
+    "USD", "EUR", "CAD", "GBP", "JPY", "CNY",
+    "ATH", "ATL", "IMO", "IRL", "TLDR", "FOMO", "FUD", "FYI", "EOD", "EOM",
+    "BTW", "OMG", "WTF", "LOL", "IIRC", "AFAIK", "NSFW", "ELI5",
+    "USA", "UK", "EU", "DOJ", "SEC", "FED", "FOMC", "CPI", "GDP", "PPI",
+    "MOASS", "DRS", "APE", "OG", "GG", "EOY", "YTD", "MTD", "QTD",
+    "PR", "ER", "FY", "Q1", "Q2", "Q3", "Q4", "AH", "PM", "AM",
+    "NYSE", "OTC", "ITM", "OTM", "ATM",
+    "PUT", "CALL", "BUY", "SELL", "HOLD", "LONG", "SHORT",
+    "USDT", "USDC", "COVID",
+}
 
 
 def score_text(text: str) -> float:
@@ -134,14 +149,35 @@ class RedditSentimentCollector:
         return self._token
 
     def fetch_hot(self, subreddit: str, *, limit: int = 50) -> list[dict]:
+        return self._fetch_listing(subreddit, listing="hot", limit=limit)
+
+    def fetch_top(
+        self, subreddit: str, *, limit: int = 100, time_filter: str = "day"
+    ) -> list[dict]:
+        """Fetch top posts of the given time window (day/week/month/year/all)."""
+        return self._fetch_listing(
+            subreddit, listing="top", limit=limit, time_filter=time_filter
+        )
+
+    def _fetch_listing(
+        self,
+        subreddit: str,
+        *,
+        listing: str,
+        limit: int,
+        time_filter: str | None = None,
+    ) -> list[dict]:
         token = self._auth()
-        url = f"https://oauth.reddit.com/r/{subreddit}/hot"
+        url = f"https://oauth.reddit.com/r/{subreddit}/{listing}"
         headers = {"Authorization": f"bearer {token}"} if token else {}
+        params: dict[str, str | int] = {"limit": limit}
+        if time_filter is not None:
+            params["t"] = time_filter
         try:
-            resp = self._client.get(url, params={"limit": limit}, headers=headers)
+            resp = self._client.get(url, params=params, headers=headers)
             resp.raise_for_status()
         except Exception:
-            logger.warning("reddit fetch_hot failed", exc_info=True)
+            logger.warning("reddit fetch %s failed", listing, exc_info=True)
             return []
         data = resp.json().get("data", {}).get("children", [])
         return [child.get("data", {}) for child in data]
