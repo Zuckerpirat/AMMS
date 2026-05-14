@@ -382,6 +382,20 @@ def build_command_handlers(
             pass
         return "\n".join(lines)
 
+    def _isin(args: list[str]) -> str:
+        if not args:
+            return "usage: /isin SYM [SYM ...]  (e.g. /isin NVDA SPY)"
+        syms = [a.upper() for a in args]
+        try:
+            mapping = _isin_cache.lookup(syms)
+        except Exception as e:
+            return f"isin lookup failed: {e!r}"
+        lines = []
+        for sym in syms:
+            isin = mapping.get(sym, "")
+            lines.append(f"{sym}: {isin or '— not found'}")
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -394,6 +408,7 @@ def build_command_handlers(
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
+            "/isin SYM — look up the ISIN for a ticker (debug)\n"
             "/buylist — preview what the bot would buy/sell right now\n"
             "/pause — stop placing new orders\n"
             "/resume — re-enable placing orders\n"
@@ -407,6 +422,7 @@ def build_command_handlers(
         "signals": _signals,
         "lastorders": _lastorders,
         "scan": _scan,
+        "isin": _isin,
         "wsb": _scan,  # alias
         "buylist": _buylist,
         "preview": _buylist,  # alias
