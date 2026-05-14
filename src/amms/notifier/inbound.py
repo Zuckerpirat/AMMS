@@ -151,6 +151,7 @@ def build_command_handlers(
     db_path=None,
     static_watchlist: tuple[str, ...] | list[str] = (),
     get_wsb_extras: Callable[[], set[str]] | None = None,
+    data=None,
 ) -> dict[str, CommandHandler]:
     """Construct the default command handler table.
 
@@ -264,7 +265,14 @@ def build_command_handlers(
                 )
         except Exception as e:
             return f"WSB scan failed: {e!r}"
-        return format_summary(results)
+
+        prices: dict[str, dict[str, float]] = {}
+        if data is not None and results:
+            try:
+                prices = data.get_snapshots([r.symbol for r in results])
+            except Exception:
+                prices = {}
+        return format_summary(results, prices=prices)
 
     def _lastorders(_args: list[str]) -> str:
         if conn is None:

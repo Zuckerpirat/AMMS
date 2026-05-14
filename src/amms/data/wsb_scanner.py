@@ -188,15 +188,30 @@ class WSBScanner:
         return results
 
 
-def format_summary(results: list[TrendingTicker]) -> str:
-    """Render a compact text summary suitable for Telegram or stdout."""
+def format_summary(
+    results: list[TrendingTicker],
+    *,
+    prices: dict[str, dict[str, float]] | None = None,
+) -> str:
+    """Render a compact text summary suitable for Telegram or stdout.
+
+    If ``prices`` is provided ({symbol: {price, change_pct}}), the current
+    price and daily change are appended per line.
+    """
     if not results:
         return "WSB-Scan: keine Treffer (Mindesterwähnungen unterschritten)."
     lines = ["WSB Trending Tickers:"]
     for i, t in enumerate(results, start=1):
-        lines.append(
-            f"{i:>2}. {t.symbol:<6} {t.mentions:>3}x  "
-            f"({t.label}, score={t.avg_sentiment:+.2f}, "
-            f"+{t.bullish_posts}/-{t.bearish_posts})"
-        )
+        line = f"{i:>2}. {t.symbol:<6} {t.mentions:>3}x"
+        if prices and t.symbol in prices:
+            p = prices[t.symbol]
+            arrow = "▲" if p["change_pct"] >= 0 else "▼"
+            line += f"  ${p['price']:.2f} {arrow}{p['change_pct']:+.2f}%"
+        # Only show sentiment columns when we actually have signal there.
+        if t.avg_sentiment != 0 or t.bullish_posts or t.bearish_posts:
+            line += (
+                f"  ({t.label}, score={t.avg_sentiment:+.2f}, "
+                f"+{t.bullish_posts}/-{t.bearish_posts})"
+            )
+        lines.append(line)
     return "\n".join(lines)

@@ -180,6 +180,24 @@ def test_scan_uses_apewisdom_when_no_collector_and_no_reddit_creds(
     assert "RARE" not in symbols  # below min_mentions
 
 
+def test_format_summary_renders_prices_when_provided() -> None:
+    posts = {
+        "wallstreetbets": [
+            _post("NVDA rocket"),
+            _post("NVDA moon"),
+            _post("NVDA squeeze"),
+        ],
+    }
+    scanner = WSBScanner(
+        collector=_FakeCollector(posts), subreddits=("wallstreetbets",)
+    )
+    results = scanner.scan(min_mentions=2)
+    prices = {"NVDA": {"price": 875.12, "prev_close": 850.0, "change_pct": 2.96}}
+    text = format_summary(results, prices=prices)
+    assert "$875.12" in text
+    assert "+2.96%" in text
+
+
 @respx.mock
 def test_apewisdom_failure_returns_empty(monkeypatch) -> None:
     monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)

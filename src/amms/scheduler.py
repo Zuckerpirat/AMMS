@@ -163,6 +163,7 @@ def run_loop(
                     db_path=settings.db_path,
                     static_watchlist=config.watchlist,
                     get_wsb_extras=lambda: set(state.wsb_discovery.extras),
+                    data=data,
                 )
                 inbound = TelegramInbound(token=token, chat_id=chat_id, handlers=handlers)
                 inbound.start()

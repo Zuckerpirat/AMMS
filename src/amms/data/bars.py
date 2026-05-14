@@ -52,6 +52,53 @@ class MarketDataClient:
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
+    def get_snapshots(
+        self, symbols: list[str], *, feed: str = "iex"
+    ) -> dict[str, dict[str, float]]:
+        """Return latest price + daily change for each symbol.
+
+        Output: {symbol: {"price": float, "prev_close": float, "change_pct": float}}.
+        Missing/failed symbols are simply omitted from the result.
+        """
+        if not symbols:
+            return {}
+        params = {
+            "symbols": ",".join(s.upper() for s in symbols),
+            "feed": feed,
+        }
+        try:
+            resp = self._client.get(
+                f"{self._base_url}/v2/stocks/snapshots", params=params
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            return {}
+        out: dict[str, dict[str, float]] = {}
+        snapshots = data.get("snapshots") or data
+        for sym, snap in snapshots.items():
+            if not isinstance(snap, dict):
+                continue
+            trade = snap.get("latestTrade") or {}
+            prev = snap.get("prevDailyBar") or {}
+            price = trade.get("p")
+            prev_close = prev.get("c")
+            if price is None or prev_close in (None, 0):
+                if price is not None:
+                    out[sym.upper()] = {
+                        "price": float(price),
+                        "prev_close": 0.0,
+                        "change_pct": 0.0,
+                    }
+                continue
+            change_pct = (float(price) - float(prev_close)) / float(prev_close) * 100
+            out[sym.upper()] = {
+                "price": float(price),
+                "prev_close": float(prev_close),
+                "change_pct": change_pct,
+            }
+        return out
+
     def get_bars(
         self,
         symbol: str,
