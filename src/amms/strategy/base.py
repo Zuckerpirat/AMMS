@@ -35,14 +35,30 @@ class Strategy(Protocol):
         ...
 
 
+_STRATEGY_REGISTRY: dict[str, type] = {}
+
+
+def register_strategy(name: str, cls: type) -> None:
+    """Register a Strategy class under ``name`` so it can be built via
+    ``build_strategy(name, params)`` and named in config.yaml."""
+    _STRATEGY_REGISTRY[name] = cls
+
+
+def registered_strategies() -> dict[str, type]:
+    return dict(_STRATEGY_REGISTRY)
+
+
 def build_strategy(name: str, params: dict[str, Any]) -> Strategy:
     """Construct a strategy by name."""
-    if name == "sma_cross":
+    if name not in _STRATEGY_REGISTRY:
+        # Lazy-import the built-ins so they show up after first import.
+        from amms.strategy.composite import CompositeStrategy
         from amms.strategy.sma_cross import SmaCross
 
-        return SmaCross(**params)
-    if name == "composite":
-        from amms.strategy.composite import CompositeStrategy
-
-        return CompositeStrategy(**params)
-    raise ValueError(f"Unknown strategy: {name!r}")
+        _STRATEGY_REGISTRY.setdefault("sma_cross", SmaCross)
+        _STRATEGY_REGISTRY.setdefault("composite", CompositeStrategy)
+    cls = _STRATEGY_REGISTRY.get(name)
+    if cls is None:
+        known = ", ".join(sorted(_STRATEGY_REGISTRY)) or "(none)"
+        raise ValueError(f"Unknown strategy: {name!r}. Known: {known}")
+    return cls(**params)

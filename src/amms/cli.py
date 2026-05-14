@@ -687,6 +687,33 @@ def summary_today(llm: bool = typer.Option(False, "--llm")) -> None:
     console.print(plain)
 
 
+@app.command(name="list-strategies")
+def list_strategies() -> None:
+    """List registered strategies and their parameters."""
+    import contextlib
+
+    from amms.strategy.base import build_strategy, registered_strategies
+
+    # Touch build_strategy to lazy-register the built-ins.
+    with contextlib.suppress(Exception):
+        build_strategy("sma_cross", {})
+    reg = registered_strategies()
+    table = Table(title="strategies")
+    table.add_column("name")
+    table.add_column("class")
+    table.add_column("fields")
+    import dataclasses
+
+    for name in sorted(reg):
+        cls = reg[name]
+        try:
+            field_names = ", ".join(f.name for f in dataclasses.fields(cls))
+        except TypeError:
+            field_names = "—"
+        table.add_row(name, cls.__name__, field_names)
+    console.print(table)
+
+
 @app.command()
 def doctor() -> None:
     """Pre-flight self-check. Validates env, config, DB, and Alpaca reach.
