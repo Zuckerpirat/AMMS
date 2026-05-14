@@ -78,6 +78,7 @@ def run_tick(
     metrics.observe("amms_equity_dollars", account.equity)
     metrics.observe("amms_cash_dollars", account.cash)
     metrics.observe("amms_daytrade_count", float(account.daytrade_count))
+    metrics.observe("amms_last_tick_unix", datetime.now(UTC).timestamp())
     positions = {p.symbol: p for p in broker.get_positions()}
     open_orders = broker.list_orders(status="open")
     pending_buys = {o.symbol for o in open_orders if o.side == "buy"}

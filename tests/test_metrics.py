@@ -37,3 +37,14 @@ def test_metrics_server_serves_endpoint() -> None:
         assert "amms_test_counter" in body
     finally:
         server.shutdown()
+
+
+def test_healthz_endpoint() -> None:
+    server = start_metrics_server(port=0)
+    port = server.server_port
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz") as resp:
+            assert resp.read() == b"ok\n"
+            assert resp.status == 200
+    finally:
+        server.shutdown()

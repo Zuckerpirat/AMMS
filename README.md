@@ -11,6 +11,7 @@ VPS and is controlled from a Windows PC over SSH and Telegram.
   actually run the bot.
 - [`docs/PROFILES.md`](docs/PROFILES.md) — three example `config.yaml` shapes
   (swing, day-trade, penny-stock) you can paste into `config.yaml`.
+- [`docs/OPS.md`](docs/OPS.md) — daily checks, backups, metrics, updates.
 - [`docs/DESIGN.md`](docs/DESIGN.md) — full architecture and phased plan.
 
 ## Quick start (local dev)
