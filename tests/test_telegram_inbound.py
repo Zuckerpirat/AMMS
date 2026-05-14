@@ -70,6 +70,79 @@ def test_positions_handler() -> None:
     assert "AAPL" in out
 
 
+def test_help_lists_scan_command() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["help"]()
+    assert "/scan" in out
+
+
+def test_scan_handler_returns_formatted_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch WSBScanner so the handler runs without hitting Reddit."""
+    from amms.data import wsb_scanner as scanner_mod
+
+    class _FakeScanner:
+        def __init__(self, *a, **kw) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc) -> None:
+            return None
+
+        def scan(self, **_kw):
+            return [
+                scanner_mod.TrendingTicker(
+                    symbol="NVDA",
+                    mentions=42,
+                    avg_sentiment=0.7,
+                    bullish_posts=30,
+                    bearish_posts=2,
+                ),
+                scanner_mod.TrendingTicker(
+                    symbol="GME",
+                    mentions=15,
+                    avg_sentiment=-0.4,
+                    bullish_posts=3,
+                    bearish_posts=10,
+                ),
+            ]
+
+    monkeypatch.setattr(scanner_mod, "WSBScanner", _FakeScanner)
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["scan"]()
+    assert "NVDA" in out
+    assert "GME" in out
+    assert "Trending" in out
+
+
+def test_wsb_alias_routes_to_scan_handler() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["wsb"] is h["scan"]
+
+
+def test_scan_handler_returns_friendly_error_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from amms.data import wsb_scanner as scanner_mod
+
+    class _BoomScanner:
+        def __init__(self, *a, **kw) -> None:
+            raise RuntimeError("reddit auth blew up")
+
+    monkeypatch.setattr(scanner_mod, "WSBScanner", _BoomScanner)
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["scan"]()
+    assert out.startswith("WSB scan failed")
+    assert "reddit auth blew up" in out
+
+
 @respx.mock
 def test_inbound_dispatches_status_command(monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end: a Telegram update with /status text triggers the handler
