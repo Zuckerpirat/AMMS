@@ -82,6 +82,58 @@ def upsert_order(conn: sqlite3.Connection, order: Order) -> None:
     )
 
 
+def upsert_features(
+    conn: sqlite3.Connection,
+    ts: str,
+    symbol: str,
+    features: dict[str, float],
+) -> int:
+    """Persist a per-symbol feature snapshot. Returns row count written."""
+    if not features:
+        return 0
+    rows = [(ts, symbol, name, float(value)) for name, value in features.items()]
+    conn.executemany(
+        """
+        INSERT INTO features(ts, symbol, name, value)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(ts, symbol, name) DO UPDATE SET value = excluded.value
+        """,
+        rows,
+    )
+    return len(rows)
+
+
+def bought_today(conn: sqlite3.Connection, symbol: str) -> bool:
+    """True iff there's a BUY for ``symbol`` recorded today (UTC).
+
+    Used by the PDT guard to detect that a sell would create a day-trade.
+    """
+    today_iso = datetime.now(UTC).date().isoformat()
+    row = conn.execute(
+        "SELECT 1 FROM orders WHERE symbol = ? AND side = 'buy' "
+        "AND substr(submitted_at, 1, 10) = ? LIMIT 1",
+        (symbol, today_iso),
+    ).fetchone()
+    return row is not None
+
+
+def latest_buy_submitted_at(
+    conn: sqlite3.Connection, symbol: str
+) -> str | None:
+    """ISO timestamp of the most recent BUY we recorded for ``symbol``, or None.
+
+    Used to enforce min_hold_days: even if a sell signal fires, we refuse
+    to close a position we just opened.
+    """
+    row = conn.execute(
+        "SELECT max(submitted_at) FROM orders WHERE symbol = ? AND side = 'buy'",
+        (symbol,),
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    return row[0]
+
+
 def insert_equity_snapshot(conn: sqlite3.Connection, account: Account) -> str:
     ts = datetime.now(UTC).isoformat()
     conn.execute(

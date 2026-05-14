@@ -12,6 +12,10 @@ watchlist:
 
 strategy:
   name: sma_cross
+  # 1Day for swing/positions, 5Min or 15Min for day trading. Whatever you
+  # pick here is fetched live and used in the backtest, so the two stay
+  # in lockstep.
+  timeframe: 1Day
   params:
     fast: 10
     slow: 30
@@ -22,7 +26,30 @@ risk:
   daily_loss_pct: -0.03
   blackout_minutes_after_open: 5
   blackout_minutes_before_close: 5
+  # Optional. Caps how many buys a single tick may submit. With the composite
+  # strategy, the highest-scoring signals win. Comment out to disable.
+  # max_buys_per_tick: 3
+  # Optional. Refuse to act on sell signals before a position has been held
+  # this many days. 0 (default) = exit as soon as the strategy says so. Use
+  # ~2 for swing trading so small dips don't shake you out.
+  min_hold_days: 0
+  # Pattern Day Trader guard. Below pdt_min_equity, refuse sells that would
+  # create the (pdt_max_day_trades + 1)-th day-trade in a rolling 5-day window.
+  pdt_min_equity: 25000
+  pdt_max_day_trades: 3
+  # Day-trading profile: flatten ALL positions this many minutes before
+  # market close. 0 (default) = off; use ~15 for an intraday profile.
+  force_close_minutes_before_close: 0
 
 scheduler:
   tick_seconds: 60
   timezone: America/New_York
+
+# Pre-trade gate: BUY signals are blocked unless the symbol clears these
+# thresholds. SELL signals are never filtered so you can always exit. All
+# defaults are inert; uncomment values to activate.
+universe:
+  # min_price: 1.00            # block sub-$1 names (penny-stock floor)
+  # max_price: 500.00          # optional upper bound
+  # min_avg_dollar_volume: 1000000   # 20-day average close*volume in USD
+  adv_lookback: 20

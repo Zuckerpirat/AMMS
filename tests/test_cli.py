@@ -6,7 +6,6 @@ import httpx
 import respx
 from typer.testing import CliRunner
 
-from amms import __version__
 from amms.cli import app
 
 runner = CliRunner()
@@ -19,10 +18,20 @@ def test_help_works() -> None:
     assert "paper trading" in result.stdout.lower()
 
 
-def test_run_prints_ready_banner() -> None:
-    result = runner.invoke(app, ["run"])
+def test_run_help_advertises_execute_flag() -> None:
+    result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert f"amms {__version__} ready" in result.stdout
+    assert "--execute" in result.stdout
+    assert "dry run" in result.stdout.lower()
+
+
+def test_run_refuses_without_paper_url(monkeypatch) -> None:
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_API_SECRET", "s")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://api.alpaca.markets")
+    result = runner.invoke(app, ["run"])
+    assert result.exit_code == 2
+    assert "paper" in result.stdout.lower()
 
 
 def test_status_refuses_without_paper_url(monkeypatch) -> None:
@@ -34,10 +43,66 @@ def test_status_refuses_without_paper_url(monkeypatch) -> None:
     assert "paper" in result.stdout.lower()
 
 
-def test_backtest_not_implemented_yet(paper_env) -> None:
-    result = runner.invoke(app, ["backtest"])
+def test_backtest_errors_when_db_empty(paper_env_with_config) -> None:
+    result = runner.invoke(
+        app,
+        ["backtest", "--from", "2025-01-01", "--to", "2025-01-31"],
+    )
     assert result.exit_code != 0
-    assert isinstance(result.exception, NotImplementedError)
+    assert "no bars" in result.stdout.lower()
+
+
+def test_backtest_runs_against_seeded_bars(paper_env_with_config, tmp_path) -> None:
+    from amms import db
+    from amms.data.bars import Bar
+    from amms.data.bars import upsert_bars as upsert_bars_fn
+
+    conn = db.connect(paper_env_with_config["AMMS_DB_PATH"])
+    db.migrate(conn)
+    data = [
+        ("2025-01-02", 1.0, 1.0),
+        ("2025-01-03", 1.0, 1.0),
+        ("2025-01-06", 1.0, 1.0),
+        ("2025-01-07", 1.0, 1.0),
+        ("2025-01-08", 1.0, 1.0),
+        ("2025-01-09", 1.0, 1.0),
+        ("2025-01-10", 10.0, 10.0),
+        ("2025-01-13", 10.0, 11.0),
+    ]
+    upsert_bars_fn(
+        conn,
+        [
+            Bar(
+                symbol="AAPL",
+                timeframe="1Day",
+                ts=f"{d}T05:00:00Z",
+                open=o,
+                high=max(o, c),
+                low=min(o, c),
+                close=c,
+                volume=100,
+            )
+            for d, o, c in data
+        ],
+    )
+    conn.close()
+
+    out_csv = tmp_path / "trades.csv"
+    result = runner.invoke(
+        app,
+        [
+            "backtest",
+            "--from", "2025-01-01",
+            "--to", "2025-01-31",
+            "--symbols", "AAPL",
+            "--initial-equity", "1000",
+            "--output", str(out_csv),
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Backtest" in result.stdout
+    assert "total return" in result.stdout
+    assert out_csv.exists()
 
 
 def test_init_db_creates_schema(paper_env) -> None:
@@ -203,6 +268,7 @@ def test_tick_dry_run_prints_signals_without_orders(paper_env_with_config) -> No
         )
     )
     respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
     orders_route = respx.post(f"{PAPER_URL}/v2/orders")
 
     result = runner.invoke(app, ["tick"])
@@ -236,6 +302,7 @@ def test_tick_execute_places_order_when_allowed(paper_env_with_config) -> None:
         )
     )
     respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
     orders_route = respx.post(f"{PAPER_URL}/v2/orders").mock(
         return_value=httpx.Response(
             200,
@@ -294,6 +361,7 @@ def test_tick_does_not_buy_when_already_holding(paper_env_with_config) -> None:
             ],
         )
     )
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
     orders_route = respx.post(f"{PAPER_URL}/v2/orders")
 
     result = runner.invoke(app, ["tick", "--execute"])

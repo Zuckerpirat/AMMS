@@ -10,6 +10,13 @@ class RiskConfig:
     daily_loss_pct: float = -0.03
     blackout_minutes_after_open: int = 5
     blackout_minutes_before_close: int = 5
+    max_buys_per_tick: int | None = None
+    min_hold_days: int = 0
+    pdt_min_equity: float = 25_000.0
+    pdt_max_day_trades: int = 3
+    # When set, flatten all open positions when fewer than this many minutes
+    # remain until market close. Useful for day-trading profiles. 0 = off.
+    force_close_minutes_before_close: int = 0
 
     def __post_init__(self) -> None:
         if not 0 < self.max_position_pct <= 1:
@@ -18,6 +25,21 @@ class RiskConfig:
             raise ValueError(f"daily_loss_pct must be negative, got {self.daily_loss_pct}")
         if self.max_open_positions <= 0:
             raise ValueError(f"max_open_positions must be > 0, got {self.max_open_positions}")
+        if self.max_buys_per_tick is not None and self.max_buys_per_tick <= 0:
+            raise ValueError(
+                f"max_buys_per_tick must be > 0 or None, got {self.max_buys_per_tick}"
+            )
+        if self.min_hold_days < 0:
+            raise ValueError(f"min_hold_days must be >= 0, got {self.min_hold_days}")
+        if self.pdt_min_equity < 0:
+            raise ValueError(f"pdt_min_equity must be >= 0, got {self.pdt_min_equity}")
+        if self.pdt_max_day_trades < 0:
+            raise ValueError(f"pdt_max_day_trades must be >= 0, got {self.pdt_max_day_trades}")
+        if self.force_close_minutes_before_close < 0:
+            raise ValueError(
+                f"force_close_minutes_before_close must be >= 0, got "
+                f"{self.force_close_minutes_before_close}"
+            )
 
 
 @dataclass(frozen=True)

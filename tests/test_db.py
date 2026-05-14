@@ -25,7 +25,84 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     assert applied_second == 0
     rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     table_names = {r[0] for r in rows}
-    assert {"bars", "orders", "equity_snapshots", "signals"} <= table_names
+    assert {"bars", "orders", "equity_snapshots", "signals", "features"} <= table_names
+    signal_cols = {r[1] for r in conn.execute("PRAGMA table_info(signals)")}
+    assert "score" in signal_cols
+    conn.close()
+
+
+def test_upsert_features_inserts_and_updates(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    db.upsert_features(conn, "2026-05-13T14:00:00Z", "AAPL", {"momentum_20d": 0.05})
+    db.upsert_features(conn, "2026-05-13T14:00:00Z", "AAPL", {"momentum_20d": 0.07})
+    rows = conn.execute(
+        "SELECT name, value FROM features WHERE symbol=?", ("AAPL",)
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "momentum_20d"
+    assert rows[0]["value"] == pytest.approx(0.07)
+    conn.close()
+
+
+def test_upsert_features_handles_empty(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    assert db.upsert_features(conn, "ts", "AAPL", {}) == 0
+    conn.close()
+
+
+def test_bought_today_false_when_no_orders(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    assert db.bought_today(conn, "AAPL") is False
+    conn.close()
+
+
+def test_bought_today_true_for_today_buy(tmp_path: Path) -> None:
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    today = _datetime.now(_UTC).isoformat()
+    conn.execute(
+        "INSERT INTO orders("
+        "id, client_order_id, symbol, side, qty, type, status, submitted_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("o-t", "c-t", "AAPL", "buy", 1.0, "market", "filled", today),
+    )
+    assert db.bought_today(conn, "AAPL") is True
+    assert db.bought_today(conn, "MSFT") is False
+    conn.close()
+
+
+def test_latest_buy_submitted_at_returns_none_when_no_buys(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    assert db.latest_buy_submitted_at(conn, "AAPL") is None
+    conn.close()
+
+
+def test_latest_buy_submitted_at_returns_max_for_symbol(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    rows = [
+        ("o-1", "c-1", "AAPL", "buy", 1.0, "market", "filled", "2026-05-10T14:00:00Z"),
+        ("o-2", "c-2", "AAPL", "buy", 1.0, "market", "filled", "2026-05-12T14:00:00Z"),
+        ("o-3", "c-3", "MSFT", "buy", 1.0, "market", "filled", "2026-05-13T14:00:00Z"),
+        ("o-4", "c-4", "AAPL", "sell", 1.0, "market", "filled", "2026-05-14T14:00:00Z"),
+    ]
+    for row in rows:
+        conn.execute(
+            "INSERT INTO orders("
+            "id, client_order_id, symbol, side, qty, type, status, submitted_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            row,
+        )
+    assert db.latest_buy_submitted_at(conn, "AAPL") == "2026-05-12T14:00:00Z"
+    assert db.latest_buy_submitted_at(conn, "MSFT") == "2026-05-13T14:00:00Z"
+    assert db.latest_buy_submitted_at(conn, "NVDA") is None
     conn.close()
 
 
@@ -68,7 +145,10 @@ def test_orders_side_check_rejects_invalid_side(conn) -> None:
 
 
 def test_insert_equity_snapshot(conn) -> None:
-    account = Account(equity=100000.0, cash=50000.0, buying_power=50000.0, status="ACTIVE", raw={})
+    account = Account(
+        equity=100000.0, cash=50000.0, buying_power=50000.0,
+        status="ACTIVE", daytrade_count=0, raw={},
+    )
     ts = db.insert_equity_snapshot(conn, account)
     row = conn.execute("SELECT * FROM equity_snapshots WHERE ts=?", (ts,)).fetchone()
     assert row["equity"] == pytest.approx(100000.0)

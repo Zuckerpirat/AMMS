@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from amms.filters.universe import UniverseFilter
 from amms.risk.rules import RiskConfig
 
 PAPER_HOST_MARKER = "paper-api"
@@ -70,6 +71,11 @@ def load_settings(env_file: Path | None = None) -> Settings:
 class StrategyConfig:
     name: str
     params: dict[str, Any] = field(default_factory=dict)
+    timeframe: str = "1Day"
+
+    def __post_init__(self) -> None:
+        if not self.timeframe.strip():
+            raise ConfigError("strategy.timeframe must not be empty")
 
 
 @dataclass(frozen=True)
@@ -84,6 +90,7 @@ class AppConfig:
     strategy: StrategyConfig
     risk: RiskConfig
     scheduler: SchedulerConfig
+    universe: UniverseFilter = field(default_factory=UniverseFilter)
 
     def __post_init__(self) -> None:
         if not self.watchlist:
@@ -121,15 +128,25 @@ def load_app_config(path: Path | None = None) -> AppConfig:
     strategy = StrategyConfig(
         name=str(strategy_raw["name"]),
         params=dict(strategy_raw.get("params") or {}),
+        timeframe=str(strategy_raw.get("timeframe", "1Day")),
     )
 
     risk_raw = raw.get("risk") or {}
+    max_buys_raw = risk_raw.get("max_buys_per_tick")
+    max_buys_per_tick = int(max_buys_raw) if max_buys_raw is not None else None
     risk = RiskConfig(
         max_open_positions=int(risk_raw.get("max_open_positions", 5)),
         max_position_pct=float(risk_raw.get("max_position_pct", 0.02)),
         daily_loss_pct=float(risk_raw.get("daily_loss_pct", -0.03)),
         blackout_minutes_after_open=int(risk_raw.get("blackout_minutes_after_open", 5)),
         blackout_minutes_before_close=int(risk_raw.get("blackout_minutes_before_close", 5)),
+        max_buys_per_tick=max_buys_per_tick,
+        min_hold_days=int(risk_raw.get("min_hold_days", 0)),
+        pdt_min_equity=float(risk_raw.get("pdt_min_equity", 25_000)),
+        pdt_max_day_trades=int(risk_raw.get("pdt_max_day_trades", 3)),
+        force_close_minutes_before_close=int(
+            risk_raw.get("force_close_minutes_before_close", 0)
+        ),
     )
 
     sched_raw = raw.get("scheduler") or {}
@@ -138,9 +155,20 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         timezone=str(sched_raw.get("timezone", "America/New_York")),
     )
 
+    universe_raw = raw.get("universe") or {}
+    max_price_raw = universe_raw.get("max_price")
+    universe = UniverseFilter(
+        min_price=float(universe_raw.get("min_price", 0.0)),
+        max_price=float(max_price_raw) if max_price_raw is not None else None,
+        min_avg_dollar_volume=float(universe_raw.get("min_avg_dollar_volume", 0.0)),
+        adv_lookback=int(universe_raw.get("adv_lookback", 20)),
+        require_tradable=bool(universe_raw.get("require_tradable", False)),
+    )
+
     return AppConfig(
         watchlist=watchlist,
         strategy=strategy,
         risk=risk,
         scheduler=scheduler,
+        universe=universe,
     )

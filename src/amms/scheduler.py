@@ -1,0 +1,286 @@
+from __future__ import annotations
+
+import logging
+import os
+import signal
+import sqlite3
+import threading
+from dataclasses import dataclass, field
+
+from amms import db
+from amms.broker import AlpacaClient
+from amms.clock import ClockStatus
+from amms.config import AppConfig, Settings
+from amms.data import MarketDataClient
+from amms.executor import TickResult, build_daily_summary, run_tick
+from amms.features.sentiment import RedditSentimentCollector
+from amms.metrics import start_metrics_server
+from amms.notifier import (
+    Notifier,
+    NullNotifier,
+    PauseFlag,
+    TelegramInbound,
+    build_command_handlers,
+    build_notifier,
+)
+from amms.notifier.llm_summary import augment_summary
+from amms.strategy import build_strategy
+from amms.strategy.composite import set_sentiment_overlay
+
+logger = logging.getLogger(__name__)
+
+WHILE_CLOSED_POLL_SECONDS = 60
+
+
+@dataclass
+class LoopState:
+    last_saw_open: bool | None = None
+    sent_summary_dates: set[str] = field(default_factory=set)
+    last_sentiment_refresh_ts: float = 0.0
+    consecutive_tick_errors: int = 0
+
+
+MAX_CONSECUTIVE_TICK_ERRORS = 5
+
+
+SENTIMENT_REFRESH_SECONDS = 3600  # hourly
+
+
+def _maybe_refresh_sentiment(
+    state: LoopState, watchlist: set[str], now_seconds: float
+) -> None:
+    if now_seconds - state.last_sentiment_refresh_ts < SENTIMENT_REFRESH_SECONDS:
+        return
+    state.last_sentiment_refresh_ts = now_seconds
+    if not os.environ.get("REDDIT_CLIENT_ID", "").strip():
+        return
+    try:
+        with RedditSentimentCollector() as coll:
+            agg = coll.aggregate(watchlist=watchlist)
+        scores = {sym: r.avg_score for sym, r in agg.items()}
+        set_sentiment_overlay(scores)
+        logger.info("refreshed sentiment overlay: %d symbols", len(scores))
+    except Exception:
+        logger.warning("sentiment refresh failed", exc_info=True)
+
+
+def _install_signal_handlers(stop: threading.Event) -> None:
+    def handler(signum: int, _frame: object) -> None:
+        logger.info("signal %s received; stopping", signum)
+        stop.set()
+
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+
+
+def run_loop(
+    settings: Settings,
+    config: AppConfig,
+    *,
+    execute: bool = False,
+    notifier: Notifier | None = None,
+    stop: threading.Event | None = None,
+    install_signal_handlers: bool = True,
+    bars_back: int = 90,
+) -> None:
+    """Drive the bot. Ticks during US market hours; idles otherwise.
+
+    `execute=False` is a dry run that produces signals but no orders. The hard
+    paper-only guarantee still applies via the broker base-URL check.
+    """
+    stop = stop if stop is not None else threading.Event()
+    if install_signal_handlers:
+        _install_signal_handlers(stop)
+
+    notifier = notifier if notifier is not None else build_notifier()
+    strategy = build_strategy(config.strategy.name, config.strategy.params)
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    pause = PauseFlag()
+
+    mode = "live (paper)" if execute else "dry-run"
+    logger.info("amms scheduler starting in %s mode", mode)
+    notifier.send(f"amms started ({mode})")
+
+    state = LoopState()
+    inbound: TelegramInbound | None = None
+    metrics_server = None
+    metrics_port_raw = os.environ.get("AMMS_METRICS_PORT", "").strip()
+    if metrics_port_raw:
+        try:
+            metrics_server = start_metrics_server(port=int(metrics_port_raw))
+        except Exception:
+            logger.exception("failed to start metrics server")
+    try:
+        with (
+            AlpacaClient(
+                settings.alpaca_api_key,
+                settings.alpaca_api_secret,
+                settings.alpaca_base_url,
+            ) as broker,
+            MarketDataClient(
+                settings.alpaca_api_key,
+                settings.alpaca_api_secret,
+                settings.alpaca_data_url,
+            ) as data,
+        ):
+            # Start inbound Telegram command poller if configured.
+            token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+            chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+            if token and chat_id:
+                handlers = build_command_handlers(
+                    broker=broker, pause=pause, conn=conn
+                )
+                inbound = TelegramInbound(token=token, chat_id=chat_id, handlers=handlers)
+                inbound.start()
+
+            while not stop.is_set():
+                try:
+                    clock = broker.get_clock()
+                except Exception:
+                    logger.exception("get_clock failed; retrying after backoff")
+                    stop.wait(30)
+                    continue
+
+                if not clock.is_open:
+                    _handle_closed(broker, conn, notifier, clock, state)
+                    if stop.wait(WHILE_CLOSED_POLL_SECONDS):
+                        break
+                    continue
+
+                state.last_saw_open = True
+                import time as _time
+
+                _maybe_refresh_sentiment(
+                    state, set(config.watchlist), _time.time()
+                )
+                # Force-close window: flatten remaining positions just before
+                # market close if config.risk.force_close_minutes_before_close
+                # is set. Day-trade profiles use this to avoid overnight risk.
+                if _in_force_close_window(clock, config.risk.force_close_minutes_before_close):
+                    try:
+                        ids = _force_close_all(broker, conn, execute=execute)
+                        for oid in ids:
+                            notifier.send(f"amms force-close placed sell {oid}")
+                    except Exception:
+                        logger.exception("force_close failed")
+
+                try:
+                    result = run_tick(
+                        broker=broker,
+                        data=data,
+                        conn=conn,
+                        config=config,
+                        strategy=strategy,
+                        bars_back=bars_back,
+                        execute=execute,
+                        paused=pause.paused,
+                    )
+                    _announce_tick(notifier, result)
+                    state.consecutive_tick_errors = 0
+                except Exception:
+                    logger.exception("tick failed")
+                    state.consecutive_tick_errors += 1
+                    notifier.send(
+                        f"amms tick failed "
+                        f"({state.consecutive_tick_errors}/{MAX_CONSECUTIVE_TICK_ERRORS})"
+                    )
+                    if state.consecutive_tick_errors >= MAX_CONSECUTIVE_TICK_ERRORS:
+                        pause.set_paused(True)
+                        notifier.send(
+                            "amms auto-paused after repeated tick errors. "
+                            "Use /resume after investigating."
+                        )
+
+                if stop.wait(config.scheduler.tick_seconds):
+                    break
+    finally:
+        if inbound is not None:
+            inbound.stop()
+        if metrics_server is not None:
+            metrics_server.shutdown()
+        conn.close()
+        notifier.send("amms stopped")
+        logger.info("amms scheduler stopped")
+
+
+def _handle_closed(
+    broker: AlpacaClient,
+    conn: sqlite3.Connection,
+    notifier: Notifier,
+    clock: ClockStatus,
+    state: LoopState,
+) -> None:
+    if state.last_saw_open is True:
+        today = clock.timestamp.date().isoformat()
+        if today not in state.sent_summary_dates:
+            try:
+                plain = build_daily_summary(broker, conn)
+                trades_today = _fetch_today_trades(conn, today)
+                summary = augment_summary(plain, trades_today=trades_today, conn=conn)
+                notifier.send(summary)
+                state.sent_summary_dates.add(today)
+            except Exception:
+                logger.exception("daily summary failed")
+    state.last_saw_open = False
+
+
+def _fetch_today_trades(conn: sqlite3.Connection, today_iso: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT symbol, side, qty, status, filled_avg_price "
+        "FROM orders WHERE substr(submitted_at, 1, 10) = ? ORDER BY submitted_at",
+        (today_iso,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _announce_tick(notifier: Notifier, result: TickResult) -> None:
+    if isinstance(notifier, NullNotifier):
+        return
+    buy_count = len(
+        [s for s in result.signals if s.kind == "buy"]
+    )
+    sell_count = len(
+        [s for s in result.signals if s.kind == "sell"]
+    )
+    if result.placed_order_ids:
+        notifier.send(
+            f"amms tick: placed {len(result.placed_order_ids)} order(s) "
+            f"(signals: {buy_count} buy / {sell_count} sell)"
+        )
+
+
+def _in_force_close_window(clock: ClockStatus, minutes_before_close: int) -> bool:
+    """True if `minutes_before_close > 0` and we are within that window."""
+    if minutes_before_close <= 0:
+        return False
+    remaining_seconds = (clock.next_close - clock.timestamp).total_seconds()
+    return 0 < remaining_seconds <= minutes_before_close * 60
+
+
+def _force_close_all(
+    broker: AlpacaClient,
+    conn: sqlite3.Connection,
+    *,
+    execute: bool,
+) -> list[str]:
+    """Close every open position via market sell. Returns submitted order IDs."""
+    from amms.db import upsert_order
+
+    positions = broker.get_positions()
+    open_sells = {
+        o.symbol for o in broker.list_orders(status="open") if o.side == "sell"
+    }
+    placed: list[str] = []
+    for pos in positions:
+        if pos.symbol in open_sells:
+            continue
+        if pos.qty <= 0:
+            continue
+        if not execute:
+            logger.info("force-close dry-run: would sell %s %s", pos.qty, pos.symbol)
+            continue
+        order = broker.submit_order(pos.symbol, pos.qty, "sell")
+        upsert_order(conn, order)
+        placed.append(order.id)
+    return placed
