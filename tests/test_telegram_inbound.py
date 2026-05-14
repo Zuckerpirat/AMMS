@@ -361,7 +361,7 @@ def test_today_handler_returns_snapshot() -> None:
     conn.execute(
         "INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?)",
         ("1", "c1", "NVDA", "buy", 5, "market", "filled",
-         f"{today_iso}T15:00:00+00:00", None, None),
+         f"{today_iso}T15:00:00+00:00", None, 487.30),
     )
     conn.commit()
     p = PauseFlag()
@@ -371,7 +371,45 @@ def test_today_handler_returns_snapshot() -> None:
     assert "P&L today" in out
     assert "Trades today" in out
     assert "NVDA" in out
+    assert "$487.30" in out
+    assert "$2,436.50" in out  # 5 * 487.30
     assert "Equity:" in out
+
+
+def test_set_show_unset_handlers() -> None:
+    import sqlite3 as _sqlite
+    conn = _sqlite.connect(":memory:")
+    conn.row_factory = _sqlite.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    # /show with nothing
+    assert "no runtime overrides" in h["show"]([])
+    # /set
+    out = h["set"](["stop_loss", "0.05"])
+    assert "stop_loss = 0.05" in out
+    # /show after set
+    out = h["show"]([])
+    assert "stop_loss" in out and "0.05" in out
+    # /set with invalid value
+    out = h["set"](["stop_loss", "1.5"])
+    assert "rejected" in out
+    # /unset
+    out = h["unset"](["stop_loss"])
+    assert "removed" in out
+    # /set with bad key
+    out = h["set"](["nope", "1"])
+    assert "rejected" in out
+
+
+def test_set_handler_usage_when_no_args() -> None:
+    import sqlite3 as _sqlite
+    conn = _sqlite.connect(":memory:")
+    conn.row_factory = _sqlite.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["set"]([])
+    assert "usage" in out
+    assert "stop_loss" in out
 
 
 def test_today_handler_without_db_still_runs() -> None:

@@ -299,7 +299,7 @@ def build_command_handlers(
         if conn is None:
             return "DB not wired."
         rows = conn.execute(
-            "SELECT submitted_at, symbol, side, qty, status "
+            "SELECT submitted_at, symbol, side, qty, status, filled_avg_price "
             "FROM orders ORDER BY submitted_at DESC LIMIT 10"
         ).fetchall()
         if not rows:
@@ -315,6 +315,13 @@ def build_command_handlers(
                 f"{r['submitted_at'][:16]} {r['side'].upper()} {r['qty']:g} "
                 f"{r['symbol']} [{r['status']}]"
             )
+            price = r["filled_avg_price"]
+            if price is not None:
+                try:
+                    notional = float(r["qty"]) * float(price)
+                    line += f" @ ${float(price):.2f} = ${notional:,.2f}"
+                except (TypeError, ValueError):
+                    pass
             if isins.get(r["symbol"]):
                 line += f"  ISIN {isins[r['symbol']]}"
             lines.append(line)
@@ -401,6 +408,49 @@ def build_command_handlers(
             pass
         return "\n".join(lines)
 
+    def _set(args: list[str]) -> str:
+        if conn is None:
+            return "DB not wired."
+        from amms.runtime_overrides import allowed_keys, set_override
+
+        if len(args) < 2:
+            keys = "\n".join(f"  {k} — {desc}" for k, desc in allowed_keys().items())
+            return f"usage: /set KEY VALUE\nAllowed keys:\n{keys}"
+        key = args[0].lower()
+        raw_value = args[1]
+        try:
+            value = set_override(conn, key, raw_value)
+        except ValueError as e:
+            return f"/set rejected: {e}"
+        return f"set {key} = {value} (applies on next tick)"
+
+    def _unset(args: list[str]) -> str:
+        if conn is None:
+            return "DB not wired."
+        from amms.runtime_overrides import unset_override
+
+        if not args:
+            return "usage: /unset KEY"
+        key = args[0].lower()
+        try:
+            removed = unset_override(conn, key)
+        except ValueError as e:
+            return f"/unset rejected: {e}"
+        return f"{key} removed" if removed else f"{key} was not set"
+
+    def _show(_args: list[str]) -> str:
+        if conn is None:
+            return "DB not wired."
+        from amms.runtime_overrides import get_overrides
+
+        overrides = get_overrides(conn)
+        if not overrides:
+            return "no runtime overrides set (using config.yaml as-is)"
+        lines = ["Active overrides:"]
+        for k, v in sorted(overrides.items()):
+            lines.append(f"  {k} = {v}")
+        return "\n".join(lines)
+
     def _today(_args: list[str]) -> str:
         """One-shot daily snapshot: equity change, trades, positions, trends."""
         today_iso = date.today().isoformat()
@@ -436,7 +486,7 @@ def build_command_handlers(
         # 2. Trades today.
         if conn is not None:
             order_rows = conn.execute(
-                "SELECT symbol, side, qty, status FROM orders "
+                "SELECT symbol, side, qty, status, filled_avg_price FROM orders "
                 "WHERE substr(submitted_at, 1, 10) = ? "
                 "ORDER BY submitted_at DESC",
                 (today_iso,),
@@ -444,10 +494,18 @@ def build_command_handlers(
             if order_rows:
                 lines.append(f"Trades today: {len(order_rows)}")
                 for r in order_rows[:5]:
-                    lines.append(
+                    line = (
                         f"  {r['side'].upper()} {r['qty']:g} {r['symbol']} "
                         f"[{r['status']}]"
                     )
+                    price = r["filled_avg_price"]
+                    if price is not None:
+                        try:
+                            notional = float(r["qty"]) * float(price)
+                            line += f" @ ${float(price):.2f} = ${notional:,.2f}"
+                        except (TypeError, ValueError):
+                            pass
+                    lines.append(line)
                 if len(order_rows) > 5:
                     lines.append(f"  … and {len(order_rows) - 5} more")
             else:
@@ -505,6 +563,9 @@ def build_command_handlers(
             "/positions — list open positions\n"
             "/equity — just the equity number\n"
             "/today — one-shot daily snapshot (P&L, trades, positions, WSB)\n"
+            "/set KEY VALUE — change a safe runtime setting (stop_loss, trailing_stop, max_buys)\n"
+            "/unset KEY — remove a runtime override\n"
+            "/show — list active runtime overrides\n"
             "/performance [N] — P&L last N days (default 7)\n"
             "/watchlist — show static + WSB + user-added tickers\n"
             "/add SYM — add ticker to dynamic watchlist\n"
@@ -528,6 +589,9 @@ def build_command_handlers(
         "scan": _scan,
         "isin": _isin,
         "today": _today,
+        "set": _set,
+        "unset": _unset,
+        "show": _show,
         "wsb": _scan,  # alias
         "buylist": _buylist,
         "preview": _buylist,  # alias

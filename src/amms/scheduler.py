@@ -141,9 +141,12 @@ def run_loop(
                 # without waiting for the next scheduled tick.
                 def _preview_now() -> TickResult:
                     from amms.data.dynamic_watchlist import load as _load
+                    from amms.runtime_overrides import apply_to_config as _apply
+
                     user_extras = _load(settings.db_path)
                     extras = frozenset(state.wsb_discovery.extras) | frozenset(user_extras)
                     cfg = _with_extra_watchlist(config, extras) if extras else config
+                    cfg = _apply(cfg, conn)
                     return run_tick(
                         broker=broker,
                         data=data,
@@ -212,6 +215,10 @@ def run_loop(
                 merged_extras = frozenset(state.wsb_discovery.extras) | frozenset(user_extras)
                 if merged_extras:
                     effective_config = _with_extra_watchlist(config, merged_extras)
+                # Apply any runtime overrides the user set via /set on Telegram.
+                from amms.runtime_overrides import apply_to_config as _apply_overrides
+
+                effective_config = _apply_overrides(effective_config, conn)
                 # Force-close window: flatten remaining positions just before
                 # market close if config.risk.force_close_minutes_before_close
                 # is set. Day-trade profiles use this to avoid overnight risk.
