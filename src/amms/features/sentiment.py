@@ -168,8 +168,12 @@ class RedditSentimentCollector:
         time_filter: str | None = None,
     ) -> list[dict]:
         token = self._auth()
-        url = f"https://oauth.reddit.com/r/{subreddit}/{listing}"
-        headers = {"Authorization": f"bearer {token}"} if token else {}
+        if token:
+            url = f"https://oauth.reddit.com/r/{subreddit}/{listing}"
+            headers = {"Authorization": f"bearer {token}"}
+        else:
+            url = f"https://www.reddit.com/r/{subreddit}/{listing}.json"
+            headers = {}
         params: dict[str, str | int] = {"limit": limit}
         if time_filter is not None:
             params["t"] = time_filter

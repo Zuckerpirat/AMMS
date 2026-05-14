@@ -54,11 +54,11 @@ def test_collector_aggregate_counts_mentions_and_averages_scores() -> None:
             ]
         }
     }
-    respx.get("https://oauth.reddit.com/r/wallstreetbets/hot").mock(
+    respx.get("https://www.reddit.com/r/wallstreetbets/hot.json").mock(
         return_value=httpx.Response(200, json=listing)
     )
 
-    coll = RedditSentimentCollector(client_id="", client_secret="")  # no auth → fine
+    coll = RedditSentimentCollector(client_id="", client_secret="")  # no auth → public API
     out = coll.aggregate(
         subreddits=("wallstreetbets",),
         watchlist={"AAPL", "TSLA"},
@@ -73,7 +73,7 @@ def test_collector_aggregate_counts_mentions_and_averages_scores() -> None:
 
 @respx.mock
 def test_collector_returns_empty_on_http_failure() -> None:
-    respx.get("https://oauth.reddit.com/r/wallstreetbets/hot").mock(
+    respx.get("https://www.reddit.com/r/wallstreetbets/hot.json").mock(
         return_value=httpx.Response(500, json={"error": "boom"})
     )
     coll = RedditSentimentCollector(client_id="", client_secret="")
