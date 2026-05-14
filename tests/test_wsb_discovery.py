@@ -51,15 +51,16 @@ def test_missing_reddit_creds_no_refresh(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
     state = DiscoveryState()
     config = WSBDiscoveryConfig(enabled=True, refresh_hours=24)
+    now = 1_700_000_000.0  # realistic unix time so the "elapsed" check passes
     delta = maybe_refresh(
         state, config,
         static_watchlist=set(),
-        now_seconds=1000.0,
+        now_seconds=now,
         scanner=_StubScanner([_ticker("NVDA")]),
     )
     assert delta.refreshed is False
     # last_refresh_ts is bumped so we don't log every tick
-    assert state.last_refresh_ts == 1000.0
+    assert state.last_refresh_ts == now
 
 
 def test_within_refresh_window_skips_scan(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,7 +95,7 @@ def test_refresh_runs_when_window_elapsed(monkeypatch: pytest.MonkeyPatch) -> No
     delta = maybe_refresh(
         state, config,
         static_watchlist=set(),
-        now_seconds=1000.0,
+        now_seconds=1_700_000_000.0,
         scanner=scanner,
     )
     assert scanner.scan_calls == 1
@@ -115,7 +116,7 @@ def test_static_watchlist_tickers_are_excluded(monkeypatch: pytest.MonkeyPatch) 
     delta = maybe_refresh(
         state, config,
         static_watchlist={"AAPL"},
-        now_seconds=1000.0,
+        now_seconds=1_700_000_000.0,
         scanner=scanner,
     )
     assert "AAPL" not in delta.extras

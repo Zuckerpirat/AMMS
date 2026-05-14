@@ -15,6 +15,8 @@ from amms.data import MarketDataClient
 from amms.data.wsb_discovery import (
     DiscoveryState,
     format_delta_message,
+)
+from amms.data.wsb_discovery import (
     maybe_refresh as maybe_refresh_wsb_extras,
 )
 from amms.executor import TickResult, build_daily_summary, run_tick

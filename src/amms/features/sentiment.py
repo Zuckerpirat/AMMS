@@ -47,7 +47,7 @@ _STOP_TICKERS = {
     "USD", "EUR", "CAD", "GBP", "JPY", "CNY",
     "ATH", "ATL", "IMO", "IRL", "TLDR", "FOMO", "FUD", "FYI", "EOD", "EOM",
     "BTW", "OMG", "WTF", "LOL", "IIRC", "AFAIK", "NSFW", "ELI5",
-    "USA", "UK", "EU", "DOJ", "SEC", "FED", "FOMC", "CPI", "GDP", "PPI",
+    "UK", "EU", "DOJ", "SEC", "FED", "FOMC", "CPI", "GDP", "PPI",
     "MOASS", "DRS", "APE", "OG", "GG", "EOY", "YTD", "MTD", "QTD",
     "PR", "ER", "FY", "Q1", "Q2", "Q3", "Q4", "AH", "PM", "AM",
     "NYSE", "OTC", "ITM", "OTM", "ATM",
