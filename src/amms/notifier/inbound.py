@@ -8,6 +8,7 @@ Supported commands:
     /status       account equity + open positions
     /positions    open positions only
     /equity       just the equity number
+    /scan         run WSB Auto-Discovery now and reply with trending tickers
     /pause        scheduler stops placing new orders (state flag)
     /resume       scheduler resumes placing orders
     /help         list commands
@@ -196,6 +197,20 @@ def build_command_handlers(
             for r in rows
         )
 
+    def _scan() -> str:
+        # Lazy import to avoid circular deps and to keep the inbound module
+        # cheap to import (it is loaded even when WSB scanning is unused).
+        from amms.data.wsb_scanner import WSBScanner, format_summary
+
+        try:
+            with WSBScanner() as scanner:
+                results = scanner.scan(
+                    limit_per_sub=100, time_filter="day", min_mentions=3, top_n=10
+                )
+        except Exception as e:
+            return f"WSB scan failed: {e!r}"
+        return format_summary(results)
+
     def _lastorders() -> str:
         if conn is None:
             return "DB not wired."
@@ -218,6 +233,7 @@ def build_command_handlers(
             "/equity — just the equity number\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
+            "/scan — run WSB Auto-Discovery now\n"
             "/pause — stop placing new orders\n"
             "/resume — re-enable placing orders\n"
             "/help — this message"
@@ -229,6 +245,8 @@ def build_command_handlers(
         "equity": _equity,
         "signals": _signals,
         "lastorders": _lastorders,
+        "scan": _scan,
+        "wsb": _scan,  # alias
         "pause": _pause,
         "resume": _resume,
         "help": _help,
