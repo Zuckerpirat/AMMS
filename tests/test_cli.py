@@ -19,13 +19,22 @@ def test_help_works() -> None:
 
 
 def test_run_help_advertises_execute_flag() -> None:
-    # Force a wide terminal so Typer's Rich-formatted help doesn't wrap
-    # "--execute" across lines (it does on narrow CI runners, breaking
-    # this substring assertion).
-    result = runner.invoke(app, ["run", "--help"], env={"COLUMNS": "200"})
+    # Disable Rich's pretty-printing so the output is stable across runners.
+    # Without this, narrow CI terminals wrap "--execute" across lines and
+    # decorate it with ANSI codes, both of which break a substring match.
+    result = runner.invoke(
+        app,
+        ["run", "--help"],
+        env={"NO_COLOR": "1", "TERM": "dumb", "COLUMNS": "200"},
+    )
     assert result.exit_code == 0
-    assert "--execute" in result.stdout
-    assert "dry run" in result.stdout.lower()
+    # Strip ANSI escape codes defensively in case Rich still emits them.
+    import re
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    # Collapse all whitespace so wrapped lines like "--\nexecute" still match.
+    collapsed = re.sub(r"\s+", "", plain)
+    assert "--execute" in collapsed
+    assert "dryrun" in collapsed.lower()
 
 
 def test_run_refuses_without_paper_url(monkeypatch) -> None:
