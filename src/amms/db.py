@@ -14,12 +14,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     db_path = Path(db_path)
     if str(db_path) != ":memory:":
         db_path.parent.mkdir(parents=True, exist_ok=True)
-    # check_same_thread=False because the inbound Telegram poller runs in
-    # its own thread and needs to call read-only handlers (/signals,
-    # /lastorders) and the /buylist preview through this same connection.
-    # WAL mode + autocommit isolation means SQLite serializes writes
-    # internally, so cross-thread use here is safe in practice.
-    conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
+    conn = sqlite3.connect(db_path, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")

@@ -19,10 +19,7 @@ def test_help_works() -> None:
 
 
 def test_run_help_advertises_execute_flag() -> None:
-    # Force a wide terminal so Typer's Rich-formatted help doesn't wrap
-    # "--execute" across lines (it does on narrow CI runners, breaking
-    # this substring assertion).
-    result = runner.invoke(app, ["run", "--help"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
     assert "--execute" in result.stdout
     assert "dry run" in result.stdout.lower()
