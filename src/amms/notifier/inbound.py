@@ -196,12 +196,17 @@ def build_command_handlers(
             isins = _isin_cache.lookup([p.symbol for p in positions])
         except Exception:
             pass
+        from amms.data.sectors import sector_for, UNCLASSIFIED
+
         lines: list[str] = []
         for p in positions:
             line = (
                 f"{p.symbol}: {p.qty:g} @ ${p.avg_entry_price:.2f} "
                 f"(mv ${p.market_value:.2f}, P&L ${p.unrealized_pl:+.2f})"
             )
+            sector = sector_for(p.symbol)
+            if sector != UNCLASSIFIED:
+                line += f"  [{sector}]"
             if isins.get(p.symbol):
                 line += f"  ISIN {isins[p.symbol]}"
             lines.append(line)
@@ -602,6 +607,104 @@ def build_command_handlers(
             f"{regime.reason}"
         )
 
+    def _yesterday(_args: list[str]) -> str:
+        """Summarise what happened on the previous calendar day."""
+        if conn is None:
+            return "DB not wired."
+        target = (date.today() - timedelta(days=1)).isoformat()
+        first = conn.execute(
+            "SELECT equity FROM equity_snapshots "
+            "WHERE substr(ts, 1, 10) = ? ORDER BY ts LIMIT 1",
+            (target,),
+        ).fetchone()
+        last = conn.execute(
+            "SELECT equity FROM equity_snapshots "
+            "WHERE substr(ts, 1, 10) = ? ORDER BY ts DESC LIMIT 1",
+            (target,),
+        ).fetchone()
+        lines = [f"Yesterday ({target}):"]
+        if first and last and first["equity"]:
+            pnl = last["equity"] - first["equity"]
+            pct = pnl / first["equity"] * 100
+            arrow = "▲" if pnl >= 0 else "▼"
+            lines.append(f"P&L: {arrow} ${pnl:+.2f} ({pct:+.2f}%)")
+        else:
+            lines.append("P&L: no equity data")
+        orders = conn.execute(
+            "SELECT symbol, side, qty, status, filled_avg_price FROM orders "
+            "WHERE substr(submitted_at, 1, 10) = ? ORDER BY submitted_at",
+            (target,),
+        ).fetchall()
+        if orders:
+            lines.append(f"Trades: {len(orders)}")
+            for r in orders[:5]:
+                line = (
+                    f"  {r['side'].upper()} {r['qty']:g} {r['symbol']} "
+                    f"[{r['status']}]"
+                )
+                price = r["filled_avg_price"]
+                if price is not None:
+                    try:
+                        line += f" @ ${float(price):.2f}"
+                    except (TypeError, ValueError):
+                        pass
+                lines.append(line)
+            if len(orders) > 5:
+                lines.append(f"  … and {len(orders) - 5} more")
+        else:
+            lines.append("Trades: none")
+        return "\n".join(lines)
+
+    def _week(_args: list[str]) -> str:
+        """Show last-7-day P&L + trade count summary."""
+        if conn is None:
+            return "DB not wired."
+        end = date.today()
+        start = end - timedelta(days=7)
+        first = conn.execute(
+            "SELECT equity FROM equity_snapshots "
+            "WHERE substr(ts, 1, 10) >= ? ORDER BY ts LIMIT 1",
+            (start.isoformat(),),
+        ).fetchone()
+        last = conn.execute(
+            "SELECT equity FROM equity_snapshots "
+            "WHERE substr(ts, 1, 10) <= ? ORDER BY ts DESC LIMIT 1",
+            (end.isoformat(),),
+        ).fetchone()
+        lines = ["7-day rollup:"]
+        if first and last and first["equity"]:
+            pnl = last["equity"] - first["equity"]
+            pct = pnl / first["equity"] * 100
+            arrow = "▲" if pnl >= 0 else "▼"
+            lines.append(f"P&L: {arrow} ${pnl:+.2f} ({pct:+.2f}%)")
+            lines.append(f"Start equity: ${first['equity']:,.2f}")
+            lines.append(f"End equity:   ${last['equity']:,.2f}")
+        else:
+            lines.append("P&L: no equity data")
+        order_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM orders "
+            "WHERE substr(submitted_at, 1, 10) >= ?",
+            (start.isoformat(),),
+        ).fetchone()
+        buys = conn.execute(
+            "SELECT COUNT(*) AS c FROM orders "
+            "WHERE side = 'buy' AND substr(submitted_at, 1, 10) >= ?",
+            (start.isoformat(),),
+        ).fetchone()
+        sells = conn.execute(
+            "SELECT COUNT(*) AS c FROM orders "
+            "WHERE side = 'sell' AND substr(submitted_at, 1, 10) >= ?",
+            (start.isoformat(),),
+        ).fetchone()
+        if order_count and order_count["c"]:
+            lines.append(
+                f"Trades: {order_count['c']} "
+                f"({buys['c']} buys / {sells['c']} sells)"
+            )
+        else:
+            lines.append("Trades: none")
+        return "\n".join(lines)
+
     def _explain(args: list[str]) -> str:
         """Show why the bot's most recent decision on a ticker came out
         the way it did, plus recent signal history. Reads from the
@@ -827,6 +930,8 @@ def build_command_handlers(
             "/positions — list open positions\n"
             "/equity — just the equity number\n"
             "/today — one-shot daily snapshot (P&L, trades, positions, WSB)\n"
+            "/yesterday — yesterday's P&L and trades\n"
+            "/week — last-7-day P&L rollup\n"
             "/explain SYM — show why the bot's last decision on SYM was made\n"
             "/macro — current market stress regime (calm/elevated/stressed)\n"
             "/backtest [DAYS] — run a quick backtest of the current strategy\n"
@@ -860,6 +965,8 @@ def build_command_handlers(
         "isin": _isin,
         "today": _today,
         "explain": _explain,
+        "yesterday": _yesterday,
+        "week": _week,
         "macro": _macro,
         "backtest": _backtest,
         "risk": _risk,
