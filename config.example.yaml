@@ -51,6 +51,14 @@ risk:
 scheduler:
   tick_seconds: 60
   timezone: America/New_York
+  # Per-tick Telegram verbosity. One of:
+  #   orders_only — message only when an order is actually placed (quietest;
+  #                 nothing in dry-run since no orders ever fire)
+  #   decisions   — message when there are buy/sell signals OR orders. Best
+  #                 setting for dry-run: you see what the bot WOULD do.
+  #   always      — message every tick, even when nothing fired
+  #   never       — silent (only daily summary + errors get through)
+  tick_notify: decisions
 
 # Pre-trade gate: BUY signals are blocked unless the symbol clears these
 # thresholds. SELL signals are never filtered so you can always exit. All

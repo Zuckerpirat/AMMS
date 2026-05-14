@@ -1,0 +1,60 @@
+# WSB-driven swing profile.
+#
+# Mixes WSB favorites (memes + AI/crypto-adjacent large caps) with the
+# composite strategy weighted toward Reddit sentiment, plus tight per-position
+# stop-loss because these tickers move fast in both directions.
+#
+# Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env so the scheduler
+# can refresh the sentiment overlay between ticks. Without those, sentiment
+# falls back to neutral and the bot trades on momentum/volume alone — still
+# safe, just less WSB-flavored.
+
+watchlist:
+  # Large-cap WSB darlings (high volume, real fundamentals)
+  - NVDA
+  - TSLA
+  - AMD
+  - PLTR
+  - SMCI
+  # Crypto-adjacent (WSB pumps these on BTC moves)
+  - MSTR
+  - COIN
+  - MARA
+  - RIOT
+  # Meme stocks (high volatility, hold positions tight)
+  - GME
+  - AMC
+  # Modern hype names
+  - SOFI
+  - RIVN
+
+strategy:
+  name: composite
+  timeframe: 1Day
+  params:
+    momentum_n: 10            # shorter window — WSB plays move fast
+    momentum_min: 0.04
+    rsi_max: 75               # allow slightly overbought entries
+    vol_max: 0.80             # accept higher vol
+    rvol_min: 1.5             # require above-average volume (real interest)
+    sentiment_weight: 0.4     # bullish WSB chatter boosts score 40%
+    sentiment_min: -0.2       # block clear-bearish names
+
+risk:
+  max_open_positions: 5
+  max_position_pct: 0.03      # smaller positions — these names move
+  daily_loss_pct: -0.04       # account-level kill switch
+  min_hold_days: 1            # avoid same-day shake-outs
+  max_buys_per_tick: 2
+  # Per-position safety nets — non-negotiable for WSB-style trading.
+  stop_loss_pct: 0.06         # exit at 6% loss vs entry
+  trailing_stop_pct: 0.12     # lock in gains: exit if down 12% from peak
+
+universe:
+  min_price: 2.00             # block sub-$2 names entirely
+  min_avg_dollar_volume: 5000000   # 20-day ADV >= $5M (real liquidity)
+  adv_lookback: 20
+  require_tradable: true
+
+scheduler:
+  tick_seconds: 1800          # check every 30 minutes
