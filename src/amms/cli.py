@@ -807,6 +807,42 @@ def preview_signal(
     )
 
 
+@app.command(name="close-all")
+def close_all(
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
+) -> None:
+    """Sell every open position via market order. Confirmation required."""
+    if not yes:
+        console.print(
+            "[yellow]This will sell every open position. "
+            "Re-run with --yes to confirm.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    settings = _settings_or_die()
+    sold = 0
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    try:
+        with AlpacaClient(
+            settings.alpaca_api_key,
+            settings.alpaca_api_secret,
+            settings.alpaca_base_url,
+        ) as broker:
+            for p in broker.get_positions():
+                if p.qty <= 0:
+                    continue
+                try:
+                    order = broker.submit_order(p.symbol, p.qty, "sell")
+                    db.upsert_order(conn, order)
+                    sold += 1
+                    console.print(f"sold {p.qty:g} {p.symbol} (order {order.id})")
+                except Exception as e:
+                    console.print(f"[red]could not sell {p.symbol}: {e}[/red]")
+    finally:
+        conn.close()
+    console.print(f"[green]submitted {sold} sell order(s)[/green]")
+
+
 @app.command(name="cancel-all")
 def cancel_all(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
