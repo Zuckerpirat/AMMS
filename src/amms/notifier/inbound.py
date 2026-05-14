@@ -169,6 +169,10 @@ def build_command_handlers(
     /watchlist with all three layers visible.
     """
 
+    # Shared across all handlers; built once per scheduler launch.
+    from amms.data.isin import IsinLookup as _IsinLookup
+    _isin_cache = _IsinLookup()
+
     def _status(_args: list[str]) -> str:
         acc = broker.get_account()
         positions = broker.get_positions()
@@ -185,11 +189,21 @@ def build_command_handlers(
         positions = broker.get_positions()
         if not positions:
             return "no open positions"
-        return "\n".join(
-            f"{p.symbol}: {p.qty:g} @ ${p.avg_entry_price:.2f} "
-            f"(mv ${p.market_value:.2f}, P&L ${p.unrealized_pl:+.2f})"
-            for p in positions
-        )
+        isins: dict[str, str] = {}
+        try:
+            isins = _isin_cache.lookup([p.symbol for p in positions])
+        except Exception:
+            pass
+        lines: list[str] = []
+        for p in positions:
+            line = (
+                f"{p.symbol}: {p.qty:g} @ ${p.avg_entry_price:.2f} "
+                f"(mv ${p.market_value:.2f}, P&L ${p.unrealized_pl:+.2f})"
+            )
+            if isins.get(p.symbol):
+                line += f"  ISIN {isins[p.symbol]}"
+            lines.append(line)
+        return "\n".join(lines)
 
     def _equity(_args: list[str]) -> str:
         return f"${broker.get_account().equity:,.2f}"
@@ -253,11 +267,6 @@ def build_command_handlers(
                 lines.append(f"{sym}: {reason}")
         return "\n".join(lines)
 
-    # Persistent across /scan invocations so OpenFIGI is only queried once
-    # per ticker per process lifetime.
-    from amms.data.isin import IsinLookup as _IsinLookup
-    _isin_cache = _IsinLookup()
-
     def _scan(_args: list[str]) -> str:
         # Lazy import to avoid circular deps and to keep the inbound module
         # cheap to import (it is loaded even when WSB scanning is unused).
@@ -295,11 +304,21 @@ def build_command_handlers(
         ).fetchall()
         if not rows:
             return "no orders yet"
-        return "\n".join(
-            f"{r['submitted_at'][:16]} {r['side'].upper()} {r['qty']:g} "
-            f"{r['symbol']} [{r['status']}]"
-            for r in rows
-        )
+        isins: dict[str, str] = {}
+        try:
+            isins = _isin_cache.lookup({r["symbol"] for r in rows})
+        except Exception:
+            pass
+        lines: list[str] = []
+        for r in rows:
+            line = (
+                f"{r['submitted_at'][:16]} {r['side'].upper()} {r['qty']:g} "
+                f"{r['symbol']} [{r['status']}]"
+            )
+            if isins.get(r["symbol"]):
+                line += f"  ISIN {isins[r['symbol']]}"
+            lines.append(line)
+        return "\n".join(lines)
 
     def _add(args: list[str]) -> str:
         if db_path is None:

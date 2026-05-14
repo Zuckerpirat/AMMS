@@ -73,6 +73,13 @@ def test_positions_handler() -> None:
     assert "AAPL" in out
 
 
+def test_positions_handler_includes_isin_when_known() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["positions"]([])
+    assert "ISIN US0378331005" in out  # AAPL is in the static table
+
+
 def test_help_lists_scan_command() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
