@@ -61,6 +61,7 @@ def run_tick(
     strategy: Strategy,
     bars_back: int = 90,
     execute: bool = False,
+    paused: bool = False,
 ) -> TickResult:
     """Run one pass of the strategy across the watchlist.
 
@@ -112,6 +113,9 @@ def run_tick(
 
     open_positions_count = len(positions)
     for signal in ranked_buys:
+        if paused:
+            result.blocked.append((signal.symbol, "paused"))
+            continue
         if signal.symbol in pending_buys:
             result.blocked.append((signal.symbol, "open buy order already pending"))
             continue

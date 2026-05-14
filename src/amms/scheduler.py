@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sqlite3
 import threading
@@ -12,7 +13,14 @@ from amms.clock import ClockStatus
 from amms.config import AppConfig, Settings
 from amms.data import MarketDataClient
 from amms.executor import TickResult, build_daily_summary, run_tick
-from amms.notifier import Notifier, NullNotifier, build_notifier
+from amms.notifier import (
+    Notifier,
+    NullNotifier,
+    PauseFlag,
+    TelegramInbound,
+    build_command_handlers,
+    build_notifier,
+)
 from amms.strategy import build_strategy
 
 logger = logging.getLogger(__name__)
@@ -58,12 +66,14 @@ def run_loop(
     strategy = build_strategy(config.strategy.name, config.strategy.params)
     conn = db.connect(settings.db_path)
     db.migrate(conn)
+    pause = PauseFlag()
 
     mode = "live (paper)" if execute else "dry-run"
     logger.info("amms scheduler starting in %s mode", mode)
     notifier.send(f"amms started ({mode})")
 
     state = LoopState()
+    inbound: TelegramInbound | None = None
     try:
         with (
             AlpacaClient(
@@ -77,6 +87,14 @@ def run_loop(
                 settings.alpaca_data_url,
             ) as data,
         ):
+            # Start inbound Telegram command poller if configured.
+            token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+            chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+            if token and chat_id:
+                handlers = build_command_handlers(broker=broker, pause=pause)
+                inbound = TelegramInbound(token=token, chat_id=chat_id, handlers=handlers)
+                inbound.start()
+
             while not stop.is_set():
                 try:
                     clock = broker.get_clock()
@@ -112,6 +130,7 @@ def run_loop(
                         strategy=strategy,
                         bars_back=bars_back,
                         execute=execute,
+                        paused=pause.paused,
                     )
                     _announce_tick(notifier, result)
                 except Exception:
@@ -121,6 +140,8 @@ def run_loop(
                 if stop.wait(config.scheduler.tick_seconds):
                     break
     finally:
+        if inbound is not None:
+            inbound.stop()
         conn.close()
         notifier.send("amms stopped")
         logger.info("amms scheduler stopped")
