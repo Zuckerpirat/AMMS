@@ -268,6 +268,7 @@ def test_maybe_refresh_sentiment_uses_apewisdom_without_reddit_creds(
     overlay = get_sentiment_overlay()
     # Watchlist filter excludes OFFLIST.
     assert set(overlay) == {"NVDA", "GME"}
-    # 1000 mentions ≈ log10(1001)/3 ≈ 1.0 (clipped); 100 ≈ log10(101)/3 ≈ 0.67.
+    # 1000 mentions ≈ log10(1001)/2.5 → clipped to 1.0.
+    # 100 mentions ≈ log10(101)/2.5 ≈ 0.80.
     assert overlay["NVDA"] == 1.0
-    assert 0.5 < overlay["GME"] < 0.8
+    assert 0.7 < overlay["GME"] < 0.9

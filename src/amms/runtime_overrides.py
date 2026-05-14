@@ -28,6 +28,9 @@ _ALLOWED: dict[str, tuple[str, Callable[[str], Any]]] = {
     "stop_loss": ("Stop-loss percentage (0–1, e.g. 0.05 = 5%)", float),
     "trailing_stop": ("Trailing-stop percentage (0–1)", float),
     "max_buys": ("Max buy orders per tick", int),
+    "sentiment_weight": (
+        "WSB hype bonus multiplier (0..1, e.g. 0.45 = up to +45% score)", float
+    ),
 }
 
 
@@ -51,6 +54,9 @@ def parse_value(key: str, raw: str) -> Any:
     if key in ("stop_loss", "trailing_stop"):
         if not 0 <= value < 1:
             raise ValueError(f"{key} must be in [0, 1), got {value}")
+    if key == "sentiment_weight":
+        if not 0 <= value <= 1:
+            raise ValueError(f"sentiment_weight must be in [0, 1], got {value}")
     if key == "max_buys" and value < 0:
         raise ValueError("max_buys must be >= 0")
     return value
@@ -108,6 +114,25 @@ def get_overrides(conn: sqlite3.Connection) -> dict[str, Any]:
             except ValueError:
                 continue
     return out
+
+
+def apply_to_strategy(strategy, conn: sqlite3.Connection):
+    """Return the strategy with relevant overrides applied.
+
+    Currently overrides ``sentiment_weight`` on any strategy that has
+    that field (e.g. CompositeStrategy). Other strategy types are
+    returned unchanged.
+    """
+    overrides = get_overrides(conn)
+    if (
+        "sentiment_weight" in overrides
+        and hasattr(strategy, "sentiment_weight")
+    ):
+        try:
+            return replace(strategy, sentiment_weight=overrides["sentiment_weight"])
+        except (TypeError, ValueError):
+            return strategy
+    return strategy
 
 
 def apply_to_config(config: AppConfig, conn: sqlite3.Connection) -> AppConfig:

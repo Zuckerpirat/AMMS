@@ -93,8 +93,9 @@ def _maybe_refresh_sentiment(
             mentions = int(item.get("mentions") or 0)
             if mentions <= 0:
                 continue
-            # log10(1000) ≈ 3, so 1000 mentions ≈ score 1.0.
-            scores[sym] = min(1.0, math.log10(mentions + 1) / 3.0)
+            # log10/2.5 — caps at 1.0 around 300 mentions so highly-discussed
+            # tickers (500+) get the full bonus instead of half.
+            scores[sym] = min(1.0, math.log10(mentions + 1) / 2.5)
         set_sentiment_overlay(scores)
         logger.info("refreshed sentiment overlay (apewisdom): %d symbols", len(scores))
     except Exception:
@@ -170,18 +171,22 @@ def run_loop(
                 # without waiting for the next scheduled tick.
                 def _preview_now() -> TickResult:
                     from amms.data.dynamic_watchlist import load as _load
-                    from amms.runtime_overrides import apply_to_config as _apply
+                    from amms.runtime_overrides import (
+                        apply_to_config as _apply,
+                        apply_to_strategy as _apply_strat,
+                    )
 
                     user_extras = _load(settings.db_path)
                     extras = frozenset(state.wsb_discovery.extras) | frozenset(user_extras)
                     cfg = _with_extra_watchlist(config, extras) if extras else config
                     cfg = _apply(cfg, conn)
+                    strat = _apply_strat(strategy, conn)
                     return run_tick(
                         broker=broker,
                         data=data,
                         conn=conn,
                         config=cfg,
-                        strategy=strategy,
+                        strategy=strat,
                         bars_back=bars_back,
                         execute=False,
                         paused=pause.paused,
@@ -245,9 +250,13 @@ def run_loop(
                 if merged_extras:
                     effective_config = _with_extra_watchlist(config, merged_extras)
                 # Apply any runtime overrides the user set via /set on Telegram.
-                from amms.runtime_overrides import apply_to_config as _apply_overrides
+                from amms.runtime_overrides import (
+                    apply_to_config as _apply_overrides,
+                    apply_to_strategy as _apply_strategy_overrides,
+                )
 
                 effective_config = _apply_overrides(effective_config, conn)
+                effective_strategy = _apply_strategy_overrides(strategy, conn)
                 # Force-close window: flatten remaining positions just before
                 # market close if config.risk.force_close_minutes_before_close
                 # is set. Day-trade profiles use this to avoid overnight risk.
@@ -265,7 +274,7 @@ def run_loop(
                         data=data,
                         conn=conn,
                         config=effective_config,
-                        strategy=strategy,
+                        strategy=effective_strategy,
                         bars_back=bars_back,
                         execute=execute,
                         paused=pause.paused,

@@ -8,6 +8,7 @@ from amms.config import AppConfig, SchedulerConfig, StrategyConfig
 from amms.risk.rules import RiskConfig
 from amms.runtime_overrides import (
     apply_to_config,
+    apply_to_strategy,
     get_overrides,
     parse_value,
     set_override,
@@ -86,3 +87,33 @@ def test_apply_to_config_returns_same_when_no_overrides() -> None:
     base = _base_config()
     cfg = apply_to_config(base, conn)
     assert cfg is base
+
+
+def test_apply_to_strategy_overrides_sentiment_weight() -> None:
+    from amms.strategy.composite import CompositeStrategy
+
+    conn = _conn()
+    set_override(conn, "sentiment_weight", "0.45")
+    strat = CompositeStrategy(sentiment_weight=0.0)
+    new_strat = apply_to_strategy(strat, conn)
+    assert new_strat.sentiment_weight == 0.45
+
+
+def test_apply_to_strategy_no_op_when_strategy_lacks_field() -> None:
+    class _NoSentimentStrategy:
+        name = "x"
+
+    conn = _conn()
+    set_override(conn, "sentiment_weight", "0.3")
+    strat = _NoSentimentStrategy()
+    assert apply_to_strategy(strat, conn) is strat
+
+
+def test_parse_sentiment_weight_validates_range() -> None:
+    assert parse_value("sentiment_weight", "0.45") == 0.45
+    assert parse_value("sentiment_weight", "0") == 0.0
+    assert parse_value("sentiment_weight", "1") == 1.0
+    with pytest.raises(ValueError):
+        parse_value("sentiment_weight", "-0.1")
+    with pytest.raises(ValueError):
+        parse_value("sentiment_weight", "1.5")
