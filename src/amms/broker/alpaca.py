@@ -187,6 +187,18 @@ class AlpacaClient:
         data = self._request("GET", "/v2/orders", params=params) or []
         return [self._order_from_payload(d) for d in data]
 
+    def get_asset(self, symbol: str) -> dict[str, Any] | None:
+        """Return the Alpaca /v2/assets/{symbol} payload, or None if not found.
+
+        Used by the universe filter to skip non-tradable or shortable-only
+        symbols.
+        """
+        try:
+            data = self._request("GET", f"/v2/assets/{symbol.upper()}")
+            return data if isinstance(data, dict) else None
+        except AlpacaError:
+            return None
+
     def get_clock(self) -> ClockStatus:
         data = self._request("GET", "/v2/clock")
         return ClockStatus(

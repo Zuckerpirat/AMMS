@@ -128,6 +128,12 @@ def run_tick(
         if not passes:
             result.blocked.append((signal.symbol, f"universe filter: {reason}"))
             continue
+        if config.universe.require_tradable:
+            asset = broker.get_asset(signal.symbol)
+            passes_a, asset_reason = config.universe.passes_asset(asset)
+            if not passes_a:
+                result.blocked.append((signal.symbol, f"asset filter: {asset_reason}"))
+                continue
         decision = check_buy(
             equity=account.equity,
             price=signal.price,

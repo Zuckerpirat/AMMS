@@ -90,3 +90,22 @@ def test_full_penny_stock_profile_blocks_dust() -> None:
     passes, reason = f.passes([_bar(0.10, volume=100_000) for _ in range(25)])
     assert passes is False
     assert "price" in reason
+
+
+def test_passes_asset_disabled_by_default() -> None:
+    f = UniverseFilter()
+    passes, reason = f.passes_asset(None)
+    assert passes is True
+    assert reason is None
+
+
+def test_passes_asset_requires_active_tradable() -> None:
+    f = UniverseFilter(require_tradable=True)
+    p, _ = f.passes_asset({"status": "active", "tradable": True})
+    assert p is True
+    p, r = f.passes_asset({"status": "inactive", "tradable": True})
+    assert p is False and "inactive" in r
+    p, r = f.passes_asset({"status": "active", "tradable": False})
+    assert p is False and "tradable" in r
+    p, r = f.passes_asset(None)
+    assert p is False and "unavailable" in r

@@ -9,6 +9,8 @@ VPS and is controlled from a Windows PC over SSH and Telegram.
 - **[`docs/SETUP.md`](docs/SETUP.md)** — step-by-step setup guide for non-technical
   users (VPS, SSH, Docker, deployment, first run). Start here if you want to
   actually run the bot.
+- [`docs/PROFILES.md`](docs/PROFILES.md) — three example `config.yaml` shapes
+  (swing, day-trade, penny-stock) you can paste into `config.yaml`.
 - [`docs/DESIGN.md`](docs/DESIGN.md) — full architecture and phased plan.
 
 ## Quick start (local dev)

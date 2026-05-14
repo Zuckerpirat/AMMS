@@ -162,6 +162,7 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         max_price=float(max_price_raw) if max_price_raw is not None else None,
         min_avg_dollar_volume=float(universe_raw.get("min_avg_dollar_volume", 0.0)),
         adv_lookback=int(universe_raw.get("adv_lookback", 20)),
+        require_tradable=bool(universe_raw.get("require_tradable", False)),
     )
 
     return AppConfig(

@@ -220,8 +220,17 @@ def _fetch_today_trades(conn: sqlite3.Connection, today_iso: str) -> list[dict]:
 def _announce_tick(notifier: Notifier, result: TickResult) -> None:
     if isinstance(notifier, NullNotifier):
         return
-    for order_id in result.placed_order_ids:
-        notifier.send(f"amms placed BUY order {order_id}")
+    buy_count = len(
+        [s for s in result.signals if s.kind == "buy"]
+    )
+    sell_count = len(
+        [s for s in result.signals if s.kind == "sell"]
+    )
+    if result.placed_order_ids:
+        notifier.send(
+            f"amms tick: placed {len(result.placed_order_ids)} order(s) "
+            f"(signals: {buy_count} buy / {sell_count} sell)"
+        )
 
 
 def _in_force_close_window(clock: ClockStatus, minutes_before_close: int) -> bool:

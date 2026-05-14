@@ -23,6 +23,7 @@ class UniverseFilter:
     max_price: float | None = None
     min_avg_dollar_volume: float = 0.0
     adv_lookback: int = 20
+    require_tradable: bool = False
 
     def __post_init__(self) -> None:
         if self.min_price < 0:
@@ -64,4 +65,17 @@ class UniverseFilter:
                     f"ADV ${adv:,.0f} < min ${self.min_avg_dollar_volume:,.0f}",
                 )
 
+        return True, None
+
+    def passes_asset(self, asset: dict | None) -> tuple[bool, str | None]:
+        """Optional check against an Alpaca asset payload. Returns pass when
+        require_tradable is off or the payload reports tradable + active."""
+        if not self.require_tradable:
+            return True, None
+        if asset is None:
+            return False, "asset metadata unavailable"
+        if asset.get("status") != "active":
+            return False, f"asset status={asset.get('status')!r}"
+        if not asset.get("tradable", False):
+            return False, "asset not tradable on Alpaca"
         return True, None
