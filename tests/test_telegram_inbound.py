@@ -420,6 +420,40 @@ def test_today_handler_without_db_still_runs() -> None:
     assert "Open positions" in out
 
 
+def test_macro_handler_uses_provided_regime() -> None:
+    from amms.data.macro import MacroRegime
+
+    regime = MacroRegime(
+        level="stressed",
+        reason="VIXY 1d +6.5%",
+        vixy_1d_pct=6.5,
+        vixy_1w_pct=2.0,
+    )
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(),
+        pause=p,
+        get_macro_regime=lambda: regime,
+    )
+    out = h["macro"]([])
+    assert "STRESSED" in out
+    assert "+6.50%" in out
+    assert "VIXY" in out
+
+
+def test_macro_handler_falls_back_to_data_when_no_state() -> None:
+    class _FakeData:
+        def get_snapshots(self, _symbols):
+            return {
+                "VIXY": {"change_pct": 0.5, "change_pct_week": 1.0}
+            }
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeData())
+    out = h["macro"]([])
+    assert "CALM" in out
+
+
 def test_explain_handler_returns_last_signal() -> None:
     import sqlite3 as _sqlite
     conn = _sqlite.connect(":memory:")

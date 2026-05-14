@@ -46,6 +46,9 @@ class LoopState:
     last_sentiment_refresh_ts: float = 0.0
     consecutive_tick_errors: int = 0
     wsb_discovery: DiscoveryState = field(default_factory=DiscoveryState)
+    # Latest macro regime snapshot, refreshed once per tick. The /macro
+    # Telegram command reads from here.
+    last_macro_regime: object | None = None
 
 
 MAX_CONSECUTIVE_TICK_ERRORS = 5
@@ -201,6 +204,7 @@ def run_loop(
                     static_watchlist=config.watchlist,
                     get_wsb_extras=lambda: set(state.wsb_discovery.extras),
                     data=data,
+                    get_macro_regime=lambda: state.last_macro_regime,
                 )
                 inbound = TelegramInbound(token=token, chat_id=chat_id, handlers=handlers)
                 inbound.start()
@@ -257,6 +261,18 @@ def run_loop(
 
                 effective_config = _apply_overrides(effective_config, conn)
                 effective_strategy = _apply_strategy_overrides(strategy, conn)
+
+                # Macro regime check: when VIXY signals stress, pause buys
+                # for this tick so the bot doesn't add long exposure into a
+                # vol spike. Stop-loss + sells still flow through normally.
+                from amms.data.macro import compute_regime as _compute_regime
+
+                regime = _compute_regime(data)
+                state.last_macro_regime = regime
+                macro_paused = regime.is_stressed
+                if macro_paused:
+                    logger.warning("macro stress detected: %s", regime.reason)
+                    notifier.send(f"⚠️ macro-pause: {regime.reason}")
                 # Force-close window: flatten remaining positions just before
                 # market close if config.risk.force_close_minutes_before_close
                 # is set. Day-trade profiles use this to avoid overnight risk.
@@ -277,7 +293,7 @@ def run_loop(
                         strategy=effective_strategy,
                         bars_back=bars_back,
                         execute=execute,
-                        paused=pause.paused,
+                        paused=pause.paused or macro_paused,
                     )
                     _announce_tick(
                         notifier,

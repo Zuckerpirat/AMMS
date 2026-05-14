@@ -152,6 +152,7 @@ def build_command_handlers(
     static_watchlist: tuple[str, ...] | list[str] = (),
     get_wsb_extras: Callable[[], set[str]] | None = None,
     data=None,
+    get_macro_regime: Callable[[], object] | None = None,
 ) -> dict[str, CommandHandler]:
     """Construct the default command handler table.
 
@@ -451,6 +452,32 @@ def build_command_handlers(
             lines.append(f"  {k} = {v}")
         return "\n".join(lines)
 
+    def _macro(_args: list[str]) -> str:
+        """Show the latest macro regime classification (VIX-proxy based)."""
+        regime = None
+        if get_macro_regime is not None:
+            try:
+                regime = get_macro_regime()
+            except Exception:
+                regime = None
+        if regime is None and data is not None:
+            try:
+                from amms.data.macro import compute_regime
+                regime = compute_regime(data)
+            except Exception:
+                regime = None
+        if regime is None:
+            return "macro regime not available (need market data)"
+        emoji = {"calm": "✅", "elevated": "⚠️", "stressed": "🚨"}.get(
+            getattr(regime, "level", ""), ""
+        )
+        return (
+            f"{emoji} Market regime: {regime.level.upper()}\n"
+            f"VIXY 1d: {regime.vixy_1d_pct:+.2f}%\n"
+            f"VIXY 1w: {regime.vixy_1w_pct:+.2f}%\n"
+            f"{regime.reason}"
+        )
+
     def _explain(args: list[str]) -> str:
         """Show why the bot's most recent decision on a ticker came out
         the way it did. Reads from the ``signals`` table — every tick's
@@ -632,6 +659,7 @@ def build_command_handlers(
             "/equity — just the equity number\n"
             "/today — one-shot daily snapshot (P&L, trades, positions, WSB)\n"
             "/explain SYM — show why the bot's last decision on SYM was made\n"
+            "/macro — current market stress regime (calm/elevated/stressed)\n"
             "/set KEY VALUE — change a safe runtime setting (stop_loss, trailing_stop, max_buys)\n"
             "/unset KEY — remove a runtime override\n"
             "/show — list active runtime overrides\n"
@@ -659,6 +687,7 @@ def build_command_handlers(
         "isin": _isin,
         "today": _today,
         "explain": _explain,
+        "macro": _macro,
         "set": _set,
         "unset": _unset,
         "show": _show,
