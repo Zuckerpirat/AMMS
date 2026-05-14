@@ -141,8 +141,13 @@ def build_command_handlers(
     *,
     broker,
     pause: PauseFlag,
+    conn=None,
 ) -> dict[str, CommandHandler]:
-    """Construct the default command handler table."""
+    """Construct the default command handler table.
+
+    ``conn`` is an optional sqlite3 connection used by /signals and /lastorders.
+    When omitted those commands say "DB not wired" rather than crash.
+    """
 
     def _status() -> str:
         acc = broker.get_account()
@@ -177,11 +182,42 @@ def build_command_handlers(
         pause.set_paused(False)
         return "resumed: scheduler may place orders again"
 
+    def _signals() -> str:
+        if conn is None:
+            return "DB not wired."
+        rows = conn.execute(
+            "SELECT ts, symbol, signal, score FROM signals ORDER BY ts DESC LIMIT 10"
+        ).fetchall()
+        if not rows:
+            return "no signals yet"
+        return "\n".join(
+            f"{r['ts'][:16]} {r['symbol']} {r['signal']}"
+            + (f" ({r['score']:.2f})" if r["score"] is not None else "")
+            for r in rows
+        )
+
+    def _lastorders() -> str:
+        if conn is None:
+            return "DB not wired."
+        rows = conn.execute(
+            "SELECT submitted_at, symbol, side, qty, status "
+            "FROM orders ORDER BY submitted_at DESC LIMIT 10"
+        ).fetchall()
+        if not rows:
+            return "no orders yet"
+        return "\n".join(
+            f"{r['submitted_at'][:16]} {r['side'].upper()} {r['qty']:g} "
+            f"{r['symbol']} [{r['status']}]"
+            for r in rows
+        )
+
     def _help() -> str:
         return (
             "/status — equity + positions + flags\n"
             "/positions — list open positions\n"
             "/equity — just the equity number\n"
+            "/signals — last 10 strategy signals\n"
+            "/lastorders — last 10 orders\n"
             "/pause — stop placing new orders\n"
             "/resume — re-enable placing orders\n"
             "/help — this message"
@@ -191,6 +227,8 @@ def build_command_handlers(
         "status": _status,
         "positions": _positions,
         "equity": _equity,
+        "signals": _signals,
+        "lastorders": _lastorders,
         "pause": _pause,
         "resume": _resume,
         "help": _help,

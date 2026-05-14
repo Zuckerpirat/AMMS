@@ -128,7 +128,9 @@ def run_loop(
             token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
             chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
             if token and chat_id:
-                handlers = build_command_handlers(broker=broker, pause=pause)
+                handlers = build_command_handlers(
+                    broker=broker, pause=pause, conn=conn
+                )
                 inbound = TelegramInbound(token=token, chat_id=chat_id, handlers=handlers)
                 inbound.start()
 
