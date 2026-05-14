@@ -14,7 +14,13 @@ from amms.config import (
 )
 from amms.notifier import NullNotifier
 from amms.risk import RiskConfig
-from amms.scheduler import LoopState, _announce_tick, _handle_closed, run_loop
+from amms.scheduler import (
+    LoopState,
+    _announce_tick,
+    _handle_closed,
+    _maybe_refresh_sentiment,
+    run_loop,
+)
 
 PAPER_URL = "https://paper-api.alpaca.markets"
 DATA_URL = "https://data.alpaca.markets"
@@ -232,3 +238,36 @@ def test_handle_closed_emits_summary_only_once_per_day(tmp_path: Path) -> None:
     notifier = _run()
     summaries = [m for m in notifier.messages if "daily summary" in m]
     assert len(summaries) == 1
+
+
+@respx.mock
+def test_maybe_refresh_sentiment_uses_apewisdom_without_reddit_creds(
+    monkeypatch,
+) -> None:
+    """Without REDDIT_CLIENT_ID, fall back to ApeWisdom and normalize
+    mention counts into a 0..1 overlay."""
+    from amms.strategy.composite import get_sentiment_overlay, set_sentiment_overlay
+
+    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
+    set_sentiment_overlay({})
+
+    payload = {
+        "results": [
+            {"ticker": "NVDA", "mentions": 1000},
+            {"ticker": "GME", "mentions": 100},
+            {"ticker": "OFFLIST", "mentions": 50},
+        ]
+    }
+    respx.get("https://apewisdom.io/api/v1.0/filter/wallstreetbets").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+
+    state = LoopState()
+    # Must exceed SENTIMENT_REFRESH_SECONDS (3600) since last refresh = 0.
+    _maybe_refresh_sentiment(state, watchlist={"NVDA", "GME"}, now_seconds=10_000.0)
+    overlay = get_sentiment_overlay()
+    # Watchlist filter excludes OFFLIST.
+    assert set(overlay) == {"NVDA", "GME"}
+    # 1000 mentions ≈ log10(1001)/3 ≈ 1.0 (clipped); 100 ≈ log10(101)/3 ≈ 0.67.
+    assert overlay["NVDA"] == 1.0
+    assert 0.5 < overlay["GME"] < 0.8

@@ -4,10 +4,10 @@
 # composite strategy weighted toward Reddit sentiment, plus tight per-position
 # stop-loss because these tickers move fast in both directions.
 #
-# Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env so the scheduler
-# can refresh the sentiment overlay between ticks. Without those, sentiment
-# falls back to neutral and the bot trades on momentum/volume alone — still
-# safe, just less WSB-flavored.
+# Sentiment source: if REDDIT_CLIENT_ID/SECRET are set in .env, the scheduler
+# uses Reddit's text-scraping path (richer per-post sentiment). Otherwise it
+# falls back to ApeWisdom (no API key needed) and converts WSB mention counts
+# into an attention score so heavily-discussed tickers get a buy bonus.
 
 watchlist:
   # Large-cap WSB darlings (high volume, real fundamentals)

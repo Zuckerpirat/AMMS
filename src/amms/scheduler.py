@@ -57,19 +57,48 @@ SENTIMENT_REFRESH_SECONDS = 3600  # hourly
 def _maybe_refresh_sentiment(
     state: LoopState, watchlist: set[str], now_seconds: float
 ) -> None:
+    """Refresh the sentiment overlay from WSB data.
+
+    Uses Reddit's text-scraping path when REDDIT_CLIENT_ID is configured
+    (richer per-post sentiment scoring). Otherwise falls back to
+    ApeWisdom, where score is derived from raw mention rank — high
+    mention counts produce a positive 0..1 overlay value, surfacing
+    retail attention to the strategy without needing API keys.
+    """
     if now_seconds - state.last_sentiment_refresh_ts < SENTIMENT_REFRESH_SECONDS:
         return
     state.last_sentiment_refresh_ts = now_seconds
-    if not os.environ.get("REDDIT_CLIENT_ID", "").strip():
-        return
+    if os.environ.get("REDDIT_CLIENT_ID", "").strip():
+        try:
+            with RedditSentimentCollector() as coll:
+                agg = coll.aggregate(watchlist=watchlist)
+            scores = {sym: r.avg_score for sym, r in agg.items()}
+            set_sentiment_overlay(scores)
+            logger.info("refreshed sentiment overlay (reddit): %d symbols", len(scores))
+            return
+        except Exception:
+            logger.warning("reddit sentiment refresh failed", exc_info=True)
+    # Fallback: ApeWisdom mentions → log-normalized score in [0, 1].
     try:
-        with RedditSentimentCollector() as coll:
-            agg = coll.aggregate(watchlist=watchlist)
-        scores = {sym: r.avg_score for sym, r in agg.items()}
+        from amms.features.sentiment import ApeWisdomCollector
+        import math
+
+        with ApeWisdomCollector() as ape:
+            raw = ape.fetch_trending(filter="wallstreetbets")
+        scores: dict[str, float] = {}
+        for item in raw:
+            sym = (item.get("ticker") or "").upper()
+            if not sym or (watchlist and sym not in watchlist):
+                continue
+            mentions = int(item.get("mentions") or 0)
+            if mentions <= 0:
+                continue
+            # log10(1000) ≈ 3, so 1000 mentions ≈ score 1.0.
+            scores[sym] = min(1.0, math.log10(mentions + 1) / 3.0)
         set_sentiment_overlay(scores)
-        logger.info("refreshed sentiment overlay: %d symbols", len(scores))
+        logger.info("refreshed sentiment overlay (apewisdom): %d symbols", len(scores))
     except Exception:
-        logger.warning("sentiment refresh failed", exc_info=True)
+        logger.warning("apewisdom sentiment refresh failed", exc_info=True)
 
 
 def _install_signal_handlers(stop: threading.Event) -> None:
