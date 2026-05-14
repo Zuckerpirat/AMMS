@@ -6,6 +6,23 @@ from amms.data.bars import Bar
 from amms.features import n_day_return, realized_vol, relative_volume, rsi
 from amms.strategy.base import Signal
 
+_SENTIMENT_OVERLAY: dict[str, float] = {}
+
+
+def set_sentiment_overlay(scores: dict[str, float]) -> None:
+    """Replace the process-wide sentiment overlay used by CompositeStrategy.
+
+    Pass an empty dict to clear. Designed for the scheduler to push fresh
+    Reddit sentiment scores between ticks without threading state through
+    the strategy interface.
+    """
+    _SENTIMENT_OVERLAY.clear()
+    _SENTIMENT_OVERLAY.update(scores)
+
+
+def get_sentiment_overlay() -> dict[str, float]:
+    return dict(_SENTIMENT_OVERLAY)
+
 
 @dataclass(frozen=True)
 class CompositeStrategy:
@@ -36,6 +53,11 @@ class CompositeStrategy:
 
     rvol_n: int = 20
     rvol_min: float = 1.2
+
+    # Sentiment bonus multiplier. Score is multiplied by (1 + sentiment_weight * s)
+    # where s in [-1, 1] from the overlay. 0 disables.
+    sentiment_weight: float = 0.0
+    sentiment_min: float = -1.0  # set above -1 to require a minimum sentiment
 
     name: str = "composite"
 
@@ -95,8 +117,19 @@ class CompositeStrategy:
             return Signal(symbol, "hold", "; ".join(reasons), price)
 
         score = (momentum * rvol) / max(vol, 0.01)
+        sentiment = _SENTIMENT_OVERLAY.get(symbol, 0.0)
+        if sentiment < self.sentiment_min:
+            return Signal(
+                symbol,
+                "hold",
+                f"sentiment {sentiment:+.2f} < min {self.sentiment_min:+.2f}",
+                price,
+            )
+        if self.sentiment_weight != 0:
+            score *= 1 + self.sentiment_weight * sentiment
         reason = (
             f"composite ok (mom={momentum:+.2%}, rsi={r:.1f}, "
-            f"vol={vol:.2%}, rvol={rvol:.2f}, score={score:.2f})"
+            f"vol={vol:.2%}, rvol={rvol:.2f}, sentiment={sentiment:+.2f}, "
+            f"score={score:.2f})"
         )
         return Signal(symbol, "buy", reason, price, score=score)

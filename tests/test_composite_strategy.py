@@ -100,3 +100,31 @@ def test_build_strategy_constructs_composite() -> None:
     strat = build_strategy("composite", {"momentum_n": 10, "rsi_n": 14})
     assert isinstance(strat, CompositeStrategy)
     assert strat.momentum_n == 10
+
+
+def test_sentiment_overlay_boosts_score() -> None:
+    from amms.strategy.composite import set_sentiment_overlay
+
+    bars = _uptrend_with_dips()
+    base = CompositeStrategy().evaluate("AAPL", bars)
+    assert base.kind == "buy"
+    set_sentiment_overlay({"AAPL": 1.0})
+    try:
+        weighted = CompositeStrategy(sentiment_weight=0.5).evaluate("AAPL", bars)
+        assert weighted.kind == "buy"
+        assert weighted.score > base.score
+    finally:
+        set_sentiment_overlay({})
+
+
+def test_sentiment_min_filter_blocks_buy() -> None:
+    from amms.strategy.composite import set_sentiment_overlay
+
+    bars = _uptrend_with_dips()
+    set_sentiment_overlay({"AAPL": -0.9})
+    try:
+        sig = CompositeStrategy(sentiment_min=-0.5).evaluate("AAPL", bars)
+        assert sig.kind == "hold"
+        assert "sentiment" in sig.reason
+    finally:
+        set_sentiment_overlay({})

@@ -13,6 +13,7 @@ from amms.clock import ClockStatus
 from amms.config import AppConfig, Settings
 from amms.data import MarketDataClient
 from amms.executor import TickResult, build_daily_summary, run_tick
+from amms.features.sentiment import RedditSentimentCollector
 from amms.metrics import start_metrics_server
 from amms.notifier import (
     Notifier,
@@ -22,7 +23,9 @@ from amms.notifier import (
     build_command_handlers,
     build_notifier,
 )
+from amms.notifier.llm_summary import augment_summary
 from amms.strategy import build_strategy
+from amms.strategy.composite import set_sentiment_overlay
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,28 @@ WHILE_CLOSED_POLL_SECONDS = 60
 class LoopState:
     last_saw_open: bool | None = None
     sent_summary_dates: set[str] = field(default_factory=set)
+    last_sentiment_refresh_ts: float = 0.0
+
+
+SENTIMENT_REFRESH_SECONDS = 3600  # hourly
+
+
+def _maybe_refresh_sentiment(
+    state: LoopState, watchlist: set[str], now_seconds: float
+) -> None:
+    if now_seconds - state.last_sentiment_refresh_ts < SENTIMENT_REFRESH_SECONDS:
+        return
+    state.last_sentiment_refresh_ts = now_seconds
+    if not os.environ.get("REDDIT_CLIENT_ID", "").strip():
+        return
+    try:
+        with RedditSentimentCollector() as coll:
+            agg = coll.aggregate(watchlist=watchlist)
+        scores = {sym: r.avg_score for sym, r in agg.items()}
+        set_sentiment_overlay(scores)
+        logger.info("refreshed sentiment overlay: %d symbols", len(scores))
+    except Exception:
+        logger.warning("sentiment refresh failed", exc_info=True)
 
 
 def _install_signal_handlers(stop: threading.Event) -> None:
@@ -118,6 +143,11 @@ def run_loop(
                     continue
 
                 state.last_saw_open = True
+                import time as _time
+
+                _maybe_refresh_sentiment(
+                    state, set(config.watchlist), _time.time()
+                )
                 # Force-close window: flatten remaining positions just before
                 # market close if config.risk.force_close_minutes_before_close
                 # is set. Day-trade profiles use this to avoid overnight risk.
@@ -168,12 +198,23 @@ def _handle_closed(
         today = clock.timestamp.date().isoformat()
         if today not in state.sent_summary_dates:
             try:
-                summary = build_daily_summary(broker, conn)
+                plain = build_daily_summary(broker, conn)
+                trades_today = _fetch_today_trades(conn, today)
+                summary = augment_summary(plain, trades_today=trades_today, conn=conn)
                 notifier.send(summary)
                 state.sent_summary_dates.add(today)
             except Exception:
                 logger.exception("daily summary failed")
     state.last_saw_open = False
+
+
+def _fetch_today_trades(conn: sqlite3.Connection, today_iso: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT symbol, side, qty, status, filled_avg_price "
+        "FROM orders WHERE substr(submitted_at, 1, 10) = ? ORDER BY submitted_at",
+        (today_iso,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def _announce_tick(notifier: Notifier, result: TickResult) -> None:
