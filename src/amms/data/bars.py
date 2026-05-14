@@ -55,47 +55,86 @@ class MarketDataClient:
     def get_snapshots(
         self, symbols: list[str], *, feed: str = "iex"
     ) -> dict[str, dict[str, float]]:
-        """Return latest price + daily change for each symbol.
+        """Return latest price + daily and weekly change for each symbol.
 
-        Output: {symbol: {"price": float, "prev_close": float, "change_pct": float}}.
-        Missing/failed symbols are simply omitted from the result.
+        Output per symbol: {"price", "prev_close", "change_pct" (daily),
+        "week_ago_close", "change_pct_week"}. Missing/failed symbols are
+        omitted. The weekly close comes from the daily bar ~5 trading
+        days ago, fetched via a single batched /v2/stocks/bars call.
         """
         if not symbols:
             return {}
-        params = {
-            "symbols": ",".join(s.upper() for s in symbols),
-            "feed": feed,
-        }
+        syms_csv = ",".join(s.upper() for s in symbols)
+
+        # Step 1: latest price + previous day close via snapshots.
         try:
             resp = self._client.get(
-                f"{self._base_url}/v2/stocks/snapshots", params=params
+                f"{self._base_url}/v2/stocks/snapshots",
+                params={"symbols": syms_csv, "feed": feed},
             )
             resp.raise_for_status()
-            data = resp.json()
+            snap_data = resp.json()
         except Exception:
             return {}
+
+        # Step 2: weekly reference close via daily bars over the past
+        # ~10 calendar days (covers weekends and short holidays).
+        from datetime import UTC, datetime, timedelta
+
+        end = datetime.now(UTC).date()
+        start = end - timedelta(days=14)
+        weekly_close: dict[str, float] = {}
+        try:
+            bars_resp = self._client.get(
+                f"{self._base_url}/v2/stocks/bars",
+                params={
+                    "symbols": syms_csv,
+                    "timeframe": "1Day",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "feed": feed,
+                    "limit": 1000,
+                    "adjustment": "raw",
+                },
+            )
+            bars_resp.raise_for_status()
+            bars_map = (bars_resp.json().get("bars") or {})
+            for sym, bars in bars_map.items():
+                if not bars:
+                    continue
+                # Reference = bar closest to "5 trading days ago" = 6th from end.
+                ref = bars[-6] if len(bars) >= 6 else bars[0]
+                close = ref.get("c")
+                if close:
+                    weekly_close[sym.upper()] = float(close)
+        except Exception:
+            weekly_close = {}
+
         out: dict[str, dict[str, float]] = {}
-        snapshots = data.get("snapshots") or data
+        snapshots = snap_data.get("snapshots") or snap_data
         for sym, snap in snapshots.items():
             if not isinstance(snap, dict):
                 continue
             trade = snap.get("latestTrade") or {}
             prev = snap.get("prevDailyBar") or {}
             price = trade.get("p")
-            prev_close = prev.get("c")
-            if price is None or prev_close in (None, 0):
-                if price is not None:
-                    out[sym.upper()] = {
-                        "price": float(price),
-                        "prev_close": 0.0,
-                        "change_pct": 0.0,
-                    }
+            if price is None:
                 continue
-            change_pct = (float(price) - float(prev_close)) / float(prev_close) * 100
+            price = float(price)
+            prev_close = prev.get("c")
+            day_pct = (
+                (price - float(prev_close)) / float(prev_close) * 100
+                if prev_close
+                else 0.0
+            )
+            wk_close = weekly_close.get(sym.upper(), 0.0)
+            wk_pct = (price - wk_close) / wk_close * 100 if wk_close else 0.0
             out[sym.upper()] = {
-                "price": float(price),
-                "prev_close": float(prev_close),
-                "change_pct": change_pct,
+                "price": price,
+                "prev_close": float(prev_close or 0.0),
+                "change_pct": day_pct,
+                "week_ago_close": wk_close,
+                "change_pct_week": wk_pct,
             }
         return out
 

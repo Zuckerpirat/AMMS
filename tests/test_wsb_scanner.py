@@ -192,10 +192,21 @@ def test_format_summary_renders_prices_when_provided() -> None:
         collector=_FakeCollector(posts), subreddits=("wallstreetbets",)
     )
     results = scanner.scan(min_mentions=2)
-    prices = {"NVDA": {"price": 875.12, "prev_close": 850.0, "change_pct": 2.96}}
+    prices = {
+        "NVDA": {
+            "price": 875.12,
+            "prev_close": 850.0,
+            "change_pct": 2.96,
+            "week_ago_close": 800.0,
+            "change_pct_week": 9.39,
+        }
+    }
     text = format_summary(results, prices=prices)
     assert "$875.12" in text
     assert "+2.96%" in text
+    assert "+9.39%" in text
+    assert "1d" in text
+    assert "1w" in text
 
 
 @respx.mock

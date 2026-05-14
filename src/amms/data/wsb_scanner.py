@@ -205,8 +205,12 @@ def format_summary(
         line = f"{i:>2}. {t.symbol:<6} {t.mentions:>3}x"
         if prices and t.symbol in prices:
             p = prices[t.symbol]
-            arrow = "▲" if p["change_pct"] >= 0 else "▼"
-            line += f"  ${p['price']:.2f} {arrow}{p['change_pct']:+.2f}%"
+            d_arrow = "▲" if p["change_pct"] >= 0 else "▼"
+            line += f"  ${p['price']:.2f} 1d {d_arrow}{p['change_pct']:+.2f}%"
+            wk = p.get("change_pct_week")
+            if wk is not None and p.get("week_ago_close"):
+                w_arrow = "▲" if wk >= 0 else "▼"
+                line += f"  1w {w_arrow}{wk:+.2f}%"
         # Only show sentiment columns when we actually have signal there.
         if t.avg_sentiment != 0 or t.bullish_posts or t.bearish_posts:
             line += (
