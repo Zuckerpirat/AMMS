@@ -16,6 +16,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from amms.features.sentiment import (
+    ApeWisdomCollector,
     RedditSentimentCollector,
     extract_tickers,
     score_text,
@@ -49,14 +50,14 @@ class TrendingTicker:
 
 
 class WSBScanner:
-    """Scan subreddits for trending tickers (mentions + sentiment).
+    """Scan WSB for trending tickers (mentions + sentiment).
+
+    Uses ApeWisdom by default (no API key needed). Falls back to
+    RedditSentimentCollector if REDDIT_CLIENT_ID is set in env.
 
     Usage:
         with WSBScanner() as scanner:
             top = scanner.scan(min_mentions=3, top_n=20)
-
-    The scanner reuses ``RedditSentimentCollector`` internally for OAuth
-    handling, lexicon-based scoring, and ticker extraction.
     """
 
     def __init__(
@@ -68,6 +69,10 @@ class WSBScanner:
         self._owns_collector = collector is None
         self._collector = collector or RedditSentimentCollector()
         self._subreddits = subreddits
+        # Use ApeWisdom only when no collector was injected AND no Reddit keys set.
+        self._use_apewisdom = collector is None and not bool(
+            __import__("os").environ.get("REDDIT_CLIENT_ID")
+        )
 
     def close(self) -> None:
         if self._owns_collector:
@@ -87,11 +92,60 @@ class WSBScanner:
         min_mentions: int = 3,
         top_n: int | None = 20,
     ) -> list[TrendingTicker]:
-        """Pull top posts and return tickers ranked by mentions desc.
+        """Return tickers ranked by WSB mentions.
 
-        ``min_mentions`` filters out one-off mentions (typical noise floor).
-        ``top_n`` caps the result; pass ``None`` to return everything.
+        Uses ApeWisdom (no key needed) unless REDDIT_CLIENT_ID is set,
+        in which case the full Reddit text-scraping path runs instead.
         """
+        if not self._use_apewisdom:
+            return self._scan_reddit(
+                limit_per_sub=limit_per_sub,
+                time_filter=time_filter,
+                min_mentions=min_mentions,
+                top_n=top_n,
+            )
+        return self._scan_apewisdom(min_mentions=min_mentions, top_n=top_n)
+
+    def _scan_apewisdom(
+        self,
+        *,
+        min_mentions: int,
+        top_n: int | None,
+    ) -> list[TrendingTicker]:
+        with ApeWisdomCollector() as ape:
+            raw = ape.fetch_trending(filter="wallstreetbets")
+
+        results: list[TrendingTicker] = []
+        for item in raw:
+            sym = (item.get("ticker") or "").upper()
+            if not sym:
+                continue
+            mentions = int(item.get("mentions") or 0)
+            if mentions < min_mentions:
+                continue
+            results.append(
+                TrendingTicker(
+                    symbol=sym,
+                    mentions=mentions,
+                    avg_sentiment=0.0,
+                    bullish_posts=0,
+                    bearish_posts=0,
+                )
+            )
+
+        results.sort(key=lambda t: t.mentions, reverse=True)
+        if top_n is not None:
+            results = results[:top_n]
+        return results
+
+    def _scan_reddit(
+        self,
+        *,
+        limit_per_sub: int,
+        time_filter: str,
+        min_mentions: int,
+        top_n: int | None,
+    ) -> list[TrendingTicker]:
         mentions: Counter[str] = Counter()
         score_sums: dict[str, float] = {}
         bullish: Counter[str] = Counter()
@@ -108,7 +162,6 @@ class WSBScanner:
                 if not text:
                     continue
                 post_score = score_text(text)
-                # watchlist=None = take everything (after stop-list filter)
                 tickers_in_post = set(extract_tickers(text, watchlist=None))
                 for sym in tickers_in_post:
                     mentions[sym] += 1

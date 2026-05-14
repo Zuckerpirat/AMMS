@@ -92,6 +92,88 @@ class SentimentResult:
     avg_score: float
 
 
+class ApeWisdomCollector:
+    """Pulls trending tickers from ApeWisdom — no API key required.
+
+    ApeWisdom aggregates WSB and other Reddit mentions in real-time.
+    Returns tickers ranked by mention count with 24h comparison.
+    Falls back to empty list on any error so the bot keeps running.
+    """
+
+    _BASE = "https://apewisdom.io/api/v1.0"
+
+    def __init__(
+        self,
+        *,
+        timeout: float = 15.0,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self._timeout = timeout
+        self._owns_client = client is None
+        self._client = client or httpx.Client(
+            timeout=timeout,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; amms/1.0)"},
+        )
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def __enter__(self) -> ApeWisdomCollector:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def fetch_trending(
+        self,
+        *,
+        filter: str = "wallstreetbets",
+        page: int = 1,
+    ) -> list[dict]:
+        """Return raw result dicts from ApeWisdom.
+
+        Each dict contains: ticker, mentions, mentions_24h_ago, rank,
+        rank_24h_ago, upvotes.
+        """
+        try:
+            resp = self._client.get(
+                f"{self._BASE}/filter/{filter}",
+                params={"page": page},
+            )
+            resp.raise_for_status()
+            return resp.json().get("results", [])
+        except Exception:
+            logger.warning("apewisdom fetch failed", exc_info=True)
+            return []
+
+    def to_sentiment_results(
+        self,
+        *,
+        filter: str = "wallstreetbets",
+        min_mentions: int = 3,
+        watchlist: set[str] | None = None,
+    ) -> dict[str, SentimentResult]:
+        """Fetch and convert to SentimentResult dict (same format as Reddit collector)."""
+        raw = self.fetch_trending(filter=filter)
+        out: dict[str, SentimentResult] = {}
+        for item in raw:
+            sym = (item.get("ticker") or "").upper()
+            if not sym or sym in _STOP_TICKERS:
+                continue
+            if watchlist is not None and sym not in watchlist:
+                continue
+            mentions = int(item.get("mentions") or 0)
+            if mentions < min_mentions:
+                continue
+            out[sym] = SentimentResult(
+                symbol=sym,
+                mentions=mentions,
+                avg_score=0.0,  # ApeWisdom has no sentiment score, only mention count
+            )
+        return out
+
+
 class RedditSentimentCollector:
     """Pulls recent hot/new posts from a subreddit and aggregates per-ticker
     sentiment. Uses Reddit's JSON listing endpoint with the user's PRAW-style

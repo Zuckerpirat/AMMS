@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import httpx
+import respx
+
 from amms.data.wsb_scanner import WSBScanner, format_summary
 
 
@@ -152,3 +155,37 @@ def test_top_n_limits_result_length() -> None:
     )
     results = scanner.scan(min_mentions=2, top_n=2)
     assert len(results) == 2
+
+
+@respx.mock
+def test_scan_uses_apewisdom_when_no_collector_and_no_reddit_creds(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
+    payload = {
+        "results": [
+            {"ticker": "GME", "mentions": 120, "upvotes": 500},
+            {"ticker": "NVDA", "mentions": 80, "upvotes": 300},
+            {"ticker": "RARE", "mentions": 1, "upvotes": 5},
+        ]
+    }
+    respx.get("https://apewisdom.io/api/v1.0/filter/wallstreetbets").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+    scanner = WSBScanner()  # no collector → uses ApeWisdom
+    results = scanner.scan(min_mentions=2, top_n=10)
+    symbols = [r.symbol for r in results]
+    assert symbols[0] == "GME"
+    assert "NVDA" in symbols
+    assert "RARE" not in symbols  # below min_mentions
+
+
+@respx.mock
+def test_apewisdom_failure_returns_empty(monkeypatch) -> None:
+    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
+    respx.get("https://apewisdom.io/api/v1.0/filter/wallstreetbets").mock(
+        return_value=httpx.Response(500)
+    )
+    scanner = WSBScanner()
+    results = scanner.scan(min_mentions=1)
+    assert results == []
