@@ -807,6 +807,36 @@ def preview_signal(
     )
 
 
+@app.command(name="apply-profile")
+def apply_profile(
+    name: str = typer.Argument(..., help="swing | day-trade | penny | <path>"),
+) -> None:
+    """Replace config.yaml with one of the bundled profiles (or any path)."""
+    import os
+    import shutil
+
+    candidate = Path(f"profiles/{name}.yaml")
+    if candidate.exists():
+        src = candidate
+    else:
+        src = Path(name)
+        if not src.exists():
+            console.print(f"[red]profile not found: {name}[/red]")
+            raise typer.Exit(code=1)
+    dst_env = os.environ.get("AMMS_CONFIG_PATH", "").strip() or "config.yaml"
+    dst = Path(dst_env)
+    if dst.exists():
+        backup = dst.with_suffix(dst.suffix + ".bak")
+        shutil.copy2(dst, backup)
+        console.print(f"backed up existing config to {backup}")
+    shutil.copy2(src, dst)
+    console.print(f"[green]applied profile {src.name} → {dst}[/green]")
+    console.print(
+        "[yellow]Restart to pick up the change:[/yellow] "
+        "docker compose down && docker compose up -d"
+    )
+
+
 @app.command(name="order-status")
 def order_status(order_id: str = typer.Argument(...)) -> None:
     """Fetch the current status of a paper order from Alpaca."""
