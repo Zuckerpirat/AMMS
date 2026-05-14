@@ -268,15 +268,18 @@ def run_loop(
                 )
 
                 # WSB Auto-Discovery: opportunistic watchlist expansion. Runs at
-                # most every refresh_hours; no-op when disabled or Reddit creds
-                # are missing. We rebuild the per-tick AppConfig with the
-                # extended watchlist below.
-                effective_config = config
-                if config.wsb_discovery.enabled:
+                # most every refresh_hours; no-op when disabled. Runtime
+                # overrides (/set wsb_enabled 1, /set wsb_top_n 10, ...) are
+                # applied here so users can toggle expansion from Telegram.
+                from amms.runtime_overrides import apply_to_config as _apply_cfg
+
+                pre_overrides_config = _apply_cfg(config, conn)
+                effective_config = pre_overrides_config
+                if pre_overrides_config.wsb_discovery.enabled:
                     delta = maybe_refresh_wsb_extras(
                         state.wsb_discovery,
-                        config.wsb_discovery,
-                        static_watchlist=set(config.watchlist),
+                        pre_overrides_config.wsb_discovery,
+                        static_watchlist=set(pre_overrides_config.watchlist),
                         now_seconds=_time.time(),
                     )
                     if delta.refreshed and (delta.added or delta.removed):
@@ -290,13 +293,12 @@ def run_loop(
                 merged_extras = frozenset(state.wsb_discovery.extras) | frozenset(user_extras)
                 if merged_extras:
                     effective_config = _with_extra_watchlist(config, merged_extras)
-                # Apply any runtime overrides the user set via /set on Telegram.
+                # Apply runtime overrides to the (already extended) config.
                 from amms.runtime_overrides import (
-                    apply_to_config as _apply_overrides,
                     apply_to_strategy as _apply_strategy_overrides,
                 )
 
-                effective_config = _apply_overrides(effective_config, conn)
+                effective_config = _apply_cfg(effective_config, conn)
                 effective_strategy = _apply_strategy_overrides(strategy, conn)
 
                 # Macro regime check: when VIXY signals stress, pause buys

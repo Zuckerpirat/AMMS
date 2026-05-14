@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from amms.config import AppConfig, SchedulerConfig, StrategyConfig
+from amms.data.wsb_discovery import WSBDiscoveryConfig
 from amms.risk.rules import RiskConfig
 from amms.runtime_overrides import (
     apply_to_config,
@@ -107,6 +108,32 @@ def test_apply_to_strategy_no_op_when_strategy_lacks_field() -> None:
     set_override(conn, "sentiment_weight", "0.3")
     strat = _NoSentimentStrategy()
     assert apply_to_strategy(strat, conn) is strat
+
+
+def test_apply_to_config_overrides_wsb_discovery_fields() -> None:
+    conn = _conn()
+    set_override(conn, "wsb_enabled", "1")
+    set_override(conn, "wsb_top_n", "12")
+    set_override(conn, "wsb_min_mentions", "100")
+    cfg = apply_to_config(_base_config(), conn)
+    assert cfg.wsb_discovery.enabled is True
+    assert cfg.wsb_discovery.top_n == 12
+    assert cfg.wsb_discovery.min_mentions == 100
+
+
+def test_parse_wsb_enabled_accepts_truthy_and_falsy() -> None:
+    assert parse_value("wsb_enabled", "1") is True
+    assert parse_value("wsb_enabled", "true") is True
+    assert parse_value("wsb_enabled", "yes") is True
+    assert parse_value("wsb_enabled", "off") is False
+    assert parse_value("wsb_enabled", "no") is False
+    with pytest.raises(ValueError):
+        parse_value("wsb_enabled", "maybe")
+
+
+def test_parse_wsb_top_n_rejects_zero() -> None:
+    with pytest.raises(ValueError):
+        parse_value("wsb_top_n", "0")
 
 
 def test_parse_sentiment_weight_validates_range() -> None:

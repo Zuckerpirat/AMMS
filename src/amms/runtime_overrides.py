@@ -24,6 +24,15 @@ from amms.config import AppConfig
 
 # Whitelist of user-tunable settings.
 # key (telegram-facing) -> (description, parser)
+def _to_bool(raw: str) -> bool:
+    s = raw.strip().lower()
+    if s in {"1", "true", "yes", "on", "y"}:
+        return True
+    if s in {"0", "false", "no", "off", "n"}:
+        return False
+    raise ValueError(f"expected 1/0/true/false, got {raw!r}")
+
+
 _ALLOWED: dict[str, tuple[str, Callable[[str], Any]]] = {
     "stop_loss": ("Stop-loss percentage (0–1, e.g. 0.05 = 5%)", float),
     "trailing_stop": ("Trailing-stop percentage (0–1)", float),
@@ -31,6 +40,9 @@ _ALLOWED: dict[str, tuple[str, Callable[[str], Any]]] = {
     "sentiment_weight": (
         "WSB hype bonus multiplier (0..1, e.g. 0.45 = up to +45% score)", float
     ),
+    "wsb_enabled": ("Enable WSB Auto-Discovery watchlist expansion (1/0)", _to_bool),
+    "wsb_top_n": ("Max tickers WSB Auto-Discovery may add", int),
+    "wsb_min_mentions": ("Minimum WSB mentions needed to auto-add a ticker", int),
 }
 
 
@@ -59,6 +71,10 @@ def parse_value(key: str, raw: str) -> Any:
             raise ValueError(f"sentiment_weight must be in [0, 1], got {value}")
     if key == "max_buys" and value < 0:
         raise ValueError("max_buys must be >= 0")
+    if key == "wsb_top_n" and value <= 0:
+        raise ValueError("wsb_top_n must be > 0")
+    if key == "wsb_min_mentions" and value <= 0:
+        raise ValueError("wsb_min_mentions must be > 0")
     return value
 
 
@@ -147,7 +163,20 @@ def apply_to_config(config: AppConfig, conn: sqlite3.Connection) -> AppConfig:
         risk_kwargs["trailing_stop_pct"] = overrides["trailing_stop"]
     if "max_buys" in overrides:
         risk_kwargs["max_buys_per_tick"] = overrides["max_buys"]
+    wsb_kwargs: dict[str, Any] = {}
+    if "wsb_enabled" in overrides:
+        wsb_kwargs["enabled"] = overrides["wsb_enabled"]
+    if "wsb_top_n" in overrides:
+        wsb_kwargs["top_n"] = overrides["wsb_top_n"]
+    if "wsb_min_mentions" in overrides:
+        wsb_kwargs["min_mentions"] = overrides["wsb_min_mentions"]
+
+    new_config = config
     if risk_kwargs:
-        new_risk = replace(config.risk, **risk_kwargs)
-        return replace(config, risk=new_risk)
-    return config
+        new_config = replace(new_config, risk=replace(new_config.risk, **risk_kwargs))
+    if wsb_kwargs:
+        new_config = replace(
+            new_config,
+            wsb_discovery=replace(new_config.wsb_discovery, **wsb_kwargs),
+        )
+    return new_config
