@@ -10,7 +10,6 @@ from amms.data.edgar import (
     EdgarClient,
 )
 
-
 _TICKER_INDEX = {
     "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
     "1": {"cik_str": 789019, "ticker": "MSFT", "title": "Microsoft"},
