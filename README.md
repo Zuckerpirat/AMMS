@@ -53,6 +53,8 @@ docker compose logs -f           # watch what it does
 | `amms orders [--limit]` | Recent orders from the DB |
 | `amms equity-log [--limit]` | Recent equity snapshots |
 | `amms init-db` | Apply DB migrations explicitly |
+| `amms doctor` | Pre-flight self-check (env, config, DB, Alpaca, Telegram) |
+| `amms compare-strategies --from --to` | A/B SMA vs Composite on the same window |
 
 ## Safety guarantees
 

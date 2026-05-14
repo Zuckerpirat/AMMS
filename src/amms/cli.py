@@ -648,6 +648,98 @@ def compare_strategies(
     console.print(table)
 
 
+@app.command()
+def doctor() -> None:
+    """Pre-flight self-check. Validates env, config, DB, and Alpaca reach.
+
+    Run this once after `cp .env.example .env` and `cp config.example.yaml
+    config.yaml`. Reports each check as ✓ or ✗ with a clear reason.
+    """
+    failures = 0
+
+    # 1. Settings
+    try:
+        settings = load_settings()
+        console.print(f"[green]✓[/green] env loaded; broker URL = {settings.alpaca_base_url}")
+    except ConfigError as e:
+        console.print(f"[red]✗[/red] env: {e}")
+        raise typer.Exit(code=1) from e
+
+    # 2. Paper guard
+    if "paper-api" in settings.alpaca_base_url:
+        console.print("[green]✓[/green] paper endpoint (live-trading guard intact)")
+    else:
+        console.print(f"[red]✗[/red] paper guard failed: {settings.alpaca_base_url}")
+        failures += 1
+
+    # 3. AppConfig
+    try:
+        cfg = load_app_config()
+        console.print(
+            f"[green]✓[/green] config.yaml: {len(cfg.watchlist)} symbols, "
+            f"strategy={cfg.strategy.name}@{cfg.strategy.timeframe}"
+        )
+    except ConfigError as e:
+        console.print(f"[red]✗[/red] config: {e}")
+        failures += 1
+        cfg = None
+
+    # 4. DB
+    try:
+        conn = db.connect(settings.db_path)
+        applied = db.migrate(conn)
+        tables = {
+            r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        conn.close()
+        console.print(
+            f"[green]✓[/green] DB at {settings.db_path}: "
+            f"{applied} migration(s) applied; tables={len(tables)}"
+        )
+    except Exception as e:
+        console.print(f"[red]✗[/red] DB: {e}")
+        failures += 1
+
+    # 5. Alpaca reachability (HEAD-equivalent: just /v2/account)
+    try:
+        with AlpacaClient(
+            settings.alpaca_api_key,
+            settings.alpaca_api_secret,
+            settings.alpaca_base_url,
+        ) as broker:
+            account = broker.get_account()
+        console.print(
+            f"[green]✓[/green] Alpaca reachable; "
+            f"equity ${account.equity:,.2f}, status {account.status}"
+        )
+    except Exception as e:
+        console.print(f"[red]✗[/red] Alpaca: {e}")
+        failures += 1
+
+    # 6. Telegram (optional)
+    import os
+
+    if os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() and os.environ.get(
+        "TELEGRAM_CHAT_ID", ""
+    ).strip():
+        console.print("[green]✓[/green] Telegram configured")
+    else:
+        console.print("[dim]·[/dim] Telegram not configured (optional)")
+
+    # 7. Sanity: strategy timeframe vs backtester limitation
+    if cfg is not None and cfg.strategy.timeframe != "1Day":
+        console.print(
+            f"[yellow]⚠[/yellow] strategy.timeframe={cfg.strategy.timeframe} — "
+            "backtester groups bars by day; live executor handles intraday correctly."
+        )
+
+    if failures:
+        console.print(f"\n[red]doctor: {failures} failure(s).[/red]")
+        raise typer.Exit(code=1)
+    console.print("\n[green]doctor: all good.[/green]")
+
+
 def main() -> None:
     app()
 
