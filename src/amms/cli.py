@@ -14,6 +14,7 @@ from amms.backtest import (
     BacktestStats,
     compute_stats,
     run_backtest,
+    run_intraday_backtest,
     run_walk_forward,
     write_trades_csv,
 )
@@ -353,6 +354,11 @@ def backtest(
         "--fetch",
         help="Fetch missing daily bars from Alpaca before running the backtest.",
     ),
+    intraday: bool = typer.Option(
+        False,
+        "--intraday",
+        help="Use the timestamp-stepping engine (required for 5Min/15Min timeframes).",
+    ),
 ) -> None:
     """Backtest the configured strategy on historical bars stored in SQLite."""
     config = _app_config_or_die()
@@ -391,8 +397,9 @@ def backtest(
                         f"{config.strategy.timeframe} bars for {sym}"
                     )
 
+        runner = run_intraday_backtest if intraday else run_backtest
         try:
-            result = run_backtest(bt_config, conn)
+            result = runner(bt_config, conn)
         except ValueError as e:
             console.print(f"[red]{e}[/red]")
             raise typer.Exit(code=1) from e
@@ -646,6 +653,38 @@ def compare_strategies(
             f"{s.win_rate:.0%}",
         )
     console.print(table)
+
+
+@app.command(name="summary-today")
+def summary_today(llm: bool = typer.Option(False, "--llm")) -> None:
+    """Print the plain daily summary that the bot would send via Telegram."""
+    from amms.executor import build_daily_summary
+
+    settings = _settings_or_die()
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    try:
+        with AlpacaClient(
+            settings.alpaca_api_key,
+            settings.alpaca_api_secret,
+            settings.alpaca_base_url,
+        ) as broker:
+            plain = build_daily_summary(broker, conn)
+        if llm:
+            from datetime import UTC, datetime
+
+            from amms.notifier.llm_summary import augment_summary
+
+            today = datetime.now(UTC).date().isoformat()
+            rows = conn.execute(
+                "SELECT symbol, side, qty, status, filled_avg_price "
+                "FROM orders WHERE substr(submitted_at,1,10) = ?",
+                (today,),
+            ).fetchall()
+            plain = augment_summary(plain, trades_today=[dict(r) for r in rows], conn=conn)
+    finally:
+        conn.close()
+    console.print(plain)
 
 
 @app.command()
