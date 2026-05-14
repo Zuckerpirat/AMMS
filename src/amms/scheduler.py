@@ -128,8 +128,23 @@ def run_loop(
             token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
             chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
             if token and chat_id:
+                # Closure that runs an immediate read-only tick. Used by
+                # /buylist so the user can preview decisions on demand
+                # without waiting for the next scheduled tick.
+                def _preview_now() -> TickResult:
+                    return run_tick(
+                        broker=broker,
+                        data=data,
+                        conn=conn,
+                        config=config,
+                        strategy=strategy,
+                        bars_back=bars_back,
+                        execute=False,
+                        paused=pause.paused,
+                    )
+
                 handlers = build_command_handlers(
-                    broker=broker, pause=pause, conn=conn
+                    broker=broker, pause=pause, conn=conn, preview=_preview_now
                 )
                 inbound = TelegramInbound(token=token, chat_id=chat_id, handlers=handlers)
                 inbound.start()

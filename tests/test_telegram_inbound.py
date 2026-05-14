@@ -75,6 +75,71 @@ def test_help_lists_scan_command() -> None:
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     out = h["help"]()
     assert "/scan" in out
+    assert "/buylist" in out
+
+
+def test_buylist_without_preview_explains_clearly() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["buylist"]()
+    assert "preview not wired" in out
+
+
+def test_buylist_with_preview_lists_buy_signals() -> None:
+    from amms.executor import TickResult
+    from amms.strategy import Signal
+
+    def _preview() -> TickResult:
+        return TickResult(
+            signals=[
+                Signal(symbol="NVDA", kind="buy", reason="momentum 0.08",
+                       price=487.30, score=0.62),
+                Signal(symbol="PLTR", kind="buy", reason="composite hit",
+                       price=24.10, score=0.41),
+                Signal(symbol="TSLA", kind="sell", reason="reversal",
+                       price=245.10, score=0.0),
+            ],
+            blocked=[("AAPL", "already long this symbol")],
+        )
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, preview=_preview)
+    out = h["buylist"]()
+    # Highest-score buy first
+    assert out.index("NVDA") < out.index("PLTR")
+    assert "TSLA" in out
+    assert "SELL" in out
+    assert "AAPL" in out
+    assert "already long" in out
+
+
+def test_preview_alias_routes_to_buylist() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["preview"] is h["buylist"]
+
+
+def test_buylist_handles_empty_result_gracefully() -> None:
+    from amms.executor import TickResult
+
+    def _preview() -> TickResult:
+        return TickResult()  # no signals, no blocks
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, preview=_preview)
+    out = h["buylist"]()
+    assert "watching" in out
+
+
+def test_buylist_returns_friendly_error_on_preview_failure() -> None:
+    def _preview():
+        raise RuntimeError("alpaca down")
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, preview=_preview)
+    out = h["buylist"]()
+    assert out.startswith("preview failed")
+    assert "alpaca down" in out
 
 
 def test_scan_handler_returns_formatted_summary(monkeypatch: pytest.MonkeyPatch) -> None:
