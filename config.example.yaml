@@ -33,6 +33,13 @@ risk:
   # this many days. 0 (default) = exit as soon as the strategy says so. Use
   # ~2 for swing trading so small dips don't shake you out.
   min_hold_days: 0
+  # Pattern Day Trader guard. Below pdt_min_equity, refuse sells that would
+  # create the (pdt_max_day_trades + 1)-th day-trade in a rolling 5-day window.
+  pdt_min_equity: 25000
+  pdt_max_day_trades: 3
+  # Day-trading profile: flatten ALL positions this many minutes before
+  # market close. 0 (default) = off; use ~15 for an intraday profile.
+  force_close_minutes_before_close: 0
 
 scheduler:
   tick_seconds: 60

@@ -14,6 +14,7 @@ from amms.backtest import (
     BacktestStats,
     compute_stats,
     run_backtest,
+    run_walk_forward,
     write_trades_csv,
 )
 from amms.backtest.stats import write_equity_curve_csv
@@ -426,6 +427,166 @@ def _render_backtest_stats(
     table.add_row("buys / sells", f"{stats.num_buys} / {stats.num_sells}")
     table.add_row("closed round-trips", str(stats.closed_round_trips))
     table.add_row("win rate", f"{stats.win_rate:.2%}")
+    console.print(table)
+
+
+@app.command(name="walk-forward")
+def walk_forward(
+    start: str = typer.Option(..., "--from", help="Overall ISO start date"),
+    end: str = typer.Option(..., "--to", help="Overall ISO end date"),
+    symbols: str | None = typer.Option(None, "--symbols"),
+    initial_equity: float = typer.Option(100_000.0, "--initial-equity"),
+    train_days: int = typer.Option(180, "--train-days"),
+    test_days: int = typer.Option(30, "--test-days"),
+    step_days: int | None = typer.Option(None, "--step-days"),
+) -> None:
+    """Run a walk-forward backtest: rolling (train, test) windows; report
+    stats per test window so a strategy that only works in one regime gets
+    exposed."""
+    config = _app_config_or_die()
+    settings = _settings_or_die()
+    symbols_tuple = (
+        tuple(s.strip().upper() for s in symbols.split(",") if s.strip())
+        if symbols
+        else config.watchlist
+    )
+    base = BacktestConfig(
+        start=date.fromisoformat(start),
+        end=date.fromisoformat(end),
+        symbols=symbols_tuple,
+        initial_equity=initial_equity,
+        risk=config.risk,
+        strategy=build_strategy(config.strategy.name, config.strategy.params),
+        timeframe=config.strategy.timeframe,
+        universe=config.universe,
+    )
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    try:
+        windows = run_walk_forward(
+            base,
+            conn,
+            train_days=train_days,
+            test_days=test_days,
+            step_days=step_days,
+        )
+    finally:
+        conn.close()
+    if not windows:
+        console.print("[red]No windows produced; check date range vs bars in DB.[/red]")
+        raise typer.Exit(code=1)
+    table = Table(title=f"Walk-forward {start} → {end}")
+    table.add_column("test_start")
+    table.add_column("test_end")
+    table.add_column("return", justify="right")
+    table.add_column("max_dd", justify="right")
+    table.add_column("trades", justify="right")
+    table.add_column("win_rate", justify="right")
+    for w in windows:
+        table.add_row(
+            w.test_start.isoformat(),
+            w.test_end.isoformat(),
+            f"{w.stats.total_return_pct:+.2f}%",
+            f"{w.stats.max_drawdown_pct:.2f}%",
+            str(w.stats.num_trades),
+            f"{w.stats.win_rate:.0%}",
+        )
+    console.print(table)
+
+
+@app.command()
+def signals(
+    symbol: str | None = typer.Option(None, "--symbol"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """Show recent signal rows from the DB."""
+    settings = _settings_or_die()
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    try:
+        if symbol:
+            rows = conn.execute(
+                "SELECT ts, symbol, strategy, signal, score, reason FROM signals "
+                "WHERE symbol = ? ORDER BY ts DESC LIMIT ?",
+                (symbol.upper(), limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT ts, symbol, strategy, signal, score, reason FROM signals "
+                "ORDER BY ts DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        console.print("No signals recorded yet.")
+        return
+    table = Table(title="signals")
+    for col in ("ts", "symbol", "strategy", "signal", "score", "reason"):
+        table.add_column(col)
+    for r in rows:
+        score = r["score"] if r["score"] is not None else 0.0
+        table.add_row(
+            r["ts"], r["symbol"], r["strategy"], r["signal"],
+            f"{score:.4f}", r["reason"] or "",
+        )
+    console.print(table)
+
+
+@app.command()
+def orders(limit: int = typer.Option(20, "--limit")) -> None:
+    """Show recent orders from the DB."""
+    settings = _settings_or_die()
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    try:
+        rows = conn.execute(
+            "SELECT submitted_at, symbol, side, qty, status, filled_avg_price "
+            "FROM orders ORDER BY submitted_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        console.print("No orders recorded yet.")
+        return
+    table = Table(title="orders")
+    for col in ("submitted_at", "symbol", "side", "qty", "status", "fill_price"):
+        table.add_column(col)
+    for r in rows:
+        fp = r["filled_avg_price"]
+        table.add_row(
+            r["submitted_at"], r["symbol"], r["side"],
+            f"{r['qty']:g}", r["status"], f"${fp:.2f}" if fp is not None else "—",
+        )
+    console.print(table)
+
+
+@app.command(name="equity-log")
+def equity_log(limit: int = typer.Option(20, "--limit")) -> None:
+    """Show recent equity snapshots."""
+    settings = _settings_or_die()
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    try:
+        rows = conn.execute(
+            "SELECT ts, equity, cash, buying_power FROM equity_snapshots "
+            "ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        console.print("No equity snapshots recorded yet.")
+        return
+    table = Table(title="equity_snapshots")
+    for col in ("ts", "equity", "cash", "buying_power"):
+        table.add_column(col, justify="right" if col != "ts" else "left")
+    for r in rows:
+        table.add_row(
+            r["ts"], f"${r['equity']:,.2f}", f"${r['cash']:,.2f}",
+            f"${r['buying_power']:,.2f}",
+        )
     console.print(table)
 
 

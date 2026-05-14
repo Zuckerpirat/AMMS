@@ -45,6 +45,10 @@ docker compose logs -f           # watch what it does
 | `amms sell SYM N` | Manually place a paper SELL order (only sells what you hold) |
 | `amms fetch-bars SYM --start --end` | Cache historical daily bars in SQLite |
 | `amms backtest --from --to --symbols` | Run a historical backtest |
+| `amms walk-forward --from --to ...` | Walk-forward (rolling out-of-sample) backtest |
+| `amms signals [--symbol] [--limit]` | Recent strategy signals from the DB |
+| `amms orders [--limit]` | Recent orders from the DB |
+| `amms equity-log [--limit]` | Recent equity snapshots |
 | `amms init-db` | Apply DB migrations explicitly |
 
 ## Safety guarantees
