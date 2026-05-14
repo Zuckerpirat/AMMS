@@ -82,6 +82,21 @@ class StrategyConfig:
 class SchedulerConfig:
     tick_seconds: int = 60
     timezone: str = "America/New_York"
+    # Per-tick Telegram verbosity. One of:
+    #   "orders_only" — message only when an order is actually placed (quietest)
+    #   "decisions"   — message whenever there are buy/sell signals OR orders
+    #                   (recommended for dry-run; you see what WOULD happen)
+    #   "always"      — message every tick, even when nothing fired
+    #   "never"       — silent (only daily summary + errors get through)
+    tick_notify: str = "decisions"
+
+    def __post_init__(self) -> None:
+        valid = {"orders_only", "decisions", "always", "never"}
+        if self.tick_notify not in valid:
+            raise ConfigError(
+                f"scheduler.tick_notify must be one of {sorted(valid)}, "
+                f"got {self.tick_notify!r}"
+            )
 
 
 @dataclass(frozen=True)
@@ -155,6 +170,7 @@ def load_app_config(path: Path | None = None) -> AppConfig:
     scheduler = SchedulerConfig(
         tick_seconds=int(sched_raw.get("tick_seconds", 60)),
         timezone=str(sched_raw.get("timezone", "America/New_York")),
+        tick_notify=str(sched_raw.get("tick_notify", "decisions")),
     )
 
     universe_raw = raw.get("universe") or {}

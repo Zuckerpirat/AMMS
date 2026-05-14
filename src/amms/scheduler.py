@@ -176,7 +176,12 @@ def run_loop(
                         execute=execute,
                         paused=pause.paused,
                     )
-                    _announce_tick(notifier, result)
+                    _announce_tick(
+                        notifier,
+                        result,
+                        mode=config.scheduler.tick_notify,
+                        execute=execute,
+                    )
                     state.consecutive_tick_errors = 0
                 except Exception:
                     logger.exception("tick failed")
@@ -234,20 +239,63 @@ def _fetch_today_trades(conn: sqlite3.Connection, today_iso: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _announce_tick(notifier: Notifier, result: TickResult) -> None:
-    if isinstance(notifier, NullNotifier):
+_MAX_DECISION_LINES = 8  # cap the per-tick digest so Telegram messages stay short
+
+
+def _announce_tick(
+    notifier: Notifier,
+    result: TickResult,
+    *,
+    mode: str = "decisions",
+    execute: bool = False,
+) -> None:
+    """Send a per-tick Telegram digest based on ``mode``.
+
+    Modes:
+      - "never": send nothing
+      - "orders_only": send only when an order actually went through
+      - "decisions": send when there are buy/sell signals OR orders. In
+        dry-run this is the most useful — you see what WOULD happen.
+      - "always": send every tick, even an empty one
+    """
+    if isinstance(notifier, NullNotifier) or mode == "never":
         return
-    buy_count = len(
-        [s for s in result.signals if s.kind == "buy"]
-    )
-    sell_count = len(
-        [s for s in result.signals if s.kind == "sell"]
-    )
-    if result.placed_order_ids:
-        notifier.send(
-            f"amms tick: placed {len(result.placed_order_ids)} order(s) "
-            f"(signals: {buy_count} buy / {sell_count} sell)"
-        )
+
+    buy_signals = [s for s in result.signals if s.kind == "buy"]
+    sell_signals = [s for s in result.signals if s.kind == "sell"]
+    has_orders = bool(result.placed_order_ids)
+    has_signals = bool(buy_signals or sell_signals)
+
+    if mode == "orders_only" and not has_orders:
+        return
+    if mode == "decisions" and not (has_orders or has_signals):
+        return
+    # mode == "always" → fall through and send even an empty tick
+
+    label = "live" if execute else "dry-run"
+    header = f"amms tick ({label}): {len(buy_signals)} buy / {len(sell_signals)} sell"
+    if has_orders:
+        header += f" — placed {len(result.placed_order_ids)} order(s)"
+
+    lines = [header]
+
+    # Show actionable signals first (top by score for buys, all sells).
+    actionable = sorted(buy_signals, key=lambda s: s.score, reverse=True) + sell_signals
+    for sig in actionable[:_MAX_DECISION_LINES]:
+        marker = "BUY " if sig.kind == "buy" else "SELL"
+        lines.append(f"{marker} {sig.symbol} @ ${sig.price:.2f} — {sig.reason}")
+
+    # Then show top blocked items so the user understands why something didn't fire.
+    if result.blocked:
+        remaining = _MAX_DECISION_LINES - (len(actionable) if actionable else 0)
+        if remaining > 0:
+            for sym, reason in result.blocked[:remaining]:
+                lines.append(f"skip {sym}: {reason}")
+
+    if not has_signals and not has_orders:
+        lines.append("(no signals; bot is watching)")
+
+    notifier.send("\n".join(lines))
 
 
 def _in_force_close_window(clock: ClockStatus, minutes_before_close: int) -> bool:
