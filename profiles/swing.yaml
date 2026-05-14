@@ -1,0 +1,30 @@
+watchlist:
+  - AAPL
+  - MSFT
+  - NVDA
+  - AMD
+  - GOOGL
+  - META
+  - TSLA
+  - AMZN
+
+strategy:
+  name: composite
+  timeframe: 1Day
+  params:
+    momentum_n: 20
+    momentum_min: 0.05
+    rsi_max: 70
+    vol_max: 0.40
+    rvol_min: 1.2
+
+risk:
+  max_open_positions: 5
+  max_position_pct: 0.05
+  daily_loss_pct: -0.03
+  min_hold_days: 2
+  max_buys_per_tick: 2
+  force_close_minutes_before_close: 0
+
+scheduler:
+  tick_seconds: 3600

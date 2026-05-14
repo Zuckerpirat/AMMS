@@ -687,6 +687,35 @@ def summary_today(llm: bool = typer.Option(False, "--llm")) -> None:
     console.print(plain)
 
 
+@app.command(name="order-status")
+def order_status(order_id: str = typer.Argument(...)) -> None:
+    """Fetch the current status of a paper order from Alpaca."""
+    settings = _settings_or_die()
+    with AlpacaClient(
+        settings.alpaca_api_key,
+        settings.alpaca_api_secret,
+        settings.alpaca_base_url,
+    ) as broker:
+        order = broker.get_order(order_id)
+    table = Table(title=f"order {order.id}")
+    table.add_column("field")
+    table.add_column("value")
+    fp = order.filled_avg_price
+    rows = [
+        ("symbol", order.symbol),
+        ("side", order.side),
+        ("qty", f"{order.qty:g}"),
+        ("type", order.type),
+        ("status", order.status),
+        ("submitted_at", order.submitted_at),
+        ("filled_at", order.filled_at or "—"),
+        ("fill_price", f"${fp:.2f}" if fp is not None else "—"),
+    ]
+    for k, v in rows:
+        table.add_row(k, str(v))
+    console.print(table)
+
+
 @app.command()
 def vacuum() -> None:
     """Run SQLite VACUUM to reclaim space + analyze the schema."""

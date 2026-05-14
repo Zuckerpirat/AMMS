@@ -1,0 +1,28 @@
+watchlist:
+  - SPY
+  - QQQ
+  - NVDA
+  - TSLA
+
+strategy:
+  name: composite
+  timeframe: 5Min
+  params:
+    momentum_n: 12
+    momentum_min: 0.005
+    rsi_max: 75
+    vol_max: 1.0
+    rvol_min: 1.5
+
+risk:
+  max_open_positions: 3
+  max_position_pct: 0.02
+  daily_loss_pct: -0.02
+  min_hold_days: 0
+  max_buys_per_tick: 1
+  pdt_min_equity: 25000
+  pdt_max_day_trades: 3
+  force_close_minutes_before_close: 15
+
+scheduler:
+  tick_seconds: 60

@@ -1,0 +1,33 @@
+watchlist:
+  - SNDL
+  - PLUG
+  - RIOT
+  - MARA
+
+strategy:
+  name: composite
+  timeframe: 1Day
+  params:
+    momentum_n: 10
+    momentum_min: 0.08
+    rsi_max: 75
+    vol_max: 0.80
+    rvol_min: 2.0
+    sentiment_weight: 0.5
+    sentiment_min: -0.3
+
+risk:
+  max_open_positions: 4
+  max_position_pct: 0.01
+  daily_loss_pct: -0.02
+  min_hold_days: 1
+  max_buys_per_tick: 2
+
+universe:
+  min_price: 1.00
+  min_avg_dollar_volume: 1000000
+  adv_lookback: 20
+  require_tradable: true
+
+scheduler:
+  tick_seconds: 1800
