@@ -103,6 +103,20 @@ def upsert_features(
     return len(rows)
 
 
+def bought_today(conn: sqlite3.Connection, symbol: str) -> bool:
+    """True iff there's a BUY for ``symbol`` recorded today (UTC).
+
+    Used by the PDT guard to detect that a sell would create a day-trade.
+    """
+    today_iso = datetime.now(UTC).date().isoformat()
+    row = conn.execute(
+        "SELECT 1 FROM orders WHERE symbol = ? AND side = 'buy' "
+        "AND substr(submitted_at, 1, 10) = ? LIMIT 1",
+        (symbol, today_iso),
+    ).fetchone()
+    return row is not None
+
+
 def latest_buy_submitted_at(
     conn: sqlite3.Connection, symbol: str
 ) -> str | None:

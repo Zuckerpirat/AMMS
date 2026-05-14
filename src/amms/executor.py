@@ -9,6 +9,7 @@ from amms.broker import AlpacaClient
 from amms.config import AppConfig
 from amms.data import MarketDataClient, upsert_bars
 from amms.db import (
+    bought_today,
     insert_equity_snapshot,
     latest_buy_submitted_at,
     upsert_features,
@@ -146,6 +147,7 @@ def run_tick(
         result=result,
         positions=positions,
         pending_sells=pending_sells,
+        account=account,
         execute=execute,
     )
     return result
@@ -159,8 +161,13 @@ def _process_sell_signals(
     result: TickResult,
     positions: dict,
     pending_sells: set[str],
+    account,
     execute: bool,
 ) -> None:
+    pdt_locked = (
+        account.equity < config.risk.pdt_min_equity
+        and account.daytrade_count >= config.risk.pdt_max_day_trades
+    )
     for signal in result.sell_signals:
         if signal.symbol not in positions:
             result.blocked.append(
@@ -182,6 +189,15 @@ def _process_sell_signals(
                     )
                 )
                 continue
+        if pdt_locked and _bought_today(conn, signal.symbol):
+            result.blocked.append(
+                (
+                    signal.symbol,
+                    f"PDT lock: equity ${account.equity:,.0f} < ${config.risk.pdt_min_equity:,.0f} "
+                    f"and daytrade_count={account.daytrade_count}",
+                )
+            )
+            continue
         qty = positions[signal.symbol].qty
         if qty <= 0:
             result.blocked.append((signal.symbol, "position qty is zero"))
@@ -195,6 +211,10 @@ def _process_sell_signals(
         upsert_order(conn, order)
         result.placed_order_ids.append(order.id)
         pending_sells.add(signal.symbol)
+
+
+def _bought_today(conn: sqlite3.Connection, symbol: str) -> bool:
+    return bought_today(conn, symbol)
 
 
 def _days_since_last_buy(conn: sqlite3.Connection, symbol: str) -> int | None:

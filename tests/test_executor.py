@@ -46,12 +46,17 @@ def _bars_payload(symbol: str, closes: list[float]) -> dict:
     }
 
 
-def _account_payload(equity: float = 100_000, cash: float = 100_000) -> dict:
+def _account_payload(
+    equity: float = 100_000,
+    cash: float = 100_000,
+    daytrade_count: int = 0,
+) -> dict:
     return {
         "equity": str(equity),
         "cash": str(cash),
         "buying_power": str(cash),
         "status": "ACTIVE",
+        "daytrade_count": daytrade_count,
     }
 
 
@@ -356,6 +361,54 @@ def test_run_tick_top_n_keeps_highest_scoring_buys(tmp_path: Path) -> None:
     assert result.placed_order_ids == ["ord-x"]
     blocked_symbols = {s for s, _ in result.blocked}
     assert blocked_symbols == {"AAPL", "NVDA"}
+
+
+@respx.mock
+def test_pdt_lock_blocks_sell_when_bought_today_and_at_limit(tmp_path: Path) -> None:
+    """Account < $25k with daytrade_count >= 3 → block sells of today's buys."""
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(
+            200, json=_account_payload(equity=10_000, cash=10_000, daytrade_count=3)
+        )
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(
+        return_value=httpx.Response(200, json=_position_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{DATA_URL}/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_populate_one_bar())
+    )
+    sell_route = respx.post(f"{PAPER_URL}/v2/orders")
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    today = _datetime.now(_UTC).isoformat()
+    conn.execute(
+        "INSERT INTO orders("
+        "id, client_order_id, symbol, side, qty, type, status, submitted_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("today-buy", "cid-tb", "AAPL", "buy", 5.0, "market", "filled", today),
+    )
+
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        result = run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=_config(),
+            strategy=_SellSignalStrategy(),
+            execute=True,
+        )
+    conn.close()
+
+    assert not sell_route.called
+    assert any("PDT" in r for _, r in result.blocked)
 
 
 class _AlwaysBuyStrategy:

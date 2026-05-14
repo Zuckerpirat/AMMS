@@ -52,6 +52,31 @@ def test_upsert_features_handles_empty(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_bought_today_false_when_no_orders(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    assert db.bought_today(conn, "AAPL") is False
+    conn.close()
+
+
+def test_bought_today_true_for_today_buy(tmp_path: Path) -> None:
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    today = _datetime.now(_UTC).isoformat()
+    conn.execute(
+        "INSERT INTO orders("
+        "id, client_order_id, symbol, side, qty, type, status, submitted_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("o-t", "c-t", "AAPL", "buy", 1.0, "market", "filled", today),
+    )
+    assert db.bought_today(conn, "AAPL") is True
+    assert db.bought_today(conn, "MSFT") is False
+    conn.close()
+
+
 def test_latest_buy_submitted_at_returns_none_when_no_buys(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "x.sqlite")
     db.migrate(conn)
@@ -120,7 +145,10 @@ def test_orders_side_check_rejects_invalid_side(conn) -> None:
 
 
 def test_insert_equity_snapshot(conn) -> None:
-    account = Account(equity=100000.0, cash=50000.0, buying_power=50000.0, status="ACTIVE", raw={})
+    account = Account(
+        equity=100000.0, cash=50000.0, buying_power=50000.0,
+        status="ACTIVE", daytrade_count=0, raw={},
+    )
     ts = db.insert_equity_snapshot(conn, account)
     row = conn.execute("SELECT * FROM equity_snapshots WHERE ts=?", (ts,)).fetchone()
     assert row["equity"] == pytest.approx(100000.0)

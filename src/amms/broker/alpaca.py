@@ -26,6 +26,7 @@ class Account:
     cash: float
     buying_power: float
     status: str
+    daytrade_count: int
     raw: dict[str, Any]
 
 
@@ -123,6 +124,7 @@ class AlpacaClient:
             cash=float(data["cash"]),
             buying_power=float(data["buying_power"]),
             status=data["status"],
+            daytrade_count=int(data.get("daytrade_count", 0)),
             raw=data,
         )
 
