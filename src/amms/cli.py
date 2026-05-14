@@ -807,6 +807,12 @@ def preview_signal(
     )
 
 
+@app.command()
+def version() -> None:
+    """Print the installed amms package version."""
+    console.print(f"amms {__version__}")
+
+
 @app.command(name="close-all")
 def close_all(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
