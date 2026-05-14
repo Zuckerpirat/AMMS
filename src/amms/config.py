@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from amms.filters.universe import UniverseFilter
 from amms.risk.rules import RiskConfig
 
 PAPER_HOST_MARKER = "paper-api"
@@ -89,6 +90,7 @@ class AppConfig:
     strategy: StrategyConfig
     risk: RiskConfig
     scheduler: SchedulerConfig
+    universe: UniverseFilter = field(default_factory=UniverseFilter)
 
     def __post_init__(self) -> None:
         if not self.watchlist:
@@ -148,9 +150,19 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         timezone=str(sched_raw.get("timezone", "America/New_York")),
     )
 
+    universe_raw = raw.get("universe") or {}
+    max_price_raw = universe_raw.get("max_price")
+    universe = UniverseFilter(
+        min_price=float(universe_raw.get("min_price", 0.0)),
+        max_price=float(max_price_raw) if max_price_raw is not None else None,
+        min_avg_dollar_volume=float(universe_raw.get("min_avg_dollar_volume", 0.0)),
+        adv_lookback=int(universe_raw.get("adv_lookback", 20)),
+    )
+
     return AppConfig(
         watchlist=watchlist,
         strategy=strategy,
         risk=risk,
         scheduler=scheduler,
+        universe=universe,
     )

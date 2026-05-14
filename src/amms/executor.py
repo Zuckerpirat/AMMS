@@ -79,6 +79,7 @@ def run_tick(
     feature_ts = datetime.now(UTC).isoformat()
     timeframe = config.strategy.timeframe
     result = TickResult()
+    bars_by_symbol: dict[str, list] = {}
     for symbol in config.watchlist:
         bars = data.get_bars(
             symbol,
@@ -88,6 +89,7 @@ def run_tick(
             limit=bars_back,
         )
         upsert_bars(conn, bars)
+        bars_by_symbol[symbol] = bars
         features = standard_features(bars)
         upsert_features(conn, feature_ts, symbol, features)
         signal = strategy.evaluate(symbol, bars)
@@ -111,6 +113,10 @@ def run_tick(
     for signal in ranked_buys:
         if signal.symbol in pending_buys:
             result.blocked.append((signal.symbol, "open buy order already pending"))
+            continue
+        passes, reason = config.universe.passes(bars_by_symbol.get(signal.symbol, []))
+        if not passes:
+            result.blocked.append((signal.symbol, f"universe filter: {reason}"))
             continue
         decision = check_buy(
             equity=account.equity,

@@ -358,6 +358,68 @@ def test_run_tick_top_n_keeps_highest_scoring_buys(tmp_path: Path) -> None:
     assert blocked_symbols == {"AAPL", "NVDA"}
 
 
+class _AlwaysBuyStrategy:
+    """Always emits a buy signal — used to isolate filter/risk paths."""
+
+    name = "always_buy"
+
+    @property
+    def lookback(self) -> int:
+        return 1
+
+    def evaluate(self, symbol, bars):
+        from amms.strategy.base import Signal
+
+        return Signal(symbol, "buy", "always buy", bars[-1].close, score=1.0)
+
+
+@respx.mock
+def test_run_tick_universe_filter_blocks_low_price_buy(tmp_path: Path) -> None:
+    """A configured min_price floor blocks buys for sub-floor symbols."""
+    from amms.filters import UniverseFilter
+
+    respx.get(f"{PAPER_URL}/v2/account").mock(
+        return_value=httpx.Response(200, json=_account_payload())
+    )
+    respx.get(f"{PAPER_URL}/v2/positions").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{PAPER_URL}/v2/orders").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{DATA_URL}/v2/stocks/bars").mock(
+        return_value=httpx.Response(200, json=_bars_payload("AAPL", [0.50]))
+    )
+    orders_post = respx.post(f"{PAPER_URL}/v2/orders")
+
+    cfg = AppConfig(
+        watchlist=("AAPL",),
+        strategy=StrategyConfig(name="sma_cross", params={"fast": 3, "slow": 5}),
+        risk=RiskConfig(
+            max_open_positions=5,
+            max_position_pct=0.5,
+            daily_loss_pct=-0.99,
+        ),
+        scheduler=SchedulerConfig(tick_seconds=60),
+        universe=UniverseFilter(min_price=1.0),
+    )
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    with (
+        AlpacaClient("k", "s", PAPER_URL) as broker,
+        MarketDataClient("k", "s", DATA_URL) as data,
+    ):
+        result = run_tick(
+            broker=broker,
+            data=data,
+            conn=conn,
+            config=cfg,
+            strategy=_AlwaysBuyStrategy(),
+            execute=True,
+        )
+    conn.close()
+
+    assert not orders_post.called
+    assert any("universe filter" in reason for _, reason in result.blocked)
+
+
 class _SellSignalStrategy:
     """Always emits a sell signal for the watchlist symbol."""
 

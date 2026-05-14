@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date as Date
 
 from amms.data.bars import Bar
+from amms.filters import UniverseFilter
 from amms.risk import RiskConfig, check_buy
 from amms.strategy import Strategy
 
@@ -18,6 +19,7 @@ class BacktestConfig:
     risk: RiskConfig
     strategy: Strategy
     timeframe: str = "1Day"
+    universe: UniverseFilter = field(default_factory=UniverseFilter)
 
 
 @dataclass(frozen=True)
@@ -166,6 +168,9 @@ def run_backtest(config: BacktestConfig, conn: sqlite3.Connection) -> BacktestRe
             held = portfolio.holds(sym)
 
             if signal.kind == "buy" and not held:
+                passes, _ = config.universe.passes(symbol_bars)
+                if not passes:
+                    continue  # Universe gate; symbol does not qualify today.
                 decision = check_buy(
                     equity=equity_now,
                     price=signal.price,

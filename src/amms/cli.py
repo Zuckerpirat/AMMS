@@ -369,6 +369,7 @@ def backtest(
         risk=config.risk,
         strategy=build_strategy(config.strategy.name, config.strategy.params),
         timeframe=config.strategy.timeframe,
+        universe=config.universe,
     )
 
     settings = _settings_or_die()

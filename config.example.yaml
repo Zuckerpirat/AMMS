@@ -37,3 +37,12 @@ risk:
 scheduler:
   tick_seconds: 60
   timezone: America/New_York
+
+# Pre-trade gate: BUY signals are blocked unless the symbol clears these
+# thresholds. SELL signals are never filtered so you can always exit. All
+# defaults are inert; uncomment values to activate.
+universe:
+  # min_price: 1.00            # block sub-$1 names (penny-stock floor)
+  # max_price: 500.00          # optional upper bound
+  # min_avg_dollar_volume: 1000000   # 20-day average close*volume in USD
+  adv_lookback: 20

@@ -223,6 +223,45 @@ def test_backtest_only_reads_configured_timeframe(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_backtest_universe_filter_blocks_low_price_buy(tmp_path: Path) -> None:
+    """Backtester must respect the same universe gate as the live executor."""
+    from amms.filters import UniverseFilter
+
+    conn = db.connect(tmp_path / "x.sqlite")
+    db.migrate(conn)
+    # Sub-$1 series with a strong crossover that would otherwise trigger a buy.
+    data = [
+        ("2025-01-02", 0.10, 0.10),
+        ("2025-01-03", 0.10, 0.10),
+        ("2025-01-06", 0.10, 0.10),
+        ("2025-01-07", 0.10, 0.10),
+        ("2025-01-08", 0.10, 0.10),
+        ("2025-01-09", 0.10, 0.10),
+        ("2025-01-10", 0.50, 0.50),
+        ("2025-01-13", 0.55, 0.60),
+    ]
+    _seed_bars(conn, "AAPL", data)
+
+    cfg = BacktestConfig(
+        start=date.fromisoformat("2025-01-01"),
+        end=date.fromisoformat("2025-01-31"),
+        symbols=("AAPL",),
+        initial_equity=1_000,
+        risk=RiskConfig(
+            max_open_positions=5,
+            max_position_pct=0.5,
+            daily_loss_pct=-0.99,
+        ),
+        strategy=SmaCross(fast=3, slow=5),
+        universe=UniverseFilter(min_price=1.0),
+    )
+    result = run_backtest(cfg, conn)
+    conn.close()
+
+    assert result.trades == []
+    assert result.portfolio.positions == {}
+
+
 def test_backtest_min_hold_days_blocks_premature_sell(tmp_path: Path) -> None:
     """An immediate sell signal after a buy must be blocked when min_hold_days > 0."""
 

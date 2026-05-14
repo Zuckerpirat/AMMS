@@ -39,6 +39,34 @@ def test_load_app_config_parses_full_yaml(tmp_path: Path) -> None:
     assert cfg.scheduler.tick_seconds == 30
 
 
+def test_load_app_config_reads_universe_filter(tmp_path: Path) -> None:
+    yaml_text = """
+watchlist: [AAPL]
+strategy: {name: sma_cross}
+universe:
+  min_price: 1.0
+  max_price: 500.0
+  min_avg_dollar_volume: 1000000
+  adv_lookback: 30
+"""
+    p = tmp_path / "config.yaml"
+    p.write_text(yaml_text, encoding="utf-8")
+    cfg = load_app_config(p)
+    assert cfg.universe.min_price == pytest.approx(1.0)
+    assert cfg.universe.max_price == pytest.approx(500.0)
+    assert cfg.universe.min_avg_dollar_volume == pytest.approx(1_000_000)
+    assert cfg.universe.adv_lookback == 30
+
+
+def test_load_app_config_universe_defaults_when_section_missing(tmp_path: Path) -> None:
+    p = tmp_path / "config.yaml"
+    p.write_text("watchlist: [AAPL]\nstrategy: {name: sma_cross}\n", encoding="utf-8")
+    cfg = load_app_config(p)
+    assert cfg.universe.min_price == 0.0
+    assert cfg.universe.max_price is None
+    assert cfg.universe.min_avg_dollar_volume == 0.0
+
+
 def test_load_app_config_reads_strategy_timeframe(tmp_path: Path) -> None:
     yaml_text = """
 watchlist: [AAPL]
