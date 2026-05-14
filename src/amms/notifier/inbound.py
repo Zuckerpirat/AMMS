@@ -492,6 +492,11 @@ def build_command_handlers(
                 (today_iso,),
             ).fetchall()
             if order_rows:
+                order_isins: dict[str, str] = {}
+                try:
+                    order_isins = _isin_cache.lookup({r["symbol"] for r in order_rows})
+                except Exception:
+                    pass
                 lines.append(f"Trades today: {len(order_rows)}")
                 for r in order_rows[:5]:
                     line = (
@@ -505,6 +510,8 @@ def build_command_handlers(
                             line += f" @ ${float(price):.2f} = ${notional:,.2f}"
                         except (TypeError, ValueError):
                             pass
+                    if order_isins.get(r["symbol"]):
+                        line += f"  ISIN {order_isins[r['symbol']]}"
                     lines.append(line)
                 if len(order_rows) > 5:
                     lines.append(f"  … and {len(order_rows) - 5} more")
@@ -517,12 +524,20 @@ def build_command_handlers(
         except Exception:
             positions = []
         if positions:
+            pos_isins: dict[str, str] = {}
+            try:
+                pos_isins = _isin_cache.lookup([p.symbol for p in positions])
+            except Exception:
+                pass
             lines.append(f"Open positions: {len(positions)}")
             for p in positions[:5]:
-                lines.append(
+                line = (
                     f"  {p.symbol}: {p.qty:g} @ ${p.avg_entry_price:.2f} "
                     f"(P&L ${p.unrealized_pl:+.2f})"
                 )
+                if pos_isins.get(p.symbol):
+                    line += f"  ISIN {pos_isins[p.symbol]}"
+                lines.append(line)
             if len(positions) > 5:
                 lines.append(f"  … and {len(positions) - 5} more")
         else:
@@ -537,9 +552,17 @@ def build_command_handlers(
         except Exception:
             trending = []
         if trending:
+            trend_isins: dict[str, str] = {}
+            try:
+                trend_isins = _isin_cache.lookup([t.symbol for t in trending])
+            except Exception:
+                pass
             lines.append("WSB trending now:")
             for t in trending:
-                lines.append(f"  {t.symbol} ({t.mentions}x)")
+                line = f"  {t.symbol} ({t.mentions}x)"
+                if trend_isins.get(t.symbol):
+                    line += f"  ISIN {trend_isins[t.symbol]}"
+                lines.append(line)
 
         return "\n".join(lines)
 
