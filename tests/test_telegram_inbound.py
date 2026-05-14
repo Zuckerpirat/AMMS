@@ -1,5 +1,8 @@
 ﻿from __future__ import annotations
 
+import sqlite3
+from datetime import UTC, date, timedelta
+
 import httpx
 import pytest
 import respx
@@ -283,4 +286,64 @@ def test_inbound_replies_unknown_command() -> None:
     inbound._poll_once()
     assert send_route.called
     assert b"unknown" in send_route.calls.last.request.read()
+
+
+def _make_conn_with_snapshots() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE equity_snapshots (ts TEXT PRIMARY KEY, equity REAL, cash REAL, buying_power REAL)"
+    )
+    today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    conn.executemany(
+        "INSERT INTO equity_snapshots VALUES (?, ?, ?, ?)",
+        [
+            (f"{yesterday}T14:00:00+00:00", 99_000.0, 50_000.0, 50_000.0),
+            (f"{yesterday}T20:00:00+00:00", 99_500.0, 50_000.0, 50_000.0),
+            (f"{today}T14:00:00+00:00", 100_000.0, 50_000.0, 50_000.0),
+            (f"{today}T20:00:00+00:00", 100_800.0, 50_000.0, 50_000.0),
+        ],
+    )
+    conn.commit()
+    return conn
+
+
+def test_performance_handler_shows_pnl() -> None:
+    conn = _make_conn_with_snapshots()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["performance"]([])
+    assert "P&L" in out
+    assert "+$800.00" in out or "+800" in out
+
+
+def test_performance_handler_no_data_returns_message() -> None:
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE equity_snapshots (ts TEXT PRIMARY KEY, equity REAL, cash REAL, buying_power REAL)"
+    )
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["performance"]([])
+    assert "No equity data" in out
+
+
+def test_performance_handler_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["performance"]([]) == "DB not wired."
+
+
+def test_performance_alias_perf() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "perf" in h
+
+
+def test_help_lists_performance_command() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/performance" in h["help"]([])
 

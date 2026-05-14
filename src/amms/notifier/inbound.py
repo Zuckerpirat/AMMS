@@ -20,6 +20,7 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, date, timedelta
 
 import httpx
 
@@ -315,11 +316,58 @@ def build_command_handlers(
         wsb_extras = get_wsb_extras() if get_wsb_extras is not None else set()
         return format_summary(static_watchlist, wsb_extras, user_extras)
 
+    def _performance(args: list[str]) -> str:
+        if conn is None:
+            return "DB not wired."
+        try:
+            days = int(args[0]) if args and args[0].isdigit() else 7
+            days = max(1, min(days, 30))
+        except (ValueError, IndexError):
+            days = 7
+
+        today = date.today()
+        lines: list[str] = [f"P&L last {days} days"]
+        total_pnl = 0.0
+        found = 0
+
+        for i in range(days):
+            d = today - timedelta(days=i)
+            d_str = d.isoformat()
+            first = conn.execute(
+                "SELECT equity FROM equity_snapshots "
+                "WHERE substr(ts, 1, 10) = ? ORDER BY ts LIMIT 1",
+                (d_str,),
+            ).fetchone()
+            last = conn.execute(
+                "SELECT equity FROM equity_snapshots "
+                "WHERE substr(ts, 1, 10) = ? ORDER BY ts DESC LIMIT 1",
+                (d_str,),
+            ).fetchone()
+            if first and last and first["equity"]:
+                pnl = last["equity"] - first["equity"]
+                pct = (pnl / first["equity"]) * 100
+                arrow = "▲" if pnl >= 0 else "▼"
+                lines.append(f"{d_str}: {arrow} ${pnl:+.2f} ({pct:+.2f}%)")
+                total_pnl += pnl
+                found += 1
+
+        if found == 0:
+            return "No equity data yet — wait for the first trading tick."
+
+        lines.append(f"Total: ${total_pnl:+.2f}")
+        try:
+            acc = broker.get_account()
+            lines.append(f"Current equity: ${acc.equity:,.2f}")
+        except Exception:
+            pass
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
             "/positions — list open positions\n"
             "/equity — just the equity number\n"
+            "/performance [N] — P&L last N days (default 7)\n"
             "/watchlist — show static + WSB + user-added tickers\n"
             "/add SYM — add ticker to dynamic watchlist\n"
             "/remove SYM — remove ticker from dynamic watchlist\n"
@@ -342,6 +390,8 @@ def build_command_handlers(
         "wsb": _scan,  # alias
         "buylist": _buylist,
         "preview": _buylist,  # alias
+        "performance": _performance,
+        "perf": _performance,  # alias
         "add": _add,
         "remove": _remove,
         "watchlist": _watchlist,
