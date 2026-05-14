@@ -702,6 +702,111 @@ def summary_today(llm: bool = typer.Option(False, "--llm")) -> None:
     console.print(plain)
 
 
+watchlist_app = typer.Typer(help="Inspect / mutate the watchlist in config.yaml.")
+app.add_typer(watchlist_app, name="watchlist")
+
+
+@watchlist_app.command("show")
+def watchlist_show() -> None:
+    """Print the active watchlist."""
+    cfg = _app_config_or_die()
+    for sym in cfg.watchlist:
+        console.print(sym)
+
+
+@watchlist_app.command("add")
+def watchlist_add(symbol: str = typer.Argument(...)) -> None:
+    """Append a symbol to config.yaml's watchlist (uppercased, deduped)."""
+    _watchlist_mutate(lambda lst: _dedupe_append(lst, symbol.upper()))
+
+
+@watchlist_app.command("remove")
+def watchlist_remove(symbol: str = typer.Argument(...)) -> None:
+    """Remove a symbol from config.yaml's watchlist (case-insensitive)."""
+    upper = symbol.upper()
+    _watchlist_mutate(lambda lst: [s for s in lst if s.upper() != upper])
+
+
+def _dedupe_append(lst: list[str], sym: str) -> list[str]:
+    seen = {s.upper() for s in lst}
+    if sym in seen:
+        return lst
+    return [*lst, sym]
+
+
+def _watchlist_mutate(fn) -> None:
+    import os
+
+    import yaml
+
+    path = os.environ.get("AMMS_CONFIG_PATH", "").strip() or "config.yaml"
+    p = Path(path)
+    if not p.exists():
+        console.print(f"[red]config not found: {p}[/red]")
+        raise typer.Exit(code=1)
+    raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    current = list(raw.get("watchlist") or [])
+    new_list = fn(current)
+    if new_list == current:
+        console.print("watchlist unchanged.")
+        return
+    raw["watchlist"] = new_list
+    p.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    console.print(f"watchlist now {len(new_list)} symbols: {new_list}")
+    console.print(
+        "[yellow]Note:[/yellow] restart the bot to pick up the change "
+        "(`docker compose down && docker compose up -d`)."
+    )
+
+
+@app.command(name="preview-signal")
+def preview_signal(
+    symbol: str = typer.Argument(...),
+    bars_back: int = typer.Option(90, "--bars-back"),
+) -> None:
+    """Run the configured strategy on cached bars for one symbol. No order."""
+    config = _app_config_or_die()
+    settings = _settings_or_die()
+    strat = build_strategy(config.strategy.name, config.strategy.params)
+    conn = db.connect(settings.db_path)
+    db.migrate(conn)
+    try:
+        rows = conn.execute(
+            "SELECT ts, open, high, low, close, volume FROM bars "
+            "WHERE symbol = ? AND timeframe = ? ORDER BY ts DESC LIMIT ?",
+            (symbol.upper(), config.strategy.timeframe, bars_back),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        console.print(
+            f"[red]No cached bars for {symbol.upper()} at "
+            f"timeframe {config.strategy.timeframe!r}. "
+            "Run `amms fetch-bars` first.[/red]"
+        )
+        raise typer.Exit(code=1)
+    from amms.data.bars import Bar
+
+    bars = list(
+        reversed(
+            [
+                Bar(
+                    symbol.upper(),
+                    config.strategy.timeframe,
+                    r["ts"], r["open"], r["high"], r["low"], r["close"], r["volume"],
+                )
+                for r in rows
+            ]
+        )
+    )
+    signal = strat.evaluate(symbol.upper(), bars)
+    color = {"buy": "green", "sell": "yellow", "hold": "dim"}.get(signal.kind, "white")
+    console.print(
+        f"[{color}]{signal.kind.upper()}[/{color}] {signal.symbol} "
+        f"@ ${signal.price:,.2f}  score={signal.score:.4f}\n  {signal.reason}"
+    )
+
+
 @app.command(name="order-status")
 def order_status(order_id: str = typer.Argument(...)) -> None:
     """Fetch the current status of a paper order from Alpaca."""
