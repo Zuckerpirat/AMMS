@@ -453,6 +453,25 @@ def build_command_handlers(
             lines.append(f"  {k} = {v}")
         return "\n".join(lines)
 
+    def _sectors(_args: list[str]) -> str:
+        """Show portfolio exposure broken down by sector."""
+        positions = broker.get_positions()
+        if not positions:
+            return "no open positions"
+        from amms.data.sectors import group_by_sector
+
+        total_mv = sum(float(p.market_value) for p in positions) or 1.0
+        grouped = group_by_sector(
+            (p.symbol, float(p.market_value)) for p in positions
+        )
+        # Sort by value descending.
+        ordered = sorted(grouped.items(), key=lambda kv: kv[1], reverse=True)
+        lines = [f"Sector exposure (total ${total_mv:,.2f}):"]
+        for sector, value in ordered:
+            pct = value / total_mv * 100
+            lines.append(f"  {sector}: ${value:,.2f} ({pct:.1f}%)")
+        return "\n".join(lines)
+
     def _risk(_args: list[str]) -> str:
         """Show the currently active risk + override settings."""
         try:
@@ -585,8 +604,9 @@ def build_command_handlers(
 
     def _explain(args: list[str]) -> str:
         """Show why the bot's most recent decision on a ticker came out
-        the way it did. Reads from the ``signals`` table — every tick's
-        decision per symbol is persisted with its full reason string."""
+        the way it did, plus recent signal history. Reads from the
+        ``signals`` table — every tick's decision per symbol is persisted
+        with its full reason string."""
         if conn is None:
             return "DB not wired."
         if not args:
@@ -626,6 +646,50 @@ def build_command_handlers(
                 lines.append(f"  ISIN: {isin}")
         except Exception:
             pass
+
+        # Most recent feature snapshot, if present. The features table
+        # stores per-symbol indicator values keyed by tick timestamp.
+        try:
+            feat = conn.execute(
+                "SELECT ts, momentum, rsi, realized_vol, rvol "
+                "FROM features WHERE symbol = ? ORDER BY ts DESC LIMIT 1",
+                (sym,),
+            ).fetchone()
+            if feat:
+                parts = []
+                if feat["momentum"] is not None:
+                    parts.append(f"momentum {feat['momentum']:+.2%}")
+                if feat["rsi"] is not None:
+                    parts.append(f"RSI {feat['rsi']:.1f}")
+                if feat["realized_vol"] is not None:
+                    parts.append(f"vol {feat['realized_vol']:.2%}")
+                if feat["rvol"] is not None:
+                    parts.append(f"rvol {feat['rvol']:.2f}")
+                if parts:
+                    lines.append(f"  features: {', '.join(parts)}")
+        except Exception:
+            pass
+
+        # Recent decision trail (skip the one we already printed).
+        try:
+            history = conn.execute(
+                "SELECT ts, signal, score FROM signals "
+                "WHERE symbol = ? AND ts < ? "
+                "ORDER BY ts DESC LIMIT 4",
+                (sym, row["ts"]),
+            ).fetchall()
+            if history:
+                lines.append("Recent trail:")
+                for h in history:
+                    s_score = (
+                        f" ({h['score']:+.2f})" if h["score"] is not None else ""
+                    )
+                    lines.append(
+                        f"  {h['ts'][:16]} {h['signal'].upper()}{s_score}"
+                    )
+        except Exception:
+            pass
+
         return "\n".join(lines)
 
     def _today(_args: list[str]) -> str:
@@ -768,6 +832,7 @@ def build_command_handlers(
             "/backtest [DAYS] — run a quick backtest of the current strategy\n"
             "/risk — show currently active risk settings + overrides\n"
             "/stops — show distance to stop-loss trigger per position\n"
+            "/sectors — portfolio exposure broken down by sector\n"
             "/set KEY VALUE — change a safe runtime setting (stop_loss, trailing_stop, max_buys)\n"
             "/unset KEY — remove a runtime override\n"
             "/show — list active runtime overrides\n"
@@ -799,6 +864,7 @@ def build_command_handlers(
         "backtest": _backtest,
         "risk": _risk,
         "stops": _stops,
+        "sectors": _sectors,
         "set": _set,
         "unset": _unset,
         "show": _show,
