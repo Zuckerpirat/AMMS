@@ -26,6 +26,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 CommandHandler = Callable[[], str]
+TickPreview = Callable[[], object]  # returns a TickResult
 
 
 @dataclass
@@ -143,11 +144,17 @@ def build_command_handlers(
     broker,
     pause: PauseFlag,
     conn=None,
+    preview: TickPreview | None = None,
 ) -> dict[str, CommandHandler]:
     """Construct the default command handler table.
 
     ``conn`` is an optional sqlite3 connection used by /signals and /lastorders.
     When omitted those commands say "DB not wired" rather than crash.
+
+    ``preview`` is an optional zero-arg callable returning a TickResult
+    (typically a closure over the scheduler's broker/data/config/strategy).
+    When wired, /buylist runs an immediate read-only tick and reports what
+    the bot would do right now without waiting for the next scheduled tick.
     """
 
     def _status() -> str:
@@ -197,6 +204,43 @@ def build_command_handlers(
             for r in rows
         )
 
+    def _buylist() -> str:
+        if preview is None:
+            return (
+                "preview not wired (only available when launched from "
+                "the scheduler)."
+            )
+        try:
+            result = preview()
+        except Exception as e:
+            return f"preview failed: {e!r}"
+
+        buys = sorted(
+            [s for s in result.signals if s.kind == "buy"],
+            key=lambda s: s.score,
+            reverse=True,
+        )
+        sells = [s for s in result.signals if s.kind == "sell"]
+
+        if not buys and not sells and not result.blocked:
+            return "no buy/sell signals right now; bot is watching."
+
+        lines = [f"preview: {len(buys)} buy / {len(sells)} sell signals"]
+        for sig in buys[:10]:
+            lines.append(
+                f"BUY {sig.symbol} @ ${sig.price:.2f} (score {sig.score:+.2f})"
+                f" — {sig.reason}"
+            )
+        for sig in sells[:5]:
+            lines.append(
+                f"SELL {sig.symbol} @ ${sig.price:.2f} — {sig.reason}"
+            )
+        if result.blocked:
+            lines.append("--- skipped ---")
+            for sym, reason in result.blocked[:8]:
+                lines.append(f"{sym}: {reason}")
+        return "\n".join(lines)
+
     def _scan() -> str:
         # Lazy import to avoid circular deps and to keep the inbound module
         # cheap to import (it is loaded even when WSB scanning is unused).
@@ -234,6 +278,7 @@ def build_command_handlers(
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
+            "/buylist — preview what the bot would buy/sell right now\n"
             "/pause — stop placing new orders\n"
             "/resume — re-enable placing orders\n"
             "/help — this message"
@@ -247,6 +292,8 @@ def build_command_handlers(
         "lastorders": _lastorders,
         "scan": _scan,
         "wsb": _scan,  # alias
+        "buylist": _buylist,
+        "preview": _buylist,  # alias
         "pause": _pause,
         "resume": _resume,
         "help": _help,
