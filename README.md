@@ -55,6 +55,7 @@ docker compose logs -f           # watch what it does
 | `amms init-db` | Apply DB migrations explicitly |
 | `amms doctor` | Pre-flight self-check (env, config, DB, Alpaca, Telegram) |
 | `amms compare-strategies --from --to` | A/B SMA vs Composite on the same window |
+| `amms wsb-scan` | Discover trending tickers on r/wallstreetbets (mentions + sentiment) |
 
 ## What it does
 

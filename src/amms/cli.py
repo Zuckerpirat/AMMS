@@ -1122,6 +1122,92 @@ def doctor() -> None:
     console.print("\n[green]doctor: all good.[/green]")
 
 
+@app.command(name="wsb-scan")
+def wsb_scan(
+    limit_per_sub: int = typer.Option(
+        100,
+        "--limit",
+        help="How many top posts to fetch per subreddit.",
+    ),
+    time_filter: str = typer.Option(
+        "day",
+        "--window",
+        help="Reddit time window: hour, day, week, month, year, all.",
+    ),
+    min_mentions: int = typer.Option(
+        3,
+        "--min-mentions",
+        help="Drop tickers below this mention count (noise floor).",
+    ),
+    top_n: int = typer.Option(
+        20,
+        "--top",
+        help="Number of trending tickers to display.",
+    ),
+    subs: str = typer.Option(
+        "wallstreetbets,stocks,pennystocks",
+        "--subs",
+        help="Comma-separated subreddits to scan.",
+    ),
+    telegram: bool = typer.Option(
+        False,
+        "--telegram",
+        help="Also send the summary via Telegram (uses env credentials).",
+    ),
+) -> None:
+    """Scan WSB & friends, surface trending tickers ranked by mentions.
+
+    Discovery only — does not place orders or modify the watchlist.
+    Inspect the result, then decide whether to add tickers to config.yaml.
+    """
+    from amms.data.wsb_scanner import WSBScanner, format_summary
+    from amms.notifier.telegram import build_notifier
+
+    sub_tuple = tuple(s.strip() for s in subs.split(",") if s.strip())
+    if not sub_tuple:
+        console.print("[red]No subreddits provided.[/red]")
+        raise typer.Exit(code=2)
+
+    with WSBScanner(subreddits=sub_tuple) as scanner:
+        results = scanner.scan(
+            limit_per_sub=limit_per_sub,
+            time_filter=time_filter,
+            min_mentions=min_mentions,
+            top_n=top_n,
+        )
+
+    if not results:
+        console.print(
+            "[yellow]No trending tickers above the mention threshold.[/yellow] "
+            "Try --min-mentions 1 or a wider --window."
+        )
+        return
+
+    table = Table(title=f"WSB Trending ({time_filter}, {', '.join(sub_tuple)})")
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Ticker", style="bold")
+    table.add_column("Mentions", justify="right")
+    table.add_column("Sentiment", justify="right")
+    table.add_column("Bull/Bear", justify="right")
+    table.add_column("Label")
+    for i, t in enumerate(results, start=1):
+        color = {"bullish": "green", "bearish": "red", "mixed": "yellow"}[t.label]
+        table.add_row(
+            str(i),
+            t.symbol,
+            str(t.mentions),
+            f"{t.avg_sentiment:+.2f}",
+            f"+{t.bullish_posts}/-{t.bearish_posts}",
+            f"[{color}]{t.label}[/{color}]",
+        )
+    console.print(table)
+
+    if telegram:
+        notifier = build_notifier()
+        notifier.send(format_summary(results))
+        console.print("[dim]Telegram notification sent.[/dim]")
+
+
 def main() -> None:
     app()
 
