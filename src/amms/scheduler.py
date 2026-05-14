@@ -49,6 +49,9 @@ class LoopState:
     # Latest macro regime snapshot, refreshed once per tick. The /macro
     # Telegram command reads from here.
     last_macro_regime: object | None = None
+    # Dates on which we already sent a drawdown alert; resets daily so
+    # the user gets at most one per day.
+    drawdown_alert_dates: set[str] = field(default_factory=set)
 
 
 MAX_CONSECUTIVE_TICK_ERRORS = 5
@@ -304,14 +307,34 @@ def run_loop(
                 # Macro regime check: when VIXY signals stress, pause buys
                 # for this tick so the bot doesn't add long exposure into a
                 # vol spike. Stop-loss + sells still flow through normally.
-                from amms.data.macro import compute_regime as _compute_regime
+                # Users can tune thresholds or fully disable via /set.
+                from amms.data.macro import (
+                    DEFAULT_DAY_PCT_STRESS,
+                    DEFAULT_WEEK_PCT_STRESS,
+                    compute_regime as _compute_regime,
+                )
+                from amms.runtime_overrides import get_overrides as _get_overrides
 
-                regime = _compute_regime(data)
-                state.last_macro_regime = regime
-                macro_paused = regime.is_stressed
-                if macro_paused:
-                    logger.warning("macro stress detected: %s", regime.reason)
-                    notifier.send(f"⚠️ macro-pause: {regime.reason}")
+                _ovr = _get_overrides(conn)
+                macro_enabled = _ovr.get("macro_enabled", True)
+                if macro_enabled:
+                    regime = _compute_regime(
+                        data,
+                        day_pct_stress=_ovr.get(
+                            "macro_day_threshold", DEFAULT_DAY_PCT_STRESS
+                        ),
+                        week_pct_stress=_ovr.get(
+                            "macro_week_threshold", DEFAULT_WEEK_PCT_STRESS
+                        ),
+                    )
+                    state.last_macro_regime = regime
+                    macro_paused = regime.is_stressed
+                    if macro_paused:
+                        logger.warning("macro stress detected: %s", regime.reason)
+                        notifier.send(f"⚠️ macro-pause: {regime.reason}")
+                else:
+                    macro_paused = False
+                    state.last_macro_regime = None
                 # Force-close window: flatten remaining positions just before
                 # market close if config.risk.force_close_minutes_before_close
                 # is set. Day-trade profiles use this to avoid overnight risk.
@@ -322,6 +345,34 @@ def run_loop(
                             notifier.send(f"amms force-close placed sell {oid}")
                     except Exception:
                         logger.exception("force_close failed")
+
+                # Drawdown alert: at most one per day, threshold tunable
+                # via /set drawdown_alert (default 5%).
+                try:
+                    from amms.risk.drawdown import (
+                        DEFAULT_DRAWDOWN_ALERT_PCT,
+                        compute_drawdown,
+                        should_alert as _dd_should_alert,
+                    )
+
+                    acc = broker.get_account()
+                    dd = compute_drawdown(conn, float(acc.equity))
+                    threshold = _ovr.get(
+                        "drawdown_alert", DEFAULT_DRAWDOWN_ALERT_PCT
+                    )
+                    today_iso = clock.timestamp.date().isoformat()
+                    if (
+                        _dd_should_alert(dd, threshold_pct=threshold)
+                        and today_iso not in state.drawdown_alert_dates
+                    ):
+                        notifier.send(
+                            f"🚨 drawdown alert: equity ${dd.current_equity:,.2f} "
+                            f"is {dd.drawdown_pct:+.2f}% below 30d peak "
+                            f"${dd.peak_equity:,.2f} (threshold {-threshold:+.1f}%)"
+                        )
+                        state.drawdown_alert_dates.add(today_iso)
+                except Exception:
+                    logger.exception("drawdown alert check failed")
 
                 try:
                     result = run_tick(

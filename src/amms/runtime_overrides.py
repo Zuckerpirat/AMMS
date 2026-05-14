@@ -43,6 +43,16 @@ _ALLOWED: dict[str, tuple[str, Callable[[str], Any]]] = {
     "wsb_enabled": ("Enable WSB Auto-Discovery watchlist expansion (1/0)", _to_bool),
     "wsb_top_n": ("Max tickers WSB Auto-Discovery may add", int),
     "wsb_min_mentions": ("Minimum WSB mentions needed to auto-add a ticker", int),
+    "macro_enabled": ("Pause buys on VIXY stress (1/0)", _to_bool),
+    "macro_day_threshold": (
+        "VIXY 1d %% move that triggers macro-pause (default 5.0)", float
+    ),
+    "macro_week_threshold": (
+        "VIXY 1w %% move that triggers macro-pause (default 15.0)", float
+    ),
+    "drawdown_alert": (
+        "Drawdown %% below 30d peak that triggers an alert (default 5.0)", float
+    ),
 }
 
 
@@ -75,6 +85,10 @@ def parse_value(key: str, raw: str) -> Any:
         raise ValueError("wsb_top_n must be > 0")
     if key == "wsb_min_mentions" and value <= 0:
         raise ValueError("wsb_min_mentions must be > 0")
+    if key in ("macro_day_threshold", "macro_week_threshold") and value <= 0:
+        raise ValueError(f"{key} must be > 0")
+    if key == "drawdown_alert" and value <= 0:
+        raise ValueError("drawdown_alert must be > 0")
     return value
 
 
