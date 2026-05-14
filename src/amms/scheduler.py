@@ -140,11 +140,10 @@ def run_loop(
                 # /buylist so the user can preview decisions on demand
                 # without waiting for the next scheduled tick.
                 def _preview_now() -> TickResult:
-                    cfg = config
-                    if state.wsb_discovery.extras:
-                        cfg = _with_extra_watchlist(
-                            config, state.wsb_discovery.extras
-                        )
+                    from amms.data.dynamic_watchlist import load as _load
+                    user_extras = _load(settings.db_path)
+                    extras = frozenset(state.wsb_discovery.extras) | frozenset(user_extras)
+                    cfg = _with_extra_watchlist(config, extras) if extras else config
                     return run_tick(
                         broker=broker,
                         data=data,
@@ -157,7 +156,13 @@ def run_loop(
                     )
 
                 handlers = build_command_handlers(
-                    broker=broker, pause=pause, conn=conn, preview=_preview_now
+                    broker=broker,
+                    pause=pause,
+                    conn=conn,
+                    preview=_preview_now,
+                    db_path=settings.db_path,
+                    static_watchlist=config.watchlist,
+                    get_wsb_extras=lambda: set(state.wsb_discovery.extras),
                 )
                 inbound = TelegramInbound(token=token, chat_id=chat_id, handlers=handlers)
                 inbound.start()
@@ -197,10 +202,15 @@ def run_loop(
                     )
                     if delta.refreshed and (delta.added or delta.removed):
                         notifier.send(format_delta_message(delta))
-                if state.wsb_discovery.extras:
-                    effective_config = _with_extra_watchlist(
-                        config, state.wsb_discovery.extras
-                    )
+                # Merge in: WSB-discovered + user-added (via /add). Both
+                # layers are recomputed each tick so /add takes effect on the
+                # very next tick without a restart.
+                from amms.data.dynamic_watchlist import load as _load_user_extras
+
+                user_extras = _load_user_extras(settings.db_path)
+                merged_extras = frozenset(state.wsb_discovery.extras) | frozenset(user_extras)
+                if merged_extras:
+                    effective_config = _with_extra_watchlist(config, merged_extras)
                 # Force-close window: flatten remaining positions just before
                 # market close if config.risk.force_close_minutes_before_close
                 # is set. Day-trade profiles use this to avoid overnight risk.

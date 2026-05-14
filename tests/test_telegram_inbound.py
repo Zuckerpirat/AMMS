@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import httpx
 import pytest
@@ -42,7 +42,7 @@ def test_pause_flag_toggle() -> None:
 def test_status_handler_reports_account_state() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
-    out = h["status"]()
+    out = h["status"]([])
     assert "$100,000" in out
     assert "open positions: 1" in out
     assert "paused: False" in out
@@ -51,29 +51,29 @@ def test_status_handler_reports_account_state() -> None:
 def test_pause_resume_handlers_flip_flag() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
-    assert "paused" in h["pause"]().lower()
+    assert "paused" in h["pause"]([]).lower()
     assert p.paused is True
-    assert "resumed" in h["resume"]().lower()
+    assert "resumed" in h["resume"]([]).lower()
     assert p.paused is False
 
 
 def test_equity_handler() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
-    assert h["equity"]() == "$100,000.00"
+    assert h["equity"]([]) == "$100,000.00"
 
 
 def test_positions_handler() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
-    out = h["positions"]()
+    out = h["positions"]([])
     assert "AAPL" in out
 
 
 def test_help_lists_scan_command() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
-    out = h["help"]()
+    out = h["help"]([])
     assert "/scan" in out
     assert "/buylist" in out
 
@@ -81,7 +81,7 @@ def test_help_lists_scan_command() -> None:
 def test_buylist_without_preview_explains_clearly() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
-    out = h["buylist"]()
+    out = h["buylist"]([])
     assert "preview not wired" in out
 
 
@@ -104,7 +104,7 @@ def test_buylist_with_preview_lists_buy_signals() -> None:
 
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p, preview=_preview)
-    out = h["buylist"]()
+    out = h["buylist"]([])
     # Highest-score buy first
     assert out.index("NVDA") < out.index("PLTR")
     assert "TSLA" in out
@@ -127,7 +127,7 @@ def test_buylist_handles_empty_result_gracefully() -> None:
 
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p, preview=_preview)
-    out = h["buylist"]()
+    out = h["buylist"]([])
     assert "watching" in out
 
 
@@ -137,7 +137,7 @@ def test_buylist_returns_friendly_error_on_preview_failure() -> None:
 
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p, preview=_preview)
-    out = h["buylist"]()
+    out = h["buylist"]([])
     assert out.startswith("preview failed")
     assert "alpaca down" in out
 
@@ -178,7 +178,7 @@ def test_scan_handler_returns_formatted_summary(monkeypatch: pytest.MonkeyPatch)
 
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
-    out = h["scan"]()
+    out = h["scan"]([])
     assert "NVDA" in out
     assert "GME" in out
     assert "Trending" in out
@@ -203,7 +203,7 @@ def test_scan_handler_returns_friendly_error_on_failure(
 
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
-    out = h["scan"]()
+    out = h["scan"]([])
     assert out.startswith("WSB scan failed")
     assert "reddit auth blew up" in out
 
@@ -283,3 +283,4 @@ def test_inbound_replies_unknown_command() -> None:
     inbound._poll_once()
     assert send_route.called
     assert b"unknown" in send_route.calls.last.request.read()
+
