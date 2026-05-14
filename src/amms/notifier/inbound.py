@@ -153,6 +153,7 @@ def build_command_handlers(
     get_wsb_extras: Callable[[], set[str]] | None = None,
     data=None,
     get_macro_regime: Callable[[], object] | None = None,
+    run_backtest: Callable[[int], object] | None = None,
 ) -> dict[str, CommandHandler]:
     """Construct the default command handler table.
 
@@ -452,6 +453,39 @@ def build_command_handlers(
             lines.append(f"  {k} = {v}")
         return "\n".join(lines)
 
+    def _backtest(args: list[str]) -> str:
+        """Run a backtest of the current strategy on the watchlist using
+        whatever bars are stored locally. Days default to 90."""
+        if run_backtest is None:
+            return "backtest not wired (only available when launched from scheduler)"
+        try:
+            days = int(args[0]) if args else 90
+        except ValueError:
+            return "usage: /backtest [DAYS]  (default 90, max 730)"
+        days = max(5, min(days, 730))
+        try:
+            stats = run_backtest(days)
+        except Exception as e:
+            return f"backtest failed: {e!r}"
+        if stats is None:
+            return "backtest produced no result (no bars in DB?)"
+        try:
+            ret = stats.total_return_pct
+            arrow = "▲" if ret >= 0 else "▼"
+            lines = [
+                f"Backtest ({days}d): {arrow} {ret:+.2f}%",
+                f"  Initial equity: ${stats.initial_equity:,.0f}",
+                f"  Final equity:   ${stats.final_equity:,.0f}",
+                f"  Trades: {stats.num_trades} "
+                f"({stats.num_buys} buys / {stats.num_sells} sells)",
+                f"  Closed round-trips: {stats.closed_round_trips}",
+                f"  Win rate: {stats.win_rate * 100:.1f}%",
+                f"  Max drawdown: {stats.max_drawdown_pct * 100:+.2f}%",
+            ]
+            return "\n".join(lines)
+        except AttributeError:
+            return f"backtest result: {stats}"
+
     def _macro(_args: list[str]) -> str:
         """Show the latest macro regime classification (VIX-proxy based)."""
         regime = None
@@ -660,6 +694,7 @@ def build_command_handlers(
             "/today — one-shot daily snapshot (P&L, trades, positions, WSB)\n"
             "/explain SYM — show why the bot's last decision on SYM was made\n"
             "/macro — current market stress regime (calm/elevated/stressed)\n"
+            "/backtest [DAYS] — run a quick backtest of the current strategy\n"
             "/set KEY VALUE — change a safe runtime setting (stop_loss, trailing_stop, max_buys)\n"
             "/unset KEY — remove a runtime override\n"
             "/show — list active runtime overrides\n"
@@ -688,6 +723,7 @@ def build_command_handlers(
         "today": _today,
         "explain": _explain,
         "macro": _macro,
+        "backtest": _backtest,
         "set": _set,
         "unset": _unset,
         "show": _show,

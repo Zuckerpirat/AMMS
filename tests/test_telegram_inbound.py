@@ -420,6 +420,53 @@ def test_today_handler_without_db_still_runs() -> None:
     assert "Open positions" in out
 
 
+def test_backtest_handler_renders_stats() -> None:
+    class _Stats:
+        initial_equity = 100_000.0
+        final_equity = 112_500.0
+        total_return_pct = 12.5
+        num_trades = 30
+        num_buys = 16
+        num_sells = 14
+        closed_round_trips = 14
+        win_rate = 0.64
+        max_drawdown_pct = -0.08
+
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(),
+        pause=p,
+        run_backtest=lambda days: _Stats(),
+    )
+    out = h["backtest"](["60"])
+    assert "+12.50%" in out
+    assert "Win rate: 64.0%" in out
+    assert "Max drawdown: -8.00%" in out
+    assert "60d" in out
+
+
+def test_backtest_handler_without_wiring() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["backtest"]([])
+    assert "not wired" in out
+
+
+def test_backtest_handler_handles_failures() -> None:
+    def _boom(_d):
+        raise RuntimeError("no bars")
+
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(),
+        pause=p,
+        run_backtest=_boom,
+    )
+    out = h["backtest"]([])
+    assert "failed" in out
+    assert "no bars" in out
+
+
 def test_macro_handler_uses_provided_regime() -> None:
     from amms.data.macro import MacroRegime
 

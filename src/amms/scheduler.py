@@ -195,6 +195,42 @@ def run_loop(
                         paused=pause.paused,
                     )
 
+                def _telegram_backtest(days: int):
+                    """Run a backtest using whatever bars are cached locally.
+
+                    Strategy/risk/timeframe come from the live config plus
+                    runtime overrides. Initial equity matches the current
+                    account so percentage figures are meaningful to the user.
+                    """
+                    from datetime import date, timedelta
+                    from amms.backtest.engine import BacktestConfig, run_backtest
+                    from amms.backtest.stats import compute_stats
+                    from amms.runtime_overrides import (
+                        apply_to_config as _apply,
+                        apply_to_strategy as _apply_strat,
+                    )
+
+                    cfg = _apply(config, conn)
+                    strat = _apply_strat(strategy, conn)
+                    try:
+                        initial = float(broker.get_account().equity)
+                    except Exception:
+                        initial = 100_000.0
+                    end = date.today()
+                    start = end - timedelta(days=days)
+                    bt = BacktestConfig(
+                        start=start,
+                        end=end,
+                        symbols=tuple(cfg.watchlist),
+                        initial_equity=initial,
+                        risk=cfg.risk,
+                        strategy=strat,
+                        timeframe=cfg.strategy.timeframe,
+                        universe=cfg.universe,
+                    )
+                    result = run_backtest(bt, conn)
+                    return compute_stats(result)
+
                 handlers = build_command_handlers(
                     broker=broker,
                     pause=pause,
@@ -205,6 +241,7 @@ def run_loop(
                     get_wsb_extras=lambda: set(state.wsb_discovery.extras),
                     data=data,
                     get_macro_regime=lambda: state.last_macro_regime,
+                    run_backtest=_telegram_backtest,
                 )
                 inbound = TelegramInbound(token=token, chat_id=chat_id, handlers=handlers)
                 inbound.start()
