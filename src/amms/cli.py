@@ -687,6 +687,43 @@ def summary_today(llm: bool = typer.Option(False, "--llm")) -> None:
     console.print(plain)
 
 
+@app.command()
+def vacuum() -> None:
+    """Run SQLite VACUUM to reclaim space + analyze the schema."""
+    settings = _settings_or_die()
+    conn = db.connect(settings.db_path)
+    try:
+        conn.execute("VACUUM")
+        conn.execute("ANALYZE")
+    finally:
+        conn.close()
+    console.print(f"[green]VACUUM + ANALYZE done on {settings.db_path}[/green]")
+
+
+@app.command(name="reset-db")
+def reset_db(yes: bool = typer.Option(False, "--yes", help="Skip confirmation.")) -> None:
+    """Destroy the SQLite DB and re-run migrations.
+
+    Useful only on a fresh, never-traded paper account. Strongly refuses
+    without --yes since this is irreversible.
+    """
+    settings = _settings_or_die()
+    if not yes:
+        console.print(
+            "[yellow]This will delete the DB file. Re-run with --yes to confirm.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    try:
+        settings.db_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+    except Exception as e:
+        console.print(f"[red]could not unlink: {e}[/red]")
+        raise typer.Exit(code=1) from e
+    conn = db.connect(settings.db_path)
+    applied = db.migrate(conn)
+    conn.close()
+    console.print(f"[green]reset done; {applied} migration(s) applied[/green]")
+
+
 @app.command(name="list-strategies")
 def list_strategies() -> None:
     """List registered strategies and their parameters."""
