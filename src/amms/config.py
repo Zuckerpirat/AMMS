@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from amms.data.wsb_discovery import WSBDiscoveryConfig
 from amms.filters.universe import UniverseFilter
 from amms.risk.rules import RiskConfig
 
@@ -91,6 +92,7 @@ class AppConfig:
     risk: RiskConfig
     scheduler: SchedulerConfig
     universe: UniverseFilter = field(default_factory=UniverseFilter)
+    wsb_discovery: WSBDiscoveryConfig = field(default_factory=WSBDiscoveryConfig)
 
     def __post_init__(self) -> None:
         if not self.watchlist:
@@ -167,10 +169,31 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         require_tradable=bool(universe_raw.get("require_tradable", False)),
     )
 
+    discovery_raw = raw.get("wsb_discovery") or {}
+    subreddits_raw = discovery_raw.get("subreddits")
+    if subreddits_raw is None:
+        subreddits_tuple: tuple[str, ...] = ("wallstreetbets",)
+    else:
+        if not isinstance(subreddits_raw, list) or not all(
+            isinstance(s, str) for s in subreddits_raw
+        ):
+            raise ConfigError("wsb_discovery.subreddits must be a list of strings")
+        subreddits_tuple = tuple(subreddits_raw)
+    discovery = WSBDiscoveryConfig(
+        enabled=bool(discovery_raw.get("enabled", False)),
+        top_n=int(discovery_raw.get("top_n", 5)),
+        min_mentions=int(discovery_raw.get("min_mentions", 5)),
+        min_sentiment=float(discovery_raw.get("min_sentiment", 0.0)),
+        refresh_hours=float(discovery_raw.get("refresh_hours", 24.0)),
+        subreddits=subreddits_tuple,
+        time_filter=str(discovery_raw.get("time_filter", "day")),
+    )
+
     return AppConfig(
         watchlist=watchlist,
         strategy=strategy,
         risk=risk,
         scheduler=scheduler,
         universe=universe,
+        wsb_discovery=discovery,
     )

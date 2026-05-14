@@ -52,6 +52,20 @@ scheduler:
   tick_seconds: 60
   timezone: America/New_York
 
+# WSB Auto-Discovery: periodically scan r/wallstreetbets and add the top
+# trending tickers to the active watchlist for as long as they trend.
+# Disabled by default. Requires REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET in
+# .env, otherwise it silently does nothing.
+wsb_discovery:
+  enabled: false              # set true to turn on
+  top_n: 5                    # how many trending tickers to add
+  min_mentions: 5             # minimum mention count to be considered
+  min_sentiment: 0.0          # require non-bearish chatter (-1..1)
+  refresh_hours: 24           # rescan at most this often
+  subreddits:
+    - wallstreetbets
+  time_filter: day            # hour | day | week | month | year | all
+
 # Pre-trade gate: BUY signals are blocked unless the symbol clears these
 # thresholds. SELL signals are never filtered so you can always exit. All
 # defaults are inert; uncomment values to activate.

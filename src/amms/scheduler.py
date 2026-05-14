@@ -12,6 +12,11 @@ from amms.broker import AlpacaClient
 from amms.clock import ClockStatus
 from amms.config import AppConfig, Settings
 from amms.data import MarketDataClient
+from amms.data.wsb_discovery import (
+    DiscoveryState,
+    format_delta_message,
+    maybe_refresh as maybe_refresh_wsb_extras,
+)
 from amms.executor import TickResult, build_daily_summary, run_tick
 from amms.features.sentiment import RedditSentimentCollector
 from amms.metrics import start_metrics_server
@@ -38,6 +43,7 @@ class LoopState:
     sent_summary_dates: set[str] = field(default_factory=set)
     last_sentiment_refresh_ts: float = 0.0
     consecutive_tick_errors: int = 0
+    wsb_discovery: DiscoveryState = field(default_factory=DiscoveryState)
 
 
 MAX_CONSECUTIVE_TICK_ERRORS = 5
@@ -132,11 +138,16 @@ def run_loop(
                 # /buylist so the user can preview decisions on demand
                 # without waiting for the next scheduled tick.
                 def _preview_now() -> TickResult:
+                    cfg = config
+                    if state.wsb_discovery.extras:
+                        cfg = _with_extra_watchlist(
+                            config, state.wsb_discovery.extras
+                        )
                     return run_tick(
                         broker=broker,
                         data=data,
                         conn=conn,
-                        config=config,
+                        config=cfg,
                         strategy=strategy,
                         bars_back=bars_back,
                         execute=False,
@@ -169,6 +180,25 @@ def run_loop(
                 _maybe_refresh_sentiment(
                     state, set(config.watchlist), _time.time()
                 )
+
+                # WSB Auto-Discovery: opportunistic watchlist expansion. Runs at
+                # most every refresh_hours; no-op when disabled or Reddit creds
+                # are missing. We rebuild the per-tick AppConfig with the
+                # extended watchlist below.
+                effective_config = config
+                if config.wsb_discovery.enabled:
+                    delta = maybe_refresh_wsb_extras(
+                        state.wsb_discovery,
+                        config.wsb_discovery,
+                        static_watchlist=set(config.watchlist),
+                        now_seconds=_time.time(),
+                    )
+                    if delta.refreshed and (delta.added or delta.removed):
+                        notifier.send(format_delta_message(delta))
+                if state.wsb_discovery.extras:
+                    effective_config = _with_extra_watchlist(
+                        config, state.wsb_discovery.extras
+                    )
                 # Force-close window: flatten remaining positions just before
                 # market close if config.risk.force_close_minutes_before_close
                 # is set. Day-trade profiles use this to avoid overnight risk.
@@ -185,7 +215,7 @@ def run_loop(
                         broker=broker,
                         data=data,
                         conn=conn,
-                        config=config,
+                        config=effective_config,
                         strategy=strategy,
                         bars_back=bars_back,
                         execute=execute,
@@ -299,3 +329,21 @@ def _force_close_all(
         upsert_order(conn, order)
         placed.append(order.id)
     return placed
+
+
+def _with_extra_watchlist(config: AppConfig, extras: frozenset[str]) -> AppConfig:
+    """Return a copy of ``config`` whose watchlist has ``extras`` appended.
+
+    Static symbols come first (preserving config-file order); discovered
+    extras come last so they are clearly "new" in any debug output.
+    Duplicates are collapsed.
+    """
+    import dataclasses
+
+    static_upper = {s.upper() for s in config.watchlist}
+    new_extras = tuple(sorted(s.upper() for s in extras if s.upper() not in static_upper))
+    if not new_extras:
+        return config
+    return dataclasses.replace(
+        config, watchlist=tuple(config.watchlist) + new_extras
+    )
