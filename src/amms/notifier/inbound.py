@@ -401,6 +401,90 @@ def build_command_handlers(
             pass
         return "\n".join(lines)
 
+    def _today(_args: list[str]) -> str:
+        """One-shot daily snapshot: equity change, trades, positions, trends."""
+        today_iso = date.today().isoformat()
+        lines: list[str] = [f"Daily snapshot — {today_iso}"]
+
+        # 1. Equity change today.
+        if conn is not None:
+            first = conn.execute(
+                "SELECT equity FROM equity_snapshots "
+                "WHERE substr(ts, 1, 10) = ? ORDER BY ts LIMIT 1",
+                (today_iso,),
+            ).fetchone()
+            last = conn.execute(
+                "SELECT equity FROM equity_snapshots "
+                "WHERE substr(ts, 1, 10) = ? ORDER BY ts DESC LIMIT 1",
+                (today_iso,),
+            ).fetchone()
+            if first and last and first["equity"]:
+                pnl = last["equity"] - first["equity"]
+                pct = pnl / first["equity"] * 100
+                arrow = "▲" if pnl >= 0 else "▼"
+                lines.append(
+                    f"P&L today: {arrow} ${pnl:+.2f} ({pct:+.2f}%)"
+                )
+            else:
+                lines.append("P&L today: no equity data yet")
+        try:
+            acc = broker.get_account()
+            lines.append(f"Equity: ${acc.equity:,.2f}  Cash: ${acc.cash:,.2f}")
+        except Exception:
+            pass
+
+        # 2. Trades today.
+        if conn is not None:
+            order_rows = conn.execute(
+                "SELECT symbol, side, qty, status FROM orders "
+                "WHERE substr(submitted_at, 1, 10) = ? "
+                "ORDER BY submitted_at DESC",
+                (today_iso,),
+            ).fetchall()
+            if order_rows:
+                lines.append(f"Trades today: {len(order_rows)}")
+                for r in order_rows[:5]:
+                    lines.append(
+                        f"  {r['side'].upper()} {r['qty']:g} {r['symbol']} "
+                        f"[{r['status']}]"
+                    )
+                if len(order_rows) > 5:
+                    lines.append(f"  … and {len(order_rows) - 5} more")
+            else:
+                lines.append("Trades today: none")
+
+        # 3. Open positions with P&L.
+        try:
+            positions = broker.get_positions()
+        except Exception:
+            positions = []
+        if positions:
+            lines.append(f"Open positions: {len(positions)}")
+            for p in positions[:5]:
+                lines.append(
+                    f"  {p.symbol}: {p.qty:g} @ ${p.avg_entry_price:.2f} "
+                    f"(P&L ${p.unrealized_pl:+.2f})"
+                )
+            if len(positions) > 5:
+                lines.append(f"  … and {len(positions) - 5} more")
+        else:
+            lines.append("Open positions: none")
+
+        # 4. Top WSB trending right now (best-effort).
+        try:
+            from amms.data.wsb_scanner import WSBScanner
+
+            with WSBScanner() as scanner:
+                trending = scanner.scan(min_mentions=5, top_n=5)
+        except Exception:
+            trending = []
+        if trending:
+            lines.append("WSB trending now:")
+            for t in trending:
+                lines.append(f"  {t.symbol} ({t.mentions}x)")
+
+        return "\n".join(lines)
+
     def _isin(args: list[str]) -> str:
         if not args:
             return "usage: /isin SYM [SYM ...]  (e.g. /isin NVDA SPY)"
@@ -420,6 +504,7 @@ def build_command_handlers(
             "/status — equity + positions + flags\n"
             "/positions — list open positions\n"
             "/equity — just the equity number\n"
+            "/today — one-shot daily snapshot (P&L, trades, positions, WSB)\n"
             "/performance [N] — P&L last N days (default 7)\n"
             "/watchlist — show static + WSB + user-added tickers\n"
             "/add SYM — add ticker to dynamic watchlist\n"
@@ -442,6 +527,7 @@ def build_command_handlers(
         "lastorders": _lastorders,
         "scan": _scan,
         "isin": _isin,
+        "today": _today,
         "wsb": _scan,  # alias
         "buylist": _buylist,
         "preview": _buylist,  # alias

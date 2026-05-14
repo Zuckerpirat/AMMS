@@ -349,6 +349,39 @@ def test_performance_alias_perf() -> None:
     assert "perf" in h
 
 
+def test_today_handler_returns_snapshot() -> None:
+    conn = _make_conn_with_snapshots()
+    today_iso = date.today().isoformat()
+    conn.execute(
+        "CREATE TABLE orders ("
+        "id TEXT, client_order_id TEXT, symbol TEXT, side TEXT, "
+        "qty REAL, type TEXT, status TEXT, submitted_at TEXT, "
+        "filled_at TEXT, filled_avg_price REAL)"
+    )
+    conn.execute(
+        "INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("1", "c1", "NVDA", "buy", 5, "market", "filled",
+         f"{today_iso}T15:00:00+00:00", None, None),
+    )
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["today"]([])
+    assert "Daily snapshot" in out
+    assert "P&L today" in out
+    assert "Trades today" in out
+    assert "NVDA" in out
+    assert "Equity:" in out
+
+
+def test_today_handler_without_db_still_runs() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["today"]([])
+    assert "Daily snapshot" in out
+    assert "Open positions" in out
+
+
 def test_help_lists_performance_command() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
