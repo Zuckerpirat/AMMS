@@ -603,8 +603,15 @@ def compare_strategies(
     end: str = typer.Option(..., "--to"),
     symbols: str | None = typer.Option(None, "--symbols"),
     initial_equity: float = typer.Option(100_000.0, "--initial-equity"),
+    only: str | None = typer.Option(
+        None,
+        "--only",
+        help="Comma-separated subset of strategy names; default = all registered.",
+    ),
 ) -> None:
-    """A/B SMA vs Composite over the same window. Same risk + universe."""
+    """A/B all registered strategies over the same window."""
+    from amms.strategy.base import registered_strategies
+
     config = _app_config_or_die()
     settings = _settings_or_die()
     symbols_tuple = (
@@ -612,13 +619,21 @@ def compare_strategies(
         if symbols
         else config.watchlist
     )
+    # Touch build_strategy to lazy-register the built-ins, then read.
+    _ = build_strategy("sma_cross", {})
+    names = list(registered_strategies())
+    if only:
+        wanted = {n.strip() for n in only.split(",")}
+        names = [n for n in names if n in wanted]
     conn = db.connect(settings.db_path)
     db.migrate(conn)
     rows: list[tuple[str, BacktestStats]] = []
-    for label, strat in (
-        ("sma_cross", build_strategy("sma_cross", {})),
-        ("composite", build_strategy("composite", {})),
-    ):
+    for name in sorted(names):
+        try:
+            strat = build_strategy(name, {})
+        except Exception as e:
+            console.print(f"[red]{name}: construct failed: {e}[/red]")
+            continue
         bt = BacktestConfig(
             start=date.fromisoformat(start),
             end=date.fromisoformat(end),
@@ -632,9 +647,9 @@ def compare_strategies(
         try:
             result = run_backtest(bt, conn)
         except ValueError as e:
-            console.print(f"[red]{label}: {e}[/red]")
+            console.print(f"[red]{name}: {e}[/red]")
             continue
-        rows.append((label, compute_stats(result)))
+        rows.append((name, compute_stats(result)))
     conn.close()
     if not rows:
         raise typer.Exit(code=1)
