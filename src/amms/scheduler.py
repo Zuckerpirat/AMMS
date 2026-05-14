@@ -13,6 +13,7 @@ from amms.clock import ClockStatus
 from amms.config import AppConfig, Settings
 from amms.data import MarketDataClient
 from amms.executor import TickResult, build_daily_summary, run_tick
+from amms.metrics import start_metrics_server
 from amms.notifier import (
     Notifier,
     NullNotifier,
@@ -74,6 +75,13 @@ def run_loop(
 
     state = LoopState()
     inbound: TelegramInbound | None = None
+    metrics_server = None
+    metrics_port_raw = os.environ.get("AMMS_METRICS_PORT", "").strip()
+    if metrics_port_raw:
+        try:
+            metrics_server = start_metrics_server(port=int(metrics_port_raw))
+        except Exception:
+            logger.exception("failed to start metrics server")
     try:
         with (
             AlpacaClient(
@@ -142,6 +150,8 @@ def run_loop(
     finally:
         if inbound is not None:
             inbound.stop()
+        if metrics_server is not None:
+            metrics_server.shutdown()
         conn.close()
         notifier.send("amms stopped")
         logger.info("amms scheduler stopped")

@@ -16,6 +16,7 @@ from amms.db import (
     upsert_order,
 )
 from amms.features import standard_features
+from amms.metrics import metrics
 from amms.risk import check_buy
 from amms.strategy import Signal, Strategy
 
@@ -73,6 +74,10 @@ def run_tick(
 
     account = broker.get_account()
     insert_equity_snapshot(conn, account)
+    metrics.inc("amms_ticks_total")
+    metrics.observe("amms_equity_dollars", account.equity)
+    metrics.observe("amms_cash_dollars", account.cash)
+    metrics.observe("amms_daytrade_count", float(account.daytrade_count))
     positions = {p.symbol: p for p in broker.get_positions()}
     open_orders = broker.list_orders(status="open")
     pending_buys = {o.symbol for o in open_orders if o.side == "buy"}
@@ -143,6 +148,7 @@ def run_tick(
         result.placed_order_ids.append(order.id)
         pending_buys.add(signal.symbol)
         open_positions_count += 1
+        metrics.labeled_inc("amms_orders_total", {"side": "buy"})
 
     _process_sell_signals(
         broker=broker,
@@ -215,6 +221,7 @@ def _process_sell_signals(
         upsert_order(conn, order)
         result.placed_order_ids.append(order.id)
         pending_sells.add(signal.symbol)
+        metrics.labeled_inc("amms_orders_total", {"side": "sell"})
 
 
 def _bought_today(conn: sqlite3.Connection, symbol: str) -> bool:
