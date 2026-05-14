@@ -180,6 +180,22 @@ def test_scan_uses_apewisdom_when_no_collector_and_no_reddit_creds(
     assert "RARE" not in symbols  # below min_mentions
 
 
+def test_format_summary_renders_isin_when_provided() -> None:
+    posts = {
+        "wallstreetbets": [
+            _post("NVDA rocket"),
+            _post("NVDA moon"),
+            _post("NVDA squeeze"),
+        ],
+    }
+    scanner = WSBScanner(
+        collector=_FakeCollector(posts), subreddits=("wallstreetbets",)
+    )
+    results = scanner.scan(min_mentions=2)
+    text = format_summary(results, isins={"NVDA": "US67066G1040"})
+    assert "ISIN US67066G1040" in text
+
+
 def test_format_summary_renders_prices_when_provided() -> None:
     posts = {
         "wallstreetbets": [

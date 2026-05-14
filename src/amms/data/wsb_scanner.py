@@ -192,6 +192,7 @@ def format_summary(
     results: list[TrendingTicker],
     *,
     prices: dict[str, dict[str, float]] | None = None,
+    isins: dict[str, str] | None = None,
 ) -> str:
     """Render a compact text summary suitable for Telegram or stdout.
 
@@ -217,5 +218,7 @@ def format_summary(
                 f"  ({t.label}, score={t.avg_sentiment:+.2f}, "
                 f"+{t.bullish_posts}/-{t.bearish_posts})"
             )
+        if isins and isins.get(t.symbol):
+            line += f"  ISIN {isins[t.symbol]}"
         lines.append(line)
     return "\n".join(lines)

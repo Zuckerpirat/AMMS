@@ -253,6 +253,11 @@ def build_command_handlers(
                 lines.append(f"{sym}: {reason}")
         return "\n".join(lines)
 
+    # Persistent across /scan invocations so OpenFIGI is only queried once
+    # per ticker per process lifetime.
+    from amms.data.isin import IsinLookup as _IsinLookup
+    _isin_cache = _IsinLookup()
+
     def _scan(_args: list[str]) -> str:
         # Lazy import to avoid circular deps and to keep the inbound module
         # cheap to import (it is loaded even when WSB scanning is unused).
@@ -267,12 +272,19 @@ def build_command_handlers(
             return f"WSB scan failed: {e!r}"
 
         prices: dict[str, dict[str, float]] = {}
-        if data is not None and results:
+        isins: dict[str, str] = {}
+        if results:
+            syms = [r.symbol for r in results]
+            if data is not None:
+                try:
+                    prices = data.get_snapshots(syms)
+                except Exception:
+                    prices = {}
             try:
-                prices = data.get_snapshots([r.symbol for r in results])
+                isins = _isin_cache.lookup(syms)
             except Exception:
-                prices = {}
-        return format_summary(results, prices=prices)
+                isins = {}
+        return format_summary(results, prices=prices, isins=isins)
 
     def _lastorders(_args: list[str]) -> str:
         if conn is None:
