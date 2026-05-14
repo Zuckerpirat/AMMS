@@ -451,6 +451,51 @@ def build_command_handlers(
             lines.append(f"  {k} = {v}")
         return "\n".join(lines)
 
+    def _explain(args: list[str]) -> str:
+        """Show why the bot's most recent decision on a ticker came out
+        the way it did. Reads from the ``signals`` table — every tick's
+        decision per symbol is persisted with its full reason string."""
+        if conn is None:
+            return "DB not wired."
+        if not args:
+            return "usage: /explain SYMBOL  (e.g. /explain NVDA)"
+        sym = args[0].upper()
+        row = conn.execute(
+            "SELECT ts, signal, reason, score, strategy FROM signals "
+            "WHERE symbol = ? ORDER BY ts DESC LIMIT 1",
+            (sym,),
+        ).fetchone()
+        if not row:
+            return f"no decision recorded yet for {sym}"
+        lines = [
+            f"Last decision for {sym}:",
+            f"  time: {row['ts'][:16]} UTC",
+            f"  signal: {row['signal'].upper()}",
+            f"  strategy: {row['strategy']}",
+        ]
+        if row["score"] is not None:
+            lines.append(f"  score: {row['score']:+.2f}")
+        if row["reason"]:
+            lines.append(f"  reason: {row['reason']}")
+        # Sentiment overlay context.
+        try:
+            from amms.strategy.composite import get_sentiment_overlay
+
+            overlay = get_sentiment_overlay()
+            if sym in overlay:
+                lines.append(
+                    f"  WSB attention overlay: {overlay[sym]:+.2f} (0=none, 1=hot)"
+                )
+        except Exception:
+            pass
+        try:
+            isin = _isin_cache.lookup([sym]).get(sym, "")
+            if isin:
+                lines.append(f"  ISIN: {isin}")
+        except Exception:
+            pass
+        return "\n".join(lines)
+
     def _today(_args: list[str]) -> str:
         """One-shot daily snapshot: equity change, trades, positions, trends."""
         today_iso = date.today().isoformat()
@@ -586,6 +631,7 @@ def build_command_handlers(
             "/positions — list open positions\n"
             "/equity — just the equity number\n"
             "/today — one-shot daily snapshot (P&L, trades, positions, WSB)\n"
+            "/explain SYM — show why the bot's last decision on SYM was made\n"
             "/set KEY VALUE — change a safe runtime setting (stop_loss, trailing_stop, max_buys)\n"
             "/unset KEY — remove a runtime override\n"
             "/show — list active runtime overrides\n"
@@ -612,6 +658,7 @@ def build_command_handlers(
         "scan": _scan,
         "isin": _isin,
         "today": _today,
+        "explain": _explain,
         "set": _set,
         "unset": _unset,
         "show": _show,

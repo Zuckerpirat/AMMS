@@ -420,6 +420,55 @@ def test_today_handler_without_db_still_runs() -> None:
     assert "Open positions" in out
 
 
+def test_explain_handler_returns_last_signal() -> None:
+    import sqlite3 as _sqlite
+    conn = _sqlite.connect(":memory:")
+    conn.row_factory = _sqlite.Row
+    conn.execute(
+        "CREATE TABLE signals (ts TEXT, symbol TEXT, strategy TEXT, "
+        "signal TEXT, reason TEXT, score REAL)"
+    )
+    conn.execute(
+        "INSERT INTO signals VALUES (?,?,?,?,?,?)",
+        ("2026-05-14T15:00:00+00:00", "NVDA", "composite", "buy",
+         "momentum +5.2%, RSI 58", 1.42),
+    )
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["explain"](["NVDA"])
+    assert "Last decision for NVDA" in out
+    assert "BUY" in out
+    assert "composite" in out
+    assert "+1.42" in out
+    assert "momentum +5.2%" in out
+
+
+def test_explain_handler_unknown_symbol() -> None:
+    import sqlite3 as _sqlite
+    conn = _sqlite.connect(":memory:")
+    conn.row_factory = _sqlite.Row
+    conn.execute(
+        "CREATE TABLE signals (ts TEXT, symbol TEXT, strategy TEXT, "
+        "signal TEXT, reason TEXT, score REAL)"
+    )
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["explain"](["ZZZZ"])
+    assert "no decision recorded" in out
+
+
+def test_explain_handler_usage_when_no_args() -> None:
+    import sqlite3 as _sqlite
+    conn = _sqlite.connect(":memory:")
+    conn.row_factory = _sqlite.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["explain"]([])
+    assert "usage" in out
+
+
 def test_help_lists_performance_command() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
