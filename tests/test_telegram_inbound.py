@@ -2348,3 +2348,49 @@ def test_help_includes_backhist() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/backhist" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /circuit tests
+# ---------------------------------------------------------------------------
+
+def test_circuit_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["circuit"]([]) == "DB not wired."
+
+
+def test_circuit_shows_ok_state(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["circuit"]([])
+    assert "OK" in out or "allowed" in out
+
+
+def test_circuit_reset(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    from amms.risk.circuit_breaker import CircuitBreakerConfig, record_trade_result
+    cfg = CircuitBreakerConfig(max_daily_loss_pct=1.0)
+    record_trade_result(conn, pnl=-5000.0, config=cfg, initial_equity=100_000.0)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["circuit"](["reset"])
+    assert "reset" in out.lower()
+
+
+def test_circuit_tripped_shows_warning(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    from amms.risk.circuit_breaker import CircuitBreakerConfig, record_trade_result
+    cfg = CircuitBreakerConfig(max_daily_loss_pct=1.0)
+    record_trade_result(conn, pnl=-5000.0, config=cfg, initial_equity=100_000.0)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["circuit"]([])
+    assert "TRIPPED" in out or "blocked" in out.lower()
+
+
+def test_help_includes_circuit() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/circuit" in h["help"]([])

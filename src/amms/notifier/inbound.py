@@ -3105,6 +3105,44 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _circuit(args: list[str]) -> str:
+        """Show or reset the circuit breaker state.
+
+        The circuit breaker blocks new buys after excessive daily loss or
+        consecutive losing trades. Resets automatically at next trading day.
+
+        Usage:
+          /circuit         — show current circuit breaker state
+          /circuit reset   — manually reset today's circuit (admin)
+        """
+        if conn is None:
+            return "DB not wired."
+
+        from amms.risk.circuit_breaker import (
+            load_state,
+            reset_circuit as do_reset,
+        )
+
+        if args and args[0].lower() == "reset":
+            do_reset(conn)
+            return "Circuit breaker reset for today. Trading will resume."
+
+        try:
+            state = load_state(conn)
+        except Exception as e:
+            return f"circuit breaker error: {e!r}"
+
+        status = "🔴 TRIPPED — new buys blocked" if state.tripped else "🟢 OK — trading allowed"
+        lines = [
+            f"Circuit breaker status: {status}",
+            f"  Trade date:        {state.trade_date}",
+            f"  Daily loss:        ${state.daily_loss:,.2f}",
+            f"  Consecutive losses: {state.consec_losses}",
+        ]
+        if state.tripped:
+            lines.append("\nUse /circuit reset to manually unblock (use with caution).")
+        return "\n".join(lines)
+
     def _backhist(args: list[str]) -> str:
         """Show history of saved backtest reports.
 
@@ -3179,6 +3217,8 @@ def build_command_handlers(
             "/winloss [SYM] — win/loss count and net P&L by ticker\n"
             "/hold — average holding period per ticker from completed trades\n"
             "/backhist [N] — show history of saved backtest reports\n"
+            "/circuit — show circuit breaker state (auto-blocks on heavy losses)\n"
+            "/circuit reset — manually unblock the circuit breaker\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3288,4 +3328,6 @@ def build_command_handlers(
         "wl": _winloss,
         "hold": _hold,
         "backhist": _backhist,
+        "circuit": _circuit,
+        "cb": _circuit,
     }
