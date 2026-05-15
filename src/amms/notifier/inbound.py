@@ -3105,6 +3105,27 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _strategies(_args: list[str]) -> str:
+        """List all registered trading strategies with their default parameters."""
+        from amms.strategy.base import registered_strategies
+        registry = registered_strategies()
+        if not registry:
+            return "No strategies registered."
+        lines = [f"Registered strategies ({len(registry)}):"]
+        for name in sorted(registry.keys()):
+            cls = registry[name]
+            try:
+                instance = cls()
+                params = {
+                    k: v for k, v in vars(instance).items()
+                    if k != "name" and not k.startswith("_")
+                }
+                param_str = "  ".join(f"{k}={v}" for k, v in params.items())
+            except Exception:
+                param_str = "(custom init)"
+            lines.append(f"  {name:<20}  {param_str or '(no params)'}")
+        return "\n".join(lines)
+
     def _vwap_cmd(args: list[str]) -> str:
         """Show VWAP and price deviation for held positions or a ticker.
 
@@ -3379,6 +3400,7 @@ def build_command_handlers(
             "/momscan [N] — rank watchlist by composite momentum score (top N)\n"
             "/optimize [equal|momentum|inversevol] — recommended portfolio weights\n"
             "/vwap [SYM] — price vs VWAP deviation for positions or ticker\n"
+            "/strategies — list all registered trading strategies\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3496,4 +3518,6 @@ def build_command_handlers(
         "optimize": _optimize,
         "opt": _optimize,
         "vwap": _vwap_cmd,
+        "strategies": _strategies,
+        "strats": _strategies,
     }

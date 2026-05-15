@@ -2567,3 +2567,30 @@ def test_help_includes_vwap() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/vwap" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /strategies tests
+# ---------------------------------------------------------------------------
+
+def test_strategies_shows_all_registered() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["strategies"]([])
+    assert "sma_cross" in out
+    assert "rsi_reversal" in out
+    assert "vwap" in out
+    assert "mean_reversion" in out
+
+
+def test_strategies_shows_count() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["strategies"]([])
+    assert "strategies" in out.lower()
+
+
+def test_help_includes_strategies() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/strategies" in h["help"]([])
