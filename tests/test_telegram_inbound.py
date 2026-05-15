@@ -2916,3 +2916,55 @@ def test_zscore_help_included() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/zscore" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /adx tests
+# ---------------------------------------------------------------------------
+
+class _MedDataClient:
+    """Returns 55 bars using correct Bar constructor for ADX tests."""
+    def get_bars(self, symbol, *, limit=50):
+        from amms.data.bars import Bar
+        bars = []
+        for i in range(55):
+            base = 100.0 + i * 0.8
+            bars.append(Bar(symbol, "1D", f"2026-01-{1 + i % 28:02d}", base, base + 1.5, base - 0.5, base + 0.5, 2_000.0))
+        return bars
+
+
+def test_adx_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["adx"]([])
+
+
+def test_adx_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_MedDataClient())
+    out = h["adx"]([])
+    assert "no open positions" in out
+
+
+def test_adx_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_MedDataClient())
+    out = h["adx"](["AAPL"])
+    assert "AAPL" in out
+    assert "ADX" in out
+
+
+def test_adx_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_MedDataClient())
+    out = h["adx"]([])
+    assert "AAPL" in out
+
+
+def test_adx_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/adx" in h["help"]([])

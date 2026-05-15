@@ -3299,6 +3299,56 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _adx_cmd(args: list[str]) -> str:
+        """Show ADX (Average Directional Index) trend strength for positions or a ticker.
+
+        Usage: /adx [SYM]
+        ADX < 20: choppy/ranging.  ADX 20-40: trending.  ADX > 40: strong trend.
+        +DI > -DI: bullish direction.  -DI > +DI: bearish direction.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /adx AAPL)"
+
+        from amms.features.adx import adx as compute_adx
+
+        lines = ["ADX Trend Strength (14-period):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=50)
+            except Exception:
+                bars = []
+            result = compute_adx(bars, 14)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (not enough history)")
+                continue
+            if result.trend_strength == "none":
+                strength_label = "↔️  ranging"
+            elif result.trend_strength == "emerging":
+                strength_label = "↗️  emerging trend"
+            elif result.trend_strength == "strong":
+                strength_label = "📈 strong trend"
+            elif result.trend_strength == "very_strong":
+                strength_label = "🔥 very strong trend"
+            else:
+                strength_label = "⚡ extreme trend"
+            dir_label = "▲ bull" if result.direction == "bullish" else ("▼ bear" if result.direction == "bearish" else "↔ neutral")
+            lines.append(
+                f"  {sym:<6}  ADX {result.adx:.1f}  +DI {result.plus_di:.1f}  -DI {result.minus_di:.1f}"
+                f"  {strength_label}  {dir_label}"
+            )
+        return "\n".join(lines)
+
     def _rotation(_args: list[str]) -> str:
         """Show sector rotation: which SPDR sector ETFs are outperforming SPY.
 
@@ -3775,6 +3825,7 @@ def build_command_handlers(
             "/volspike [SYM] — volume spike ratio vs 20-day average\n"
             "/divergence [SYM] — RSI/price divergence signal (bullish/bearish/hidden)\n"
             "/zscore [SYM] — Z-score: how far price is from its 20-bar mean\n"
+            "/adx [SYM] — ADX trend strength: ranging vs trending, +DI/-DI direction\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3907,4 +3958,5 @@ def build_command_handlers(
         "div": _divergence,
         "zscore": _zscore_cmd,
         "z": _zscore_cmd,
+        "adx": _adx_cmd,
     }
