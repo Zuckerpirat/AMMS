@@ -5358,6 +5358,81 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _dashboard_cmd(args: list[str]) -> str:
+        """Portfolio dashboard: compact summary of key metrics.
+
+        Usage: /dashboard
+        Combines account equity, position heat, concentration risk,
+        regime, and breakout signals into one overview.
+        """
+        lines = ["══ Portfolio Dashboard ══"]
+
+        # 1. Account summary
+        try:
+            account = broker.get_account()
+            equity = float(account.equity)
+            buying_power = float(account.buying_power)
+            lines.append(f"  Equity:       ${equity:,.0f}")
+            lines.append(f"  Buying power: ${buying_power:,.0f}")
+        except Exception:
+            lines.append("  Account: (unavailable)")
+
+        # 2. Positions summary
+        try:
+            positions = broker.get_positions()
+            n_pos = len(positions)
+            total_mv = sum(float(p.market_value) for p in positions)
+            total_pl = sum(float(p.unrealized_pl) for p in positions)
+            pl_sign = "+" if total_pl >= 0 else ""
+            lines.append(f"  Positions:    {n_pos}  MV ${total_mv:,.0f}  "
+                         f"P&L {pl_sign}${total_pl:,.0f}")
+        except Exception:
+            positions = []
+            lines.append("  Positions: (unavailable)")
+
+        lines.append("")
+
+        # 3. Concentration risk
+        from amms.analysis.concentration_risk import analyze as cr_analyze
+        cr = cr_analyze(broker)
+        if cr:
+            lines.append(f"  Concentration [{cr.grade}]:  HHI {cr.hhi:.3f}"
+                         f"  eff-N {cr.effective_n:.1f}"
+                         f"  top1 {cr.top1_pct:.0f}%%")
+        else:
+            lines.append("  Concentration: n/a")
+
+        # 4. Position heat (avg)
+        if data and positions:
+            from amms.analysis.position_heat import analyze as ph_analyze
+            heat_report = ph_analyze(broker, data)
+            if heat_report:
+                lines.append(
+                    f"  Heat avg:     {heat_report.avg_score:.0f}/100"
+                    f"  hot {heat_report.n_hot}  cold {heat_report.n_cold}"
+                )
+            else:
+                lines.append("  Heat: n/a")
+
+        # 5. Regime for top position
+        if data and positions:
+            from amms.analysis.regime_classifier import classify as rc_classify
+            top_sym = positions[0].symbol
+            try:
+                rbars = data.get_bars(top_sym, limit=30)
+                rr = rc_classify(rbars)
+                if rr:
+                    lines.append(
+                        f"  Regime ({top_sym}): [{rr.regime}]  "
+                        f"conf {rr.confidence:.0f}%%"
+                    )
+            except Exception:
+                pass
+
+        lines.append("")
+        lines.append("  /heat  /concentration  /rsrank  /regime  /breakout")
+        return "\n".join(lines)
+
     def _trendq_cmd(args: list[str]) -> str:
         """Trend quality/consistency score for open positions.
 
@@ -6609,4 +6684,6 @@ def build_command_handlers(
         "tc": _trendq_cmd,
         "breakout": _breakout_cmd,
         "bo": _breakout_cmd,
+        "dashboard": _dashboard_cmd,
+        "dash": _dashboard_cmd,
     }
