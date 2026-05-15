@@ -5494,6 +5494,108 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _kelly_cmd(args: list[str]) -> str:
+        """Kelly Criterion position sizer.
+
+        Usage: /kelly CAPITAL RISK_PCT WIN_RATE AVG_WIN AVG_LOSS [PRICE]
+          CAPITAL   — total portfolio value ($)
+          RISK_PCT  — % of capital you risk per trade (e.g. 2.0)
+          WIN_RATE  — historical win rate as fraction (e.g. 0.55)
+          AVG_WIN   — average winning trade PnL ($)
+          AVG_LOSS  — average losing trade PnL (positive, $)
+          PRICE     — current share price (optional, for share count)
+
+        Example: /kelly 10000 2.0 0.55 300 150 50.00
+        """
+        USAGE = (
+            "Usage: /kelly CAPITAL RISK_PCT WIN_RATE AVG_WIN AVG_LOSS [PRICE]\n"
+            "  Example: /kelly 10000 2.0 0.55 300 150 50.00"
+        )
+
+        if not args or len(args) < 5:
+            # Fallback to DB-based if conn is available and no args given
+            if not args and conn is not None:
+                from amms.analysis.kelly_sizer import compute as kelly_compute
+                try:
+                    account = broker.get_account()
+                    portfolio_value = float(account.portfolio_value)
+                except Exception:
+                    portfolio_value = None
+                result = kelly_compute(conn, portfolio_value=portfolio_value)
+                if result is not None:
+                    grade_icon = {"A": "🟢", "B": "🟡", "C": "🟠", "D": "🔴", "F": "⛔"}.get(result.grade, "")
+                    lines = [
+                        f"── Kelly Criterion Sizer ({result.n_trades} trades) ──",
+                        f"  Win rate:      {result.win_rate:.1f}%%  ({result.n_wins}W / {result.n_losses}L)",
+                        f"  Avg win:       ${result.avg_win:.2f}",
+                        f"  Avg loss:      ${result.avg_loss:.2f}",
+                        f"  Payoff ratio:  {result.payoff_ratio:.2f}×",
+                        f"  Edge grade:    {grade_icon} {result.grade}",
+                        "",
+                        f"  Full Kelly:    {result.kelly_pct:.1f}%%",
+                        f"  Half Kelly:    {result.half_kelly_pct:.1f}%%  ← recommended",
+                        f"  Qtr Kelly:     {result.quarter_kelly_pct:.1f}%%",
+                    ]
+                    if result.suggested_value is not None:
+                        lines.append(f"  Suggested:     ${result.suggested_value:,.0f}")
+                    lines.append(f"  {result.note}")
+                    return "\n".join(lines)
+            return USAGE
+
+        try:
+            capital = float(args[0])
+            risk_pct = float(args[1])
+            win_rate = float(args[2])
+            avg_win = float(args[3])
+            avg_loss = float(args[4])
+        except (ValueError, IndexError):
+            return "Invalid input — " + USAGE
+
+        price = None
+        if len(args) >= 6:
+            try:
+                price = float(args[5])
+            except ValueError:
+                pass
+
+        if not (0 < win_rate < 1):
+            return "WIN_RATE must be between 0 and 1 (e.g. 0.55 for 55%)."
+        if avg_loss <= 0 or avg_win <= 0:
+            return "AVG_WIN and AVG_LOSS must be positive values."
+
+        payoff_ratio = avg_win / avg_loss
+        kelly_raw = (win_rate * payoff_ratio - (1 - win_rate)) / payoff_ratio
+        kelly_raw = max(0.0, kelly_raw)
+        kelly_pct = min(kelly_raw * 100, 25.0)
+        half_kelly_pct = kelly_pct * 0.5
+        quarter_kelly_pct = kelly_pct * 0.25
+
+        risk_amount = capital * risk_pct / 100
+
+        half_kelly_alloc = capital * half_kelly_pct / 100
+        shares = int(half_kelly_alloc / price) if price and price > 0 else None
+
+        edge = win_rate * avg_win - (1 - win_rate) * avg_loss
+
+        lines = [
+            f"── Kelly Criterion ──",
+            f"  Capital:       ${capital:,.2f}",
+            f"  Win rate:      {win_rate*100:.1f}%%",
+            f"  Avg win/loss:  ${avg_win:.2f} / ${avg_loss:.2f}",
+            f"  Payoff ratio:  {payoff_ratio:.2f}×",
+            f"  Edge:          ${edge:+.2f} per trade",
+            "",
+            f"  Full Kelly:    {kelly_pct:.1f}%%  = ${capital*kelly_pct/100:,.2f}",
+            f"  Half Kelly:    {half_kelly_pct:.1f}%%  = ${half_kelly_alloc:,.2f}  ← recommended",
+            f"  Qtr Kelly:     {quarter_kelly_pct:.1f}%%  = ${capital*quarter_kelly_pct/100:,.2f}",
+        ]
+        if shares is not None:
+            lines.append(f"  Shares (half-K, @${price:.2f}): {shares}")
+        if kelly_pct == 0:
+            lines.append("")
+            lines.append("  No edge — skip this trade setup.")
+        return "\n".join(lines)
+
     def _watch_cmd(args: list[str]) -> str:
         """Watchlist manager: add, remove, list, scan symbols.
 
@@ -6830,4 +6932,6 @@ def build_command_handlers(
         "wl": _watch_cmd,
         "atrtargets": _targets_cmd,
         "atrt": _targets_cmd,
+        "kelly": _kelly_cmd,
+        "ks": _kelly_cmd,
     }
