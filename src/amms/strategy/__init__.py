@@ -10,12 +10,14 @@ from amms.strategy.composite import CompositeStrategy
 from amms.strategy.mean_reversion import MeanReversion
 from amms.strategy.rsi_reversal import RsiReversal
 from amms.strategy.sma_cross import SmaCross
+from amms.strategy.vwap_strategy import VwapStrategy
 
 register_strategy("sma_cross", SmaCross)
 register_strategy("composite", CompositeStrategy)
 register_strategy("mean_reversion", MeanReversion)
 register_strategy("breakout", Breakout)
 register_strategy("rsi_reversal", RsiReversal)
+register_strategy("vwap", VwapStrategy)
 
 __all__ = [
     "Breakout",
@@ -26,6 +28,7 @@ __all__ = [
     "SignalKind",
     "SmaCross",
     "Strategy",
+    "VwapStrategy",
     "build_strategy",
     "register_strategy",
 ]

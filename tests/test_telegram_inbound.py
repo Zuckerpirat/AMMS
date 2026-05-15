@@ -2536,3 +2536,34 @@ def test_help_includes_optimize() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/optimize" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /vwap tests
+# ---------------------------------------------------------------------------
+
+def test_vwap_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["vwap"]([])
+
+
+def test_vwap_shows_for_position() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["vwap"]([])
+    assert "AAPL" in out
+    assert "VWAP" in out
+
+
+def test_vwap_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["vwap"](["NVDA"])
+    assert "NVDA" in out
+
+
+def test_help_includes_vwap() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/vwap" in h["help"]([])

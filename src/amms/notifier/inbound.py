@@ -3105,6 +3105,48 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _vwap_cmd(args: list[str]) -> str:
+        """Show VWAP and price deviation for held positions or a ticker.
+
+        Usage: /vwap [SYM]
+        Negative deviation = price below VWAP (potential buy zone).
+        Positive deviation = price above VWAP (extended / sell zone).
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /vwap AAPL)"
+
+        from amms.features.vwap import vwap as compute_vwap, vwap_deviation_pct
+
+        lines = ["VWAP deviation (20-bar rolling):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=25)
+            except Exception:
+                bars = []
+            v = compute_vwap(bars, 20) if len(bars) >= 20 else None
+            if v is None:
+                lines.append(f"  {sym:<6}  n/a")
+                continue
+            price = bars[-1].close if bars else 0.0
+            dev = vwap_deviation_pct(price, bars, 20)
+            if dev is None:
+                lines.append(f"  {sym:<6}  VWAP ${v:.2f}  n/a deviation")
+                continue
+            zone = "🟢 below VWAP" if dev < -1.5 else ("🔴 above VWAP" if dev > 1.5 else "⚪ near VWAP")
+            lines.append(f"  {sym:<6}  ${price:.2f}  VWAP ${v:.2f}  dev {dev:+.1f}%  {zone}")
+        return "\n".join(lines)
+
     def _optimize(args: list[str]) -> str:
         """Show recommended portfolio allocation weights.
 
@@ -3336,6 +3378,7 @@ def build_command_handlers(
             "/regime — detect current market regime (bull/neutral/bear) from SPY + VIXY\n"
             "/momscan [N] — rank watchlist by composite momentum score (top N)\n"
             "/optimize [equal|momentum|inversevol] — recommended portfolio weights\n"
+            "/vwap [SYM] — price vs VWAP deviation for positions or ticker\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3452,4 +3495,5 @@ def build_command_handlers(
         "ms": _momscan,
         "optimize": _optimize,
         "opt": _optimize,
+        "vwap": _vwap_cmd,
     }
