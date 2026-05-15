@@ -5433,6 +5433,85 @@ def build_command_handlers(
         lines.append("  /heat  /concentration  /rsrank  /regime  /breakout")
         return "\n".join(lines)
 
+    def _watch_cmd(args: list[str]) -> str:
+        """Watchlist manager: add, remove, list, scan symbols.
+
+        Usage:
+          /watch add AAPL [note]  — add symbol
+          /watch remove AAPL     — remove symbol
+          /watch list            — show all symbols
+          /watch scan            — price scan of watchlist (requires data)
+        """
+        if conn is None:
+            return "DB not wired."
+
+        from amms.data.watchlist import add as wl_add, remove as wl_remove
+        from amms.data.watchlist import list_all, contains
+
+        if not args:
+            entries = list_all(conn)
+            if not entries:
+                return "Watchlist is empty. Use /watch add AAPL"
+            lines = [f"── Watchlist ({len(entries)} symbols) ──"]
+            for e in entries:
+                note_str = f"  — {e.note}" if e.note else ""
+                lines.append(f"  {e.symbol:<8} added {e.added_ts[:10]}{note_str}")
+            return "\n".join(lines)
+
+        sub = args[0].lower()
+
+        if sub == "add":
+            if len(args) < 2:
+                return "usage: /watch add SYMBOL [note]"
+            sym = args[1].upper()
+            note = " ".join(args[2:]) if len(args) > 2 else ""
+            if wl_add(conn, sym, note=note):
+                return f"{sym} added to watchlist."
+            return f"{sym} is already on the watchlist."
+
+        elif sub in ("remove", "rm", "del"):
+            if len(args) < 2:
+                return "usage: /watch remove SYMBOL"
+            sym = args[1].upper()
+            if wl_remove(conn, sym):
+                return f"{sym} removed from watchlist."
+            return f"{sym} was not on the watchlist."
+
+        elif sub == "list":
+            entries = list_all(conn)
+            if not entries:
+                return "Watchlist is empty."
+            return "\n".join(f"  {e.symbol}" for e in entries)
+
+        elif sub == "scan":
+            if data is None:
+                return "Data client not wired."
+            entries = list_all(conn)
+            if not entries:
+                return "Watchlist is empty."
+            lines = [f"── Watchlist Scan ({len(entries)} symbols) ──"]
+            for e in entries:
+                try:
+                    bars = data.get_bars(e.symbol, limit=3)
+                    if bars and len(bars) >= 2:
+                        curr = bars[-1].close
+                        prev = bars[-2].close
+                        chg = (curr - prev) / prev * 100 if prev > 0 else 0.0
+                        lines.append(
+                            f"  {e.symbol:<8} ${curr:.2f}  {chg:+.2f}%%"
+                        )
+                    else:
+                        lines.append(f"  {e.symbol:<8} (no data)")
+                except Exception as ex:
+                    lines.append(f"  {e.symbol:<8} error: {ex!r}")
+            return "\n".join(lines)
+
+        else:
+            return (
+                "Unknown subcommand. Use: add | remove | list | scan\n"
+                "Example: /watch add AAPL"
+            )
+
     def _trendq_cmd(args: list[str]) -> str:
         """Trend quality/consistency score for open positions.
 
@@ -6686,4 +6765,6 @@ def build_command_handlers(
         "bo": _breakout_cmd,
         "dashboard": _dashboard_cmd,
         "dash": _dashboard_cmd,
+        "watch": _watch_cmd,
+        "wl": _watch_cmd,
     }
