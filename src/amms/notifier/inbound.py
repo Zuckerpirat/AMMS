@@ -4703,6 +4703,62 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _forecast_cmd(args: list[str]) -> str:
+        """Statistical price forecast with confidence intervals.
+
+        Usage: /forecast [SYM] [DAYS]
+        Uses historical volatility to project 68%% and 95%% price ranges.
+        Default: 10 trading days. NOT a prediction — statistical baseline only.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        sym = None
+        days = 10
+        if args:
+            for arg in args:
+                if arg.isdigit():
+                    days = int(arg)
+                else:
+                    sym = arg.upper()
+
+        if sym is None:
+            try:
+                positions = broker.get_positions()
+                if positions:
+                    sym = positions[0].symbol
+            except Exception:
+                pass
+
+        if sym is None:
+            return "usage: /forecast [SYM] [DAYS]  (e.g. /forecast AAPL 10)"
+
+        days = max(1, min(days, 90))
+        try:
+            bars = data.get_bars(sym, limit=40)
+        except Exception as e:
+            return f"data error for {sym}: {e!r}"
+
+        from amms.analysis.price_forecast import forecast as pf_forecast
+
+        result = pf_forecast(bars, horizon_days=days)
+        if result is None:
+            return f"Insufficient data for {sym} (need 31+ bars)."
+
+        change_pct = (result.expected - result.current_price) / result.current_price * 100
+
+        lines = [
+            f"── Price Forecast: {sym}  ({days}d horizon) ──",
+            f"  Current:    ${result.current_price:.2f}",
+            f"  Expected:   ${result.expected:.2f}  ({change_pct:+.1f}%%)",
+            f"  68%% CI:    ${result.p68_low:.2f} – ${result.p68_high:.2f}",
+            f"  95%% CI:    ${result.p95_low:.2f} – ${result.p95_high:.2f}",
+            f"  Daily vol:  {result.daily_vol_pct:.2f}%%  "
+            f"(ann {result.annualized_vol_pct:.1f}%%)",
+            f"  ⚠️  Statistical baseline only — not a price prediction.",
+        ]
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -5439,6 +5495,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/forecast [SYM] [DAYS] — statistical price forecast with 68%%/95%% CI bands\n"
             "/swings [SYM] — swing high/low pivots: trend, stop suggestion, breakout flag\n"
             "/aging — position aging: hold time, style, P&L, overstay flags\n"
             "/corrmatrix — portfolio correlation matrix + diversification score\n"
@@ -5617,6 +5674,8 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "forecast": _forecast_cmd,
+        "fc": _forecast_cmd,
         "swings": _swings_cmd,
         "swing": _swings_cmd,
         "aging": _aging_cmd,

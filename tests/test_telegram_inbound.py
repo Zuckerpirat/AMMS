@@ -3904,3 +3904,39 @@ def test_swings_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/swings" in h["help"]([])
+
+
+# ── /forecast tests ───────────────────────────────────────────────────────────
+
+def test_forecast_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["forecast"]([]).lower()
+
+
+def test_forecast_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
+    out = h["forecast"](["AAPL"])
+    assert "AAPL" in out
+    assert "Forecast" in out or "CI" in out or "Expected" in out
+
+
+def test_forecast_accepts_days_arg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
+    out = h["forecast"](["AAPL", "20"])
+    # Should mention 20d horizon
+    assert "20" in out or "Forecast" in out
+
+
+def test_forecast_alias_fc() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["fc"] is h["forecast"]
+
+
+def test_forecast_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/forecast" in h["help"]([])
