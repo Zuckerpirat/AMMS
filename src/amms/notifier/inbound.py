@@ -3105,6 +3105,28 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _backhist(args: list[str]) -> str:
+        """Show history of saved backtest reports.
+
+        Usage: /backhist [N]  — show last N reports (default 5)
+        Reports are saved by /backtest when a report_dir is configured.
+        """
+        limit = 5
+        if args:
+            try:
+                limit = max(1, min(int(args[0]), 20))
+            except ValueError:
+                return "usage: /backhist [N]  (e.g. /backhist 10)"
+
+        from amms.backtest.report import format_report_summary, load_report_history
+        reports = load_report_history(limit=limit)
+        if not reports:
+            return "No backtest reports saved yet. Run /backtest to generate one."
+        lines = [f"Last {len(reports)} backtest report(s):"]
+        for r in reports:
+            lines.append(f"  {format_report_summary(r)}")
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -3156,6 +3178,7 @@ def build_command_handlers(
             "/sizing SYM [price] — recommended share quantity given equity + risk\n"
             "/winloss [SYM] — win/loss count and net P&L by ticker\n"
             "/hold — average holding period per ticker from completed trades\n"
+            "/backhist [N] — show history of saved backtest reports\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3264,4 +3287,5 @@ def build_command_handlers(
         "winloss": _winloss,
         "wl": _winloss,
         "hold": _hold,
+        "backhist": _backhist,
     }

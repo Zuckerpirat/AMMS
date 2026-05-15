@@ -2324,3 +2324,27 @@ def test_help_includes_winloss_and_hold() -> None:
     help_text = h["help"]([])
     assert "/winloss" in help_text
     assert "/hold" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /backhist tests
+# ---------------------------------------------------------------------------
+
+def test_backhist_empty(tmp_path) -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["backhist"]([])
+    assert "No backtest reports" in out
+
+
+def test_backhist_invalid_arg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["backhist"](["abc"])
+    assert "usage" in out.lower()
+
+
+def test_help_includes_backhist() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/backhist" in h["help"]([])
