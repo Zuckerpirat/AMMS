@@ -5269,6 +5269,43 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _concentration_cmd(args: list[str]) -> str:
+        """Portfolio concentration risk via Herfindahl-Hirschman Index.
+
+        Usage: /concentration
+        Shows HHI, effective N, top-position weights, grade, and risk flags.
+        """
+        from amms.analysis.concentration_risk import analyze as cr_analyze
+
+        report = cr_analyze(broker)
+        if report is None:
+            return "No open positions."
+
+        lines = [
+            f"── Concentration Risk ──",
+            f"  Grade:       {report.grade}  — {report.verdict}",
+            f"  HHI:         {report.hhi:.4f}  "
+            f"(effective N: {report.effective_n:.1f})",
+            f"  Positions:   {report.n_positions}",
+            f"  Top 1:       {report.top1_pct:.1f}%%  "
+            f"Top 3: {report.top3_pct:.1f}%%  "
+            f"Top 5: {report.top5_pct:.1f}%%",
+            "",
+        ]
+
+        lines.append("  Holdings by weight:")
+        for pw in report.positions:
+            bar = "█" * int(pw.weight_pct / 5)
+            lines.append(f"  {pw.symbol:<6}  {pw.weight_pct:>5.1f}%%  {bar}")
+
+        if report.risk_flags:
+            lines.append("")
+            lines.append("  ⚠️  Risk flags:")
+            for flag in report.risk_flags:
+                lines.append(f"    • {flag}")
+
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -6236,4 +6273,6 @@ def build_command_handlers(
         "mregime": _regime_cmd,
         "heat": _heat_cmd,
         "pheat": _heat_cmd,
+        "concentration": _concentration_cmd,
+        "conc": _concentration_cmd,
     }
