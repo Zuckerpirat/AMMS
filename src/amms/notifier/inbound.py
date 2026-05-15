@@ -5306,6 +5306,45 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _holdtime_cmd(args: list[str]) -> str:
+        """Win rate and P&L by holding period.
+
+        Usage: /holdtime [N]
+        Groups closed trades into day/swing/medium/long buckets and
+        shows win rate, avg P&L, and profit factor per bucket.
+        Requires a connected DB with trade_pairs table.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 200
+        if args and args[0].isdigit():
+            limit = max(10, min(int(args[0]), 500))
+
+        from amms.analysis.hold_time_analysis import compute as ht_compute
+
+        report = ht_compute(conn, limit=limit)
+        if report is None:
+            return "No completed trades with timestamps found."
+
+        lines = [
+            f"── Hold Time Analysis ({report.total_trades} trades) ──",
+            f"  Overall win rate: {report.overall_win_rate:.1f}%%",
+            f"  Best bucket:      {report.best_bucket or 'n/a'}",
+            "",
+            f"  {'Bucket':<8}  {'N':>4}  {'WR%%':>6}  {'Avg PnL':>9}  "
+            f"{'Avg %%':>7}  {'PF':>5}",
+        ]
+        for b in report.buckets:
+            pf_str = f"{b.profit_factor:.2f}" if b.profit_factor is not None else "∞"
+            star = " *" if b.bucket == report.best_bucket else ""
+            lines.append(
+                f"  {b.label:<8}  {b.n_trades:>4}  {b.win_rate:>5.1f}%%"
+                f"  ${b.avg_pnl:>8.2f}  {b.avg_pnl_pct:>6.1f}%%  {pf_str:>5}{star}"
+            )
+
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -6275,4 +6314,6 @@ def build_command_handlers(
         "pheat": _heat_cmd,
         "concentration": _concentration_cmd,
         "conc": _concentration_cmd,
+        "holdtime": _holdtime_cmd,
+        "ht": _holdtime_cmd,
     }
