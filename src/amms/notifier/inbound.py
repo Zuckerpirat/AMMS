@@ -4703,6 +4703,50 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _gaps_cmd(args: list[str]) -> str:
+        """Gap analysis: recent price gaps, fill status, and gap S/R levels.
+
+        Usage: /gaps [SYM]
+        Shows significant opening gaps, whether they were filled, and gap zones.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /gaps AAPL)"
+
+        from amms.features.gap import analyze_gaps
+
+        lines = ["Gap Analysis (significant opening gaps):"]
+        for sym in symbols[:6]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            result = analyze_gaps(bars, min_gap_pct=0.3)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 3+ bars)")
+                continue
+            lines.append(f"  {sym:<6}  ${result.current_price:.2f}  "
+                         f"{len(result.gaps)} gaps  {len(result.unfilled_gaps)} unfilled")
+            if result.nearest_gap_support is not None:
+                lines.append(f"    Gap support:    ${result.nearest_gap_support:.2f}")
+            if result.nearest_gap_resistance is not None:
+                lines.append(f"    Gap resistance: ${result.nearest_gap_resistance:.2f}")
+            if result.last_gap:
+                g = result.last_gap
+                fill_str = "✓ filled" if g.filled else "○ open"
+                lines.append(
+                    f"    Last gap: {g.direction} {g.gap_pct:.1f}%%  "
+                    f"(prev close ${g.prev_close:.2f} → open ${g.open_price:.2f})  {fill_str}"
+                )
+        return "\n".join(lines)
+
     def _sectorheat_cmd(args: list[str]) -> str:
         """Sector momentum heatmap: 5d/20d/60d returns for all 11 sectors.
 
@@ -5273,6 +5317,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/gaps [SYM] — gap analysis: recent price gaps, fill status, gap S/R levels\n"
             "/sectorheat — sector momentum heatmap: 5d/20d/60d ranked by composite score\n"
             "/btstats [DAYS] — extended backtest stats: Calmar, Sortino, recovery, streaks\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
@@ -5447,6 +5492,7 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "gaps": _gaps_cmd,
         "sectorheat": _sectorheat_cmd,
         "sh": _sectorheat_cmd,
         "btstats": _btstats_cmd,

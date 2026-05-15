@@ -3787,3 +3787,34 @@ def test_sectorheat_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/sectorheat" in h["help"]([])
+
+
+# ── /gaps tests ────────────────────────────────────────────────────────────────
+
+def test_gaps_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["gaps"]([]).lower()
+
+
+def test_gaps_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_TrendDataClient())
+    assert "no open positions" in h["gaps"]([])
+
+
+def test_gaps_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
+    out = h["gaps"](["AAPL"])
+    assert "AAPL" in out
+    assert "gap" in out.lower() or "Gap" in out
+
+
+def test_gaps_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/gaps" in h["help"]([])
