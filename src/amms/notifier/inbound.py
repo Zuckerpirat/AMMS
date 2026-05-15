@@ -3105,6 +3105,47 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _momscan(args: list[str]) -> str:
+        """Rank the active watchlist by composite momentum score.
+
+        Usage: /momscan [N]  — show top N (default 10)
+        Score: 0..100 (RSI reversal + EMA trend + 20d momentum + vol adjustment)
+        """
+        if data is None:
+            return "Data client not wired."
+
+        # Build symbol list from all watchlist sources
+        symbols: list[str] = list(static_watchlist)
+        if get_wsb_extras is not None:
+            symbols += list(get_wsb_extras())
+        if db_path is not None:
+            from amms.data.dynamic_watchlist import load as load_dyn
+            symbols += list(load_dyn(db_path))
+        symbols = list(dict.fromkeys(s.upper() for s in symbols))
+
+        if not symbols:
+            return "Watchlist is empty. Add tickers with /add SYM."
+
+        top_n = 10
+        if args:
+            try:
+                top_n = max(1, min(int(args[0]), 20))
+            except ValueError:
+                return "usage: /momscan [N]  (number of top results)"
+
+        from amms.analysis.momentum_scan import scan
+        results = scan(symbols, data, top_n=top_n)
+        if not results:
+            return "No data available for momentum scan."
+
+        lines = [f"Momentum scan — top {len(results)} of {len(symbols)} tickers:"]
+        for i, r in enumerate(results, 1):
+            trend_sym = {"strong_bull": "📈", "weak_bull": "↗️", "bear": "📉"}.get(r.ema_trend, "↔️")
+            lines.append(
+                f"  #{i:<2} {r.symbol:<6}  score {r.score:.0f}/100  {trend_sym}  {r.reason}"
+            )
+        return "\n".join(lines)
+
     def _regime(_args: list[str]) -> str:
         """Show the current market regime (bull/neutral/bear) from SPY + VIXY analysis."""
         if data is None:
@@ -3244,6 +3285,7 @@ def build_command_handlers(
             "/circuit — show circuit breaker state (auto-blocks on heavy losses)\n"
             "/circuit reset — manually unblock the circuit breaker\n"
             "/regime — detect current market regime (bull/neutral/bear) from SPY + VIXY\n"
+            "/momscan [N] — rank watchlist by composite momentum score (top N)\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3356,4 +3398,6 @@ def build_command_handlers(
         "circuit": _circuit,
         "cb": _circuit,
         "regime": _regime,
+        "momscan": _momscan,
+        "ms": _momscan,
     }

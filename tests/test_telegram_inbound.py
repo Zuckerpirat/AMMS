@@ -2424,3 +2424,59 @@ def test_help_includes_regime() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/regime" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /momscan tests
+# ---------------------------------------------------------------------------
+
+def test_momscan_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, static_watchlist=("AAPL",))
+    assert "not wired" in h["momscan"]([])
+
+
+def test_momscan_empty_watchlist() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["momscan"]([])
+    assert "empty" in out.lower() or "Momentum scan" in out or "No data" in out
+
+
+def test_momscan_with_watchlist() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(), pause=p,
+        data=_FakeDataClient(),
+        static_watchlist=("AAPL", "MSFT"),
+    )
+    out = h["momscan"]([])
+    assert "Momentum scan" in out or "No data" in out
+
+
+def test_momscan_custom_n() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(), pause=p,
+        data=_FakeDataClient(),
+        static_watchlist=("AAPL",),
+    )
+    out = h["momscan"](["5"])
+    assert "scan" in out.lower() or "No data" in out
+
+
+def test_momscan_invalid_n() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(), pause=p,
+        data=_FakeDataClient(),
+        static_watchlist=("AAPL",),
+    )
+    out = h["momscan"](["abc"])
+    assert "usage" in out.lower()
+
+
+def test_help_includes_momscan() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/momscan" in h["help"]([])
