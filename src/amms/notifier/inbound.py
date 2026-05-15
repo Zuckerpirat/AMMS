@@ -3299,6 +3299,88 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _ichimoku_cmd(args: list[str]) -> str:
+        """Show Ichimoku Cloud for open positions or a ticker.
+
+        Usage: /ichimoku [SYM]
+        Shows Tenkan/Kijun lines, cloud position, and momentum signal.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /ichimoku AAPL)"
+
+        from amms.features.ichimoku import ichimoku
+
+        lines = ["Ichimoku Cloud (9/26/52):"]
+        for sym in symbols[:6]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            result = ichimoku(bars)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 52+ bars)")
+                continue
+            if result.position == "above_cloud":
+                pos_label = "🟢 above cloud"
+            elif result.position == "below_cloud":
+                pos_label = "🔴 below cloud"
+            else:
+                pos_label = "🟡 in cloud"
+            cloud_label = "☁️ green" if result.cloud_color == "green" else ("☁️ red" if result.cloud_color == "red" else "☁️ flat")
+            mom_label = "▲ T>K" if result.momentum == "bullish" else ("▼ T<K" if result.momentum == "bearish" else "↔ T=K")
+            lines.append(
+                f"  {sym:<6}  ${result.price:.2f}  T {result.tenkan:.2f}  K {result.kijun:.2f}  "
+                f"SpA {result.span_a:.2f}  SpB {result.span_b:.2f}  "
+                f"{pos_label}  {cloud_label}  {mom_label}"
+            )
+        return "\n".join(lines)
+
+    def _watchdog_cmd(_args: list[str]) -> str:
+        """Run the daily risk watchdog report.
+
+        Checks: circuit breaker, regime, open P&L, Bollinger/RSI extremes,
+        ADX strong trends, sector rotation.
+        """
+        from amms.analysis.watchdog import generate
+
+        try:
+            report = generate(broker, conn=conn, data=data)
+        except Exception as e:
+            return f"watchdog error: {e!r}"
+
+        lines = [f"🐕 Watchdog Report — {report.summary}", ""]
+
+        if report.circuit_open:
+            lines.append(f"🚨 Circuit Breaker: OPEN ({report.circuit_reason})")
+
+        lines.append(f"📊 Regime: {report.regime}  (risk ×{report.regime_risk_multiplier:.2f})")
+        lines.append(f"💼 Positions: {report.position_count}  Open P&L: {report.total_open_pnl:+.2f} ({report.total_open_pnl_pct:+.1f}%)")
+
+        if report.top_rotating_in:
+            lines.append(f"🔄 Rotating in: {', '.join(report.top_rotating_in)}")
+
+        if report.warnings:
+            lines.append("")
+            lines.append("⚠️  Warnings:")
+            for w in report.warnings[:10]:
+                icon = "🚨" if w.level == "critical" else ("⚠️ " if w.level == "warning" else "ℹ️ ")
+                lines.append(f"  {icon} [{w.symbol}] {w.message}")
+        else:
+            lines.append("✅ No warnings.")
+
+        return "\n".join(lines)
+
     def _stoch_cmd(args: list[str]) -> str:
         """Show Stochastic %K/%D for open positions or a ticker.
 
@@ -3931,6 +4013,8 @@ def build_command_handlers(
             "/adx [SYM] — ADX trend strength: ranging vs trending, +DI/-DI direction\n"
             "/stoch [SYM] — Stochastic %%K/%%D: oversold/overbought + crossover signals\n"
             "/confluence [SYM] — multi-indicator confluence score (RSI+MACD+BB+ADX+Stoch)\n"
+            "/ichimoku [SYM] — Ichimoku Cloud: cloud position + Tenkan/Kijun momentum\n"
+            "/watchdog — daily risk watchdog: circuit, regime, P&L, technical warnings\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -4068,4 +4152,8 @@ def build_command_handlers(
         "stochastic": _stoch_cmd,
         "confluence": _confluence_cmd,
         "cf": _confluence_cmd,
+        "ichimoku": _ichimoku_cmd,
+        "ichi": _ichimoku_cmd,
+        "watchdog": _watchdog_cmd,
+        "wd": _watchdog_cmd,
     }

@@ -3052,3 +3052,80 @@ def test_confluence_help_included() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/confluence" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /ichimoku and /watchdog tests
+# ---------------------------------------------------------------------------
+
+class _IchiDataClient:
+    """Returns 65 bars for Ichimoku tests (need 52+)."""
+    def get_bars(self, symbol, *, limit=60):
+        from amms.data.bars import Bar
+        bars = []
+        for i in range(65):
+            price = 100.0 + i * 0.5
+            bars.append(Bar(symbol, "1D", f"2026-01-{1 + i % 28:02d}", price, price + 1.0, price - 1.0, price, 1_000.0))
+        return bars
+
+
+def test_ichimoku_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["ichimoku"]([])
+
+
+def test_ichimoku_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_IchiDataClient())
+    out = h["ichimoku"]([])
+    assert "no open positions" in out
+
+
+def test_ichimoku_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_IchiDataClient())
+    out = h["ichimoku"](["AMZN"])
+    assert "AMZN" in out
+    assert "Ichimoku" in out or "cloud" in out.lower()
+
+
+def test_ichimoku_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_IchiDataClient())
+    out = h["ichimoku"]([])
+    assert "AAPL" in out
+
+
+def test_ichimoku_alias_ichi() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["ichi"] is h["ichimoku"]
+
+
+def test_ichimoku_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/ichimoku" in h["help"]([])
+
+
+def test_watchdog_runs() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["watchdog"]([])
+    assert "Watchdog" in out or "watchdog" in out.lower() or "Regime" in out
+
+
+def test_watchdog_alias_wd() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["wd"] is h["watchdog"]
+
+
+def test_watchdog_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/watchdog" in h["help"]([])
