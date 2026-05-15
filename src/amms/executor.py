@@ -16,6 +16,7 @@ from amms.db import (
     upsert_order,
 )
 from amms.features import standard_features
+from amms.features.volatility import atr as compute_atr
 from amms.metrics import metrics
 from amms.risk import STOP_LOSS_REASON_PREFIX, check_buy, check_sector_cap, check_stop_losses
 from amms.strategy import Signal, Strategy
@@ -161,6 +162,8 @@ def run_tick(
         if sector_block is not None:
             result.blocked.append((signal.symbol, sector_block.reason))
             continue
+        symbol_bars = bars_by_symbol.get(signal.symbol, [])
+        symbol_atr = compute_atr(symbol_bars, 14) if symbol_bars else None
         decision = check_buy(
             equity=account.equity,
             price=signal.price,
@@ -169,6 +172,7 @@ def run_tick(
             daily_pnl_pct=0.0,
             already_holds=signal.symbol in positions,
             config=config.risk,
+            atr=symbol_atr,
         )
         if not decision.allowed:
             result.blocked.append((signal.symbol, decision.reason))

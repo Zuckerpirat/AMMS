@@ -1107,6 +1107,78 @@ def build_command_handlers(
             return f"Error: {e}"
         return f"Alert set: #{alert.id} — notify when {sym} goes {direction} ${price:.2f}"
 
+    def _journal(args: list[str]) -> str:
+        """Show completed trades (BUY + SELL pairs) with realized P&L.
+
+        Usage: /journal [SYM]
+        """
+        if conn is None:
+            return "DB not wired."
+
+        sym_filter = args[0].upper() if args else None
+        query = (
+            "SELECT symbol, side, qty, filled_avg_price, submitted_at "
+            "FROM orders WHERE status = 'filled' "
+            + ("AND symbol = ? " if sym_filter else "")
+            + "ORDER BY symbol, submitted_at"
+        )
+        params = (sym_filter,) if sym_filter else ()
+        rows = conn.execute(query, params).fetchall()
+
+        # Pair BUY/SELL by symbol using a FIFO queue.
+        from collections import deque
+
+        buys: dict[str, deque] = {}
+        pairs: list[dict] = []
+        for r in rows:
+            sym = r["symbol"] if hasattr(r, "__getitem__") else r[0]
+            side = r["side"] if hasattr(r, "__getitem__") else r[1]
+            qty = float(r["qty"] if hasattr(r, "__getitem__") else r[2])
+            price = r["filled_avg_price"] if hasattr(r, "__getitem__") else r[3]
+            ts = r["submitted_at"] if hasattr(r, "__getitem__") else r[4]
+            if price is None:
+                continue
+            price = float(price)
+
+            if side == "buy":
+                if sym not in buys:
+                    buys[sym] = deque()
+                buys[sym].append({"qty": qty, "price": price, "ts": ts})
+            elif side == "sell" and sym in buys and buys[sym]:
+                buy = buys[sym].popleft()
+                realized = (price - buy["price"]) * min(qty, buy["qty"])
+                pairs.append({
+                    "symbol": sym,
+                    "entry_price": buy["price"],
+                    "exit_price": price,
+                    "qty": min(qty, buy["qty"]),
+                    "realized": realized,
+                    "entry_ts": buy["ts"][:10],
+                    "exit_ts": ts[:10],
+                })
+
+        if not pairs:
+            msg = "No completed round-trips"
+            if sym_filter:
+                msg += f" for {sym_filter}"
+            return msg + "."
+
+        lines = [f"Trade journal ({len(pairs)} completed trades):"]
+        total_realized = 0.0
+        for p in pairs[-10:]:  # show last 10
+            arrow = "▲" if p["realized"] >= 0 else "▼"
+            pct = (p["exit_price"] - p["entry_price"]) / p["entry_price"] * 100
+            lines.append(
+                f"  {p['symbol']}: BUY ${p['entry_price']:.2f} → "
+                f"SELL ${p['exit_price']:.2f} ({pct:+.2f}%) "
+                f"{arrow} ${p['realized']:+.2f}  [{p['entry_ts']} → {p['exit_ts']}]"
+            )
+            total_realized += p["realized"]
+        if len(pairs) > 10:
+            lines.append(f"  (showing last 10 of {len(pairs)})")
+        lines.append(f"Total realized P&L: ${total_realized:+.2f}")
+        return "\n".join(lines)
+
     def _top(_args: list[str]) -> str:
         """Show best and worst performing open positions by unrealized P&L %."""
         try:
@@ -1276,6 +1348,7 @@ def build_command_handlers(
             "/scan — run WSB Auto-Discovery now\n"
             "/isin SYM — look up the ISIN for a ticker (debug)\n"
             "/buylist — preview what the bot would buy/sell right now\n"
+            "/journal [SYM] — completed trade pairs (BUY→SELL) with realized P&L\n"
             "/top — best and worst open positions by unrealized P&L %%\n"
             "/news [SYM] — recent news headlines for a ticker (or open positions)\n"
             "/summary — AI-generated narrative of the current portfolio state\n"
@@ -1322,4 +1395,5 @@ def build_command_handlers(
         "summary": _summary,
         "top": _top,
         "news": _news,
+        "journal": _journal,
     }

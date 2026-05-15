@@ -74,11 +74,27 @@ class RiskDecision:
     reason: str
 
 
-def position_size(equity: float, price: float, max_position_pct: float) -> int:
-    """Whole shares for a position not exceeding ``max_position_pct`` of equity."""
+def position_size(
+    equity: float,
+    price: float,
+    max_position_pct: float,
+    *,
+    atr: float | None = None,
+    target_risk_pct: float = 0.01,
+) -> int:
+    """Whole shares, at most ``max_position_pct`` of equity.
+
+    When ``atr`` is supplied (from the last 14-bar ATR of the instrument) the
+    allocation is also capped by a volatility budget: the position is sized so
+    that one ATR of adverse move equals ``target_risk_pct`` of equity
+    (default 1%).  This prevents over-sizing volatile instruments.
+    """
     if equity <= 0 or price <= 0:
         return 0
     target_dollars = equity * max_position_pct
+    if atr and atr > 0:
+        vol_dollars = (equity * target_risk_pct) / atr * price
+        target_dollars = min(target_dollars, vol_dollars)
     return max(0, int(target_dollars // price))
 
 
@@ -91,6 +107,7 @@ def check_buy(
     daily_pnl_pct: float,
     already_holds: bool,
     config: RiskConfig,
+    atr: float | None = None,
 ) -> RiskDecision:
     """Decide whether a BUY is allowed and at what size.
 
@@ -102,7 +119,7 @@ def check_buy(
         return RiskDecision(False, 0, "already long this symbol")
     if open_positions >= config.max_open_positions:
         return RiskDecision(False, 0, f"max open positions ({open_positions})")
-    qty = position_size(equity, price, config.max_position_pct)
+    qty = position_size(equity, price, config.max_position_pct, atr=atr)
     if qty <= 0:
         return RiskDecision(False, 0, f"sized to 0 shares at ${price:.2f}")
     cost = qty * price

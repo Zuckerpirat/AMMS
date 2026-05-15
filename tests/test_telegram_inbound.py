@@ -833,3 +833,61 @@ def test_help_includes_top_and_news() -> None:
     help_text = h["help"]([])
     assert "/top" in help_text
     assert "/news" in help_text
+
+
+def _make_conn_with_roundtrip():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_overrides "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE orders (id TEXT, client_order_id TEXT, symbol TEXT, "
+        "side TEXT, qty REAL, type TEXT, status TEXT, submitted_at TEXT, "
+        "filled_at TEXT, filled_avg_price REAL)"
+    )
+    conn.executemany(
+        "INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [
+            ("1", "c1", "NVDA", "buy", 10, "market", "filled",
+             "2026-05-10T15:00:00+00:00", "2026-05-10T15:01:00+00:00", 100.0),
+            ("2", "c2", "NVDA", "sell", 10, "market", "filled",
+             "2026-05-14T15:00:00+00:00", "2026-05-14T15:01:00+00:00", 115.0),
+        ],
+    )
+    conn.commit()
+    return conn
+
+
+def test_journal_handler_shows_completed_trade() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["journal"]([])
+    assert "NVDA" in out
+    assert "$100.00" in out
+    assert "$115.00" in out
+    assert "150.00" in out  # 10 * 15 profit
+
+
+def test_journal_handler_symbol_filter() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["journal"](["NVDA"])
+    assert "NVDA" in out
+    out2 = h["journal"](["AAPL"])
+    assert "No completed round-trips" in out2
+
+
+def test_journal_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["journal"]([]) == "DB not wired."
+
+
+def test_help_includes_journal() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/journal" in h["help"]([])
