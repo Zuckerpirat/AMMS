@@ -5656,6 +5656,52 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _riskratios_cmd(args: list[str]) -> str:
+        """Risk-adjusted performance: Sharpe, Sortino, Calmar.
+
+        Usage: /riskratios [PERIODS]  (default 252 snapshots)
+        Computes Sharpe, Sortino, Calmar ratios from equity curve history.
+        Grade: excellent (≥2) / good (≥1) / ok (≥0) / poor (<0).
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 252
+        if args:
+            try:
+                limit = max(20, min(int(args[0]), 1000))
+            except ValueError:
+                pass
+
+        from amms.analysis.risk_ratios import compute as rr_compute
+
+        result = rr_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough equity history (need 10+ snapshots in equity_snapshots)."
+
+        def _fmt_ratio(v: float | None) -> str:
+            return f"{v:.3f}" if v is not None else "n/a"
+
+        grade_icon = {
+            "excellent": "🟢", "good": "🟡", "ok": "🟠", "poor": "🔴",
+        }.get(result.sharpe_grade, "")
+
+        lines = [
+            f"── Risk-Adjusted Performance ({result.n_periods} snapshots) ──",
+            f"  Equity:        ${result.start_equity:,.0f} → ${result.end_equity:,.0f}",
+            f"  Ann. return:   {result.annualized_return_pct:+.2f}%%",
+            f"  Ann. vol:      {result.annualized_vol_pct:.2f}%%",
+            f"  Downside vol:  {result.annualized_downside_vol_pct:.2f}%%",
+            f"  Max drawdown:  {result.max_drawdown_pct:.2f}%%",
+            "",
+            f"  Sharpe:  {_fmt_ratio(result.sharpe):>7}  {grade_icon} {result.sharpe_grade}",
+            f"  Sortino: {_fmt_ratio(result.sortino):>7}",
+            f"  Calmar:  {_fmt_ratio(result.calmar):>7}",
+            "",
+            f"  {result.verdict}",
+        ]
+        return "\n".join(lines)
+
     def _watch_cmd(args: list[str]) -> str:
         """Watchlist manager: add, remove, list, scan symbols.
 
@@ -6996,4 +7042,6 @@ def build_command_handlers(
         "ks": _kelly_cmd,
         "beta": _beta_cmd,
         "pbeta": _beta_cmd,
+        "riskratios": _riskratios_cmd,
+        "perf": _riskratios_cmd,
     }
