@@ -4815,6 +4815,116 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _drawdown_cmd(args: list[str]) -> str:
+        """Portfolio equity drawdown from peak equity snapshot.
+
+        Usage: /drawdown
+        Shows peak equity, current drawdown, worst drawdown, and alert if severe.
+        Reads from equity_snapshots table.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        try:
+            rows = conn.execute(
+                "SELECT ts, equity FROM equity_snapshots ORDER BY ts ASC"
+            ).fetchall()
+        except Exception as e:
+            return f"DB error: {e!r}"
+
+        if not rows:
+            return "No equity snapshots in DB."
+
+        equities = [float(r[1]) for r in rows]
+        peak = max(equities)
+        current = equities[-1]
+        current_dd = (current - peak) / peak * 100
+
+        # Compute max drawdown (rolling peak)
+        running_peak = equities[0]
+        max_dd = 0.0
+        for eq in equities:
+            if eq > running_peak:
+                running_peak = eq
+            dd = (eq - running_peak) / running_peak * 100
+            if dd < max_dd:
+                max_dd = dd
+
+        lines = [
+            "── Portfolio Equity Drawdown ──",
+            f"  Peak equity:  ${peak:,.0f}",
+            f"  Current:      ${current:,.0f}",
+            f"  Current DD:   {current_dd:+.2f}%%",
+            f"  worst (max):  {max_dd:+.2f}%%",
+            f"  Snapshots:    {len(equities)}",
+        ]
+        if current_dd < -10.0:
+            lines.append("  ⚠️  Drawdown exceeds 10%% — review risk exposure.")
+        elif current_dd < -5.0:
+            lines.append("  ⚠️  Drawdown exceeds 5%%.")
+
+        return "\n".join(lines)
+
+    def _posdd_cmd(args: list[str]) -> str:
+        """Per-position price drawdown from recent peak.
+
+        Usage: /posdd [LOOKBACK]
+        Shows how far each position's price is from its recent peak.
+        Default lookback: 60 bars.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if not positions:
+            return "No open positions."
+
+        lookback = 60
+        if args and args[0].isdigit():
+            lookback = max(5, min(int(args[0]), 120))
+
+        bars_map: dict[str, list] = {}
+        for pos in positions:
+            try:
+                bars = data.get_bars(pos.symbol, limit=lookback + 5)
+                if bars:
+                    bars_map[pos.symbol] = bars
+            except Exception:
+                pass
+
+        from amms.analysis.drawdown_heatmap import analyze as dd_analyze
+
+        heatmap = dd_analyze(bars_map, lookback=lookback)
+        if heatmap is None:
+            return "Could not compute drawdowns (insufficient data)."
+
+        STATUS_ICON = {
+            "new_high": "▲",
+            "recovering": "↑",
+            "stalling": "→",
+            "deepening": "↓",
+        }
+
+        lines = [
+            f"── Position Drawdown ({lookback}d lookback) ──",
+            f"  Avg drawdown:  {heatmap.avg_drawdown_pct:+.1f}%%",
+            f"  At new highs:  {heatmap.n_at_new_high}  "
+            f"Deepening:  {heatmap.n_deepening}",
+            "",
+        ]
+        for row in heatmap.rows:
+            icon = STATUS_ICON.get(row.status, "?")
+            lines.append(
+                f"  {icon} {row.symbol:<6}  DD {row.drawdown_pct:+.1f}%%"
+                f"  (max {row.max_drawdown_pct:+.1f}%%)"
+                f"  rec {row.recovery_pct:.0f}%%"
+                f"  {row.bars_since_peak}d ago"
+            )
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -5767,4 +5877,7 @@ def build_command_handlers(
         "stratselect": _strategy_selector_cmd,
         "tradequality": _tradequality_cmd,
         "tq": _tradequality_cmd,
+        "drawdown": _drawdown_cmd,
+        "posdd": _posdd_cmd,
+        "pdd": _posdd_cmd,
     }
