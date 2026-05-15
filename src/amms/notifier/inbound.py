@@ -3202,6 +3202,103 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _divergence(args: list[str]) -> str:
+        """Detect RSI/price divergence for open positions or a ticker.
+
+        Usage: /divergence [SYM]
+        Bullish divergence: price lower low + RSI higher low → reversal up.
+        Bearish divergence: price higher high + RSI lower high → reversal down.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /divergence AAPL)"
+
+        from amms.analysis.divergence import detect_divergence
+
+        lines = ["RSI/Price Divergence (14-period RSI, 50-bar lookback):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = detect_divergence(bars)
+            if result.divergence_type == "none":
+                label = "↔️  none"
+            elif result.divergence_type == "bullish":
+                label = "🟢 BULLISH"
+            elif result.divergence_type == "bearish":
+                label = "🔴 BEARISH"
+            elif result.divergence_type == "hidden_bullish":
+                label = "↑ hidden bullish"
+            elif result.divergence_type == "hidden_bearish":
+                label = "↓ hidden bearish"
+            else:
+                label = result.divergence_type
+            conf_str = f"  conf {result.confidence:.0%}" if result.confidence > 0 else ""
+            lines.append(
+                f"  {sym:<6}  {label}{conf_str}  [{result.price_swing} / {result.rsi_swing}]"
+            )
+            if result.divergence_type != "none":
+                lines.append(f"         {result.reason}")
+        return "\n".join(lines)
+
+    def _zscore_cmd(args: list[str]) -> str:
+        """Show Z-score (price vs 20-bar mean/std) for positions or a ticker.
+
+        Usage: /zscore [SYM]
+        z < -2: far below mean (potential oversold)
+        z > +2: far above mean (potential overbought)
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /zscore AAPL)"
+
+        from amms.features.zscore import zscore
+
+        lines = ["Z-score (20-bar rolling mean/std):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=25)
+            except Exception:
+                bars = []
+            z = zscore(bars, 20)
+            if z is None:
+                lines.append(f"  {sym:<6}  n/a (not enough history)")
+                continue
+            price = bars[-1].close if bars else 0.0
+            if z < -2.0:
+                zone = "🟢 far below mean (oversold?)"
+            elif z < -1.0:
+                zone = "↓ below mean"
+            elif z > 2.0:
+                zone = "🔴 far above mean (overbought?)"
+            elif z > 1.0:
+                zone = "↑ above mean"
+            else:
+                zone = "↔️  near mean"
+            lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
+        return "\n".join(lines)
+
     def _rotation(_args: list[str]) -> str:
         """Show sector rotation: which SPDR sector ETFs are outperforming SPY.
 
@@ -3676,6 +3773,8 @@ def build_command_handlers(
             "/rotation — sector rotation: which sectors outperform SPY (20d momentum)\n"
             "/bb [SYM] — Bollinger Bands for open positions or a single ticker\n"
             "/volspike [SYM] — volume spike ratio vs 20-day average\n"
+            "/divergence [SYM] — RSI/price divergence signal (bullish/bearish/hidden)\n"
+            "/zscore [SYM] — Z-score: how far price is from its 20-bar mean\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3804,4 +3903,8 @@ def build_command_handlers(
         "sectors2": _rotation,
         "bb": _bb_cmd,
         "volspike": _volspike,
+        "divergence": _divergence,
+        "div": _divergence,
+        "zscore": _zscore_cmd,
+        "z": _zscore_cmd,
     }

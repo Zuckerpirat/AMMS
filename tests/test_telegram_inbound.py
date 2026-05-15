@@ -2811,3 +2811,108 @@ def test_volspike_help_included() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/volspike" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /divergence tests
+# ---------------------------------------------------------------------------
+
+class _LongDataClient:
+    """Returns 85 bars for divergence detection tests."""
+    def get_bars(self, symbol, *, limit=80):
+        from amms.data.bars import Bar
+        bars = []
+        for i in range(85):
+            price = 100.0 + i * 0.3 + (i % 7) * 0.5
+            bars.append(Bar(symbol, "1D", f"2026-0{1 + i // 28:d}-{1 + i % 28:02d}", price, price + 1.0, price - 1.0, price, 1_000.0))
+        return bars
+
+
+def test_divergence_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["divergence"]([])
+
+
+def test_divergence_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_LongDataClient())
+    out = h["divergence"]([])
+    assert "no open positions" in out
+
+
+def test_divergence_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_LongDataClient())
+    out = h["divergence"](["AAPL"])
+    assert "AAPL" in out
+    assert "Divergence" in out or "divergence" in out.lower()
+
+
+def test_divergence_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_LongDataClient())
+    out = h["divergence"]([])
+    assert "AAPL" in out
+
+
+def test_divergence_alias_div() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_LongDataClient())
+    assert h["div"] is h["divergence"]
+
+
+def test_divergence_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/divergence" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /zscore tests
+# ---------------------------------------------------------------------------
+
+def test_zscore_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["zscore"]([])
+
+
+def test_zscore_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_GoodDataClient())
+    out = h["zscore"]([])
+    assert "no open positions" in out
+
+
+def test_zscore_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["zscore"](["MSFT"])
+    assert "MSFT" in out
+    assert "z=" in out or "Z-score" in out or "zscore" in out.lower()
+
+
+def test_zscore_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["zscore"]([])
+    assert "AAPL" in out
+
+
+def test_zscore_alias_z() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["z"] is h["zscore"]
+
+
+def test_zscore_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/zscore" in h["help"]([])
