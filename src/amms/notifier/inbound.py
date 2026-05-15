@@ -4993,6 +4993,63 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
+    def _momentum_cmd(args: list[str]) -> str:
+        """Momentum composite score aggregating RSI, ROC, MACD, Williams %R.
+
+        Usage: /momentum [SYM]
+        Single -100 (bearish) to +100 (bullish) score with per-indicator breakdown.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /momentum AAPL)"
+
+        from amms.analysis.momentum_composite import compute as mc_compute
+
+        SIGNAL_ICON = {
+            "strong_bull": "▲▲",
+            "bull": "▲",
+            "neutral": "→",
+            "bear": "▼",
+            "strong_bear": "▼▼",
+        }
+
+        lines = ["── Momentum Composite ──"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception as e:
+                lines.append(f"  {sym}: data error {e!r}")
+                continue
+
+            result = mc_compute(bars)
+            if result is None:
+                lines.append(f"  {sym}: insufficient data (need 35+ bars)")
+                continue
+
+            icon = SIGNAL_ICON.get(result.signal, "?")
+            lines.append(
+                f"  {icon} {sym:<6}  score {result.score:+.0f}  [{result.signal}]"
+            )
+
+            def _fmt_c(v: float | None) -> str:
+                return f"{v:+.1f}" if v is not None else "n/a"
+
+            lines.append(
+                f"     RSI {_fmt_c(result.rsi_component)}"
+                f"  ROC {_fmt_c(result.roc_component)}"
+                f"  MACD {_fmt_c(result.macd_component)}"
+                f"  WR {_fmt_c(result.wr_component)}"
+            )
+
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -5950,4 +6007,6 @@ def build_command_handlers(
         "pdd": _posdd_cmd,
         "volpct": _volpct_cmd,
         "volrank": _volpct_cmd,
+        "momentum": _momentum_cmd,
+        "mom": _momentum_cmd,
     }
