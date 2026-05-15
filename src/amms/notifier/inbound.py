@@ -3105,6 +3105,55 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _optimize(args: list[str]) -> str:
+        """Show recommended portfolio allocation weights.
+
+        Usage:
+          /optimize                   — equal-weight allocation
+          /optimize momentum          — momentum-score-weighted allocation
+          /optimize inversevol        — inverse-volatility (risk-parity) allocation
+        """
+        if data is None:
+            return "Data client not wired."
+
+        mode_arg = args[0].lower().replace("-", "_") if args else "equal_weight"
+        mode_map = {
+            "equal": "equal_weight",
+            "equal_weight": "equal_weight",
+            "momentum": "momentum",
+            "mom": "momentum",
+            "inversevol": "inverse_vol",
+            "inverse_vol": "inverse_vol",
+            "riskparity": "inverse_vol",
+        }
+        mode = mode_map.get(mode_arg)
+        if mode is None:
+            return f"Unknown mode '{mode_arg}'. Use: equal, momentum, inversevol"
+
+        symbols: list[str] = list(static_watchlist)
+        if get_wsb_extras is not None:
+            symbols += list(get_wsb_extras())
+        if db_path is not None:
+            from amms.data.dynamic_watchlist import load as load_dyn
+            symbols += list(load_dyn(db_path))
+        symbols = list(dict.fromkeys(s.upper() for s in symbols))
+
+        if not symbols:
+            return "Watchlist is empty. Add tickers with /add SYM."
+
+        try:
+            equity = float(broker.get_account().equity)
+        except Exception:
+            equity = 0.0
+
+        from amms.analysis.portfolio_optimizer import format_allocation, optimize
+        try:
+            results = optimize(symbols[:20], data, mode=mode)
+        except Exception as e:
+            return f"optimizer error: {e!r}"
+
+        return format_allocation(results, equity=equity)
+
     def _momscan(args: list[str]) -> str:
         """Rank the active watchlist by composite momentum score.
 
@@ -3286,6 +3335,7 @@ def build_command_handlers(
             "/circuit reset — manually unblock the circuit breaker\n"
             "/regime — detect current market regime (bull/neutral/bear) from SPY + VIXY\n"
             "/momscan [N] — rank watchlist by composite momentum score (top N)\n"
+            "/optimize [equal|momentum|inversevol] — recommended portfolio weights\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3400,4 +3450,6 @@ def build_command_handlers(
         "regime": _regime,
         "momscan": _momscan,
         "ms": _momscan,
+        "optimize": _optimize,
+        "opt": _optimize,
     }

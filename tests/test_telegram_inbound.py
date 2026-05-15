@@ -2480,3 +2480,59 @@ def test_help_includes_momscan() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/momscan" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /optimize tests
+# ---------------------------------------------------------------------------
+
+def test_optimize_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, static_watchlist=("AAPL",))
+    assert "not wired" in h["optimize"]([])
+
+
+def test_optimize_empty_watchlist() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["optimize"]([])
+    assert "empty" in out.lower() or "allocation" in out.lower()
+
+
+def test_optimize_equal_weight() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(), pause=p,
+        data=_FakeDataClient(),
+        static_watchlist=("AAPL", "MSFT"),
+    )
+    out = h["optimize"](["equal"])
+    assert "equal" in out.lower() or "%" in out
+
+
+def test_optimize_momentum_mode() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(), pause=p,
+        data=_FakeDataClient(),
+        static_watchlist=("AAPL",),
+    )
+    out = h["optimize"](["momentum"])
+    assert "momentum" in out.lower() or "%" in out
+
+
+def test_optimize_unknown_mode() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(), pause=p,
+        data=_FakeDataClient(),
+        static_watchlist=("AAPL",),
+    )
+    out = h["optimize"](["magic"])
+    assert "Unknown" in out or "unknown" in out.lower()
+
+
+def test_help_includes_optimize() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/optimize" in h["help"]([])
