@@ -1980,6 +1980,82 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
+    def _setlist(args: list[str]) -> str:
+        """Bulk-replace the entire dynamic watchlist.
+
+        Usage:
+          /setlist SYM [SYM ...]   — replace list with given symbols
+          /setlist clear           — empty the list (same as /setlist with no args)
+        """
+        if db_path is None:
+            return "watchlist commands not wired (no db_path)."
+        from amms.data.dynamic_watchlist import _save_raw, _watchlist_path, normalize_symbol
+
+        if not args or (len(args) == 1 and args[0].lower() == "clear"):
+            path = _watchlist_path(db_path)
+            _save_raw(path, set())
+            return "Dynamic watchlist cleared (0 symbols)."
+
+        new_syms: set[str] = set()
+        bad: list[str] = []
+        for raw in args:
+            try:
+                new_syms.add(normalize_symbol(raw))
+            except ValueError:
+                bad.append(raw)
+
+        if bad:
+            return f"Invalid tickers: {', '.join(bad)}. Use 1-5 uppercase letters."
+
+        path = _watchlist_path(db_path)
+        _save_raw(path, new_syms)
+        return f"Dynamic watchlist replaced with {len(new_syms)} symbol(s): {', '.join(sorted(new_syms))}"
+
+    def _calendar(_args: list[str]) -> str:
+        """Show NYSE market hours and upcoming US market holidays."""
+        from datetime import UTC, datetime
+
+        # Fixed NYSE 2026 holidays (approximate — observe nearest weekday)
+        NYSE_HOLIDAYS_2026 = [
+            ("2026-01-01", "New Year's Day"),
+            ("2026-01-19", "Martin Luther King Jr. Day"),
+            ("2026-02-16", "Presidents' Day"),
+            ("2026-04-03", "Good Friday"),
+            ("2026-05-25", "Memorial Day"),
+            ("2026-07-03", "Independence Day (observed)"),
+            ("2026-09-07", "Labor Day"),
+            ("2026-11-26", "Thanksgiving Day"),
+            ("2026-11-27", "Black Friday (early close 1:00 PM ET)"),
+            ("2026-12-25", "Christmas Day"),
+        ]
+
+        today = date.today()
+        upcoming = [
+            (d, name) for d, name in NYSE_HOLIDAYS_2026
+            if date.fromisoformat(d) >= today
+        ][:5]
+
+        now_utc = datetime.now(UTC)
+        # NYSE opens 14:30 UTC, closes 21:00 UTC (ET = UTC-5 in winter, UTC-4 in summer)
+        # Simplify: just show ET offset note
+        lines = [
+            "NYSE Market Hours:",
+            "  Monday–Friday   9:30 AM – 4:00 PM ET",
+            "  Pre-market:     4:00 AM – 9:30 AM ET",
+            "  After-hours:    4:00 PM – 8:00 PM ET",
+            "",
+            f"Current UTC time: {now_utc.strftime('%Y-%m-%d %H:%M')} UTC",
+        ]
+
+        if upcoming:
+            lines += ["", "Upcoming NYSE holidays:"]
+            for d, name in upcoming:
+                lines.append(f"  {d}  {name}")
+        else:
+            lines.append("\n(No more NYSE holidays in 2026 data.)")
+
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -2006,6 +2082,8 @@ def build_command_handlers(
             "/watchlist — show static + WSB + user-added tickers\n"
             "/add SYM — add ticker to dynamic watchlist\n"
             "/remove SYM — remove ticker from dynamic watchlist\n"
+            "/setlist SYM [SYM ...] — bulk-replace the dynamic watchlist\n"
+            "/calendar — NYSE market hours + upcoming holidays\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2088,4 +2166,6 @@ def build_command_handlers(
         "version": _version,
         "fees": _fees,
         "export": _export,
+        "setlist": _setlist,
+        "calendar": _calendar,
     }

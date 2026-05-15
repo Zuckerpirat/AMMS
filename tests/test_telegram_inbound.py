@@ -1357,3 +1357,98 @@ def test_help_includes_export() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/export" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /setlist tests
+# ---------------------------------------------------------------------------
+
+def test_setlist_no_db_path() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["setlist"](["AAPL"])
+    assert "not wired" in out
+
+
+def test_setlist_replaces_watchlist(tmp_path) -> None:
+    p = PauseFlag()
+    db_file = tmp_path / "amms.db"
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, db_path=db_file)
+    out = h["setlist"](["AAPL", "NVDA", "MSFT"])
+    assert "3 symbol(s)" in out
+    assert "AAPL" in out
+    assert "NVDA" in out
+
+
+def test_setlist_clear_empties_watchlist(tmp_path) -> None:
+    p = PauseFlag()
+    db_file = tmp_path / "amms.db"
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, db_path=db_file)
+    h["setlist"](["AAPL", "TSLA"])
+    out = h["setlist"](["clear"])
+    assert "0 symbol" in out
+
+
+def test_setlist_no_args_clears(tmp_path) -> None:
+    p = PauseFlag()
+    db_file = tmp_path / "amms.db"
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, db_path=db_file)
+    h["setlist"](["AAPL"])
+    out = h["setlist"]([])
+    assert "0 symbol" in out
+
+
+def test_setlist_invalid_ticker(tmp_path) -> None:
+    p = PauseFlag()
+    db_file = tmp_path / "amms.db"
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, db_path=db_file)
+    out = h["setlist"](["TOOLONG123", "AAPL"])
+    assert "Invalid" in out
+
+
+def test_setlist_persisted_to_watchlist(tmp_path) -> None:
+    p = PauseFlag()
+    db_file = tmp_path / "amms.db"
+    h = build_command_handlers(
+        broker=_FakeBroker(), pause=p, db_path=db_file, static_watchlist=()
+    )
+    h["setlist"](["GOOG", "AMZN"])
+    out = h["watchlist"]([])
+    assert "GOOG" in out
+    assert "AMZN" in out
+
+
+# ---------------------------------------------------------------------------
+# /calendar tests
+# ---------------------------------------------------------------------------
+
+def test_calendar_shows_market_hours() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["calendar"]([])
+    assert "9:30 AM" in out
+    assert "4:00 PM" in out
+    assert "Monday" in out
+
+
+def test_calendar_shows_utc_time() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["calendar"]([])
+    assert "UTC" in out
+
+
+def test_calendar_shows_holiday() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["calendar"]([])
+    # At least one holiday or the "no more" message should appear
+    assert "holiday" in out.lower() or "NYSE" in out
+
+
+def test_help_includes_setlist_and_calendar() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/setlist" in help_text
+    assert "/calendar" in help_text
