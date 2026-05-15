@@ -3299,6 +3299,109 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _stoch_cmd(args: list[str]) -> str:
+        """Show Stochastic %K/%D for open positions or a ticker.
+
+        Usage: /stoch [SYM]
+        %K < 20: oversold.  %K > 80: overbought.
+        Bullish cross: %K crosses %D upward while oversold.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /stoch AAPL)"
+
+        from amms.features.stochastic import stochastic
+
+        lines = ["Stochastic Oscillator (14,3):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=25)
+            except Exception:
+                bars = []
+            result = stochastic(bars, 14, 3)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (not enough history)")
+                continue
+            if result.zone == "oversold":
+                zone_label = "🟢 oversold"
+            elif result.zone == "overbought":
+                zone_label = "🔴 overbought"
+            else:
+                zone_label = "↔️  neutral"
+            sig_label = ""
+            if result.signal == "bullish_cross":
+                sig_label = "  ⬆️  bullish cross!"
+            elif result.signal == "bearish_cross":
+                sig_label = "  ⬇️  bearish cross!"
+            lines.append(
+                f"  {sym:<6}  %%K {result.k:.1f}  %%D {result.d:.1f}  {zone_label}{sig_label}"
+            )
+        return "\n".join(lines)
+
+    def _confluence_cmd(args: list[str]) -> str:
+        """Show multi-indicator confluence score for positions or a ticker.
+
+        Usage: /confluence [SYM]
+        Aggregates RSI, MACD, Bollinger, ADX, Stochastic, Z-score, momentum
+        into a single bullish/bearish score (-1 to +1).
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /confluence AAPL)"
+
+        from amms.analysis.confluence import analyze
+
+        lines = ["Signal Confluence (multi-indicator score):"]
+        for sym in symbols[:6]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            if len(bars) < 5:
+                lines.append(f"  {sym:<6}  n/a")
+                continue
+            result = analyze(bars)
+            if result.verdict == "strong_buy":
+                vdict = "🟢🟢 STRONG BUY"
+            elif result.verdict == "buy":
+                vdict = "🟢 buy"
+            elif result.verdict == "strong_sell":
+                vdict = "🔴🔴 STRONG SELL"
+            elif result.verdict == "sell":
+                vdict = "🔴 sell"
+            else:
+                vdict = "↔️  neutral"
+            score_bar = "+" * max(0, int(result.score * 5)) if result.score >= 0 else "-" * max(0, int(-result.score * 5))
+            lines.append(
+                f"  {sym:<6}  score {result.score:+.2f}  [{score_bar:<5}]  {vdict}  "
+                f"({result.signals_checked} signals  conf {result.confidence:.0%})"
+            )
+            for s in result.bullish_signals[:3]:
+                lines.append(f"    ✅ {s}")
+            for s in result.bearish_signals[:3]:
+                lines.append(f"    ❌ {s}")
+        return "\n".join(lines)
+
     def _adx_cmd(args: list[str]) -> str:
         """Show ADX (Average Directional Index) trend strength for positions or a ticker.
 
@@ -3826,6 +3929,8 @@ def build_command_handlers(
             "/divergence [SYM] — RSI/price divergence signal (bullish/bearish/hidden)\n"
             "/zscore [SYM] — Z-score: how far price is from its 20-bar mean\n"
             "/adx [SYM] — ADX trend strength: ranging vs trending, +DI/-DI direction\n"
+            "/stoch [SYM] — Stochastic %%K/%%D: oversold/overbought + crossover signals\n"
+            "/confluence [SYM] — multi-indicator confluence score (RSI+MACD+BB+ADX+Stoch)\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3959,4 +4064,8 @@ def build_command_handlers(
         "zscore": _zscore_cmd,
         "z": _zscore_cmd,
         "adx": _adx_cmd,
+        "stoch": _stoch_cmd,
+        "stochastic": _stoch_cmd,
+        "confluence": _confluence_cmd,
+        "cf": _confluence_cmd,
     }

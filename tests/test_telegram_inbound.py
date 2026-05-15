@@ -2968,3 +2968,87 @@ def test_adx_help_included() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/adx" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /stoch and /confluence tests
+# ---------------------------------------------------------------------------
+
+def test_stoch_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["stoch"]([])
+
+
+def test_stoch_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_GoodDataClient())
+    out = h["stoch"]([])
+    assert "no open positions" in out
+
+
+def test_stoch_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["stoch"](["NVDA"])
+    assert "NVDA" in out
+    assert "Stochastic" in out or "%K" in out or "%%K" in out
+
+
+def test_stoch_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["stoch"]([])
+    assert "AAPL" in out
+
+
+def test_stoch_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/stoch" in h["help"]([])
+
+
+def test_confluence_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["confluence"]([])
+
+
+def test_confluence_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_LongDataClient())
+    out = h["confluence"]([])
+    assert "no open positions" in out
+
+
+def test_confluence_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_LongDataClient())
+    out = h["confluence"](["TSLA"])
+    assert "TSLA" in out
+    assert "score" in out.lower() or "confluence" in out.lower()
+
+
+def test_confluence_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_LongDataClient())
+    out = h["confluence"]([])
+    assert "AAPL" in out
+
+
+def test_confluence_alias_cf() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["cf"] is h["confluence"]
+
+
+def test_confluence_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/confluence" in h["help"]([])
