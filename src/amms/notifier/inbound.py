@@ -3105,6 +3105,30 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _regime(_args: list[str]) -> str:
+        """Show the current market regime (bull/neutral/bear) from SPY + VIXY analysis."""
+        if data is None:
+            return "Data client not wired."
+        try:
+            from amms.analysis.regime import detect_regime
+            regime = detect_regime(data)
+        except Exception as e:
+            return f"regime detection error: {e!r}"
+
+        emoji = {"bull": "📈", "neutral": "↔️", "bear": "📉"}.get(regime.label, "❓")
+        lines = [
+            f"Market regime: {emoji} {regime.label.upper()}  (confidence {regime.confidence:.0%})",
+            f"Reason: {regime.reason}",
+            f"Risk multiplier: {regime.risk_multiplier:.2f}×",
+        ]
+        if regime.spy_vs_sma50 is not None:
+            lines.append(f"  SPY vs SMA-50:  {regime.spy_vs_sma50:+.2f}%")
+        if regime.spy_vs_sma200 is not None:
+            lines.append(f"  SPY vs SMA-200: {regime.spy_vs_sma200:+.2f}%")
+        if regime.vixy_1d_pct is not None:
+            lines.append(f"  VIXY 1d:        {regime.vixy_1d_pct:+.2f}%")
+        return "\n".join(lines)
+
     def _circuit(args: list[str]) -> str:
         """Show or reset the circuit breaker state.
 
@@ -3219,6 +3243,7 @@ def build_command_handlers(
             "/backhist [N] — show history of saved backtest reports\n"
             "/circuit — show circuit breaker state (auto-blocks on heavy losses)\n"
             "/circuit reset — manually unblock the circuit breaker\n"
+            "/regime — detect current market regime (bull/neutral/bear) from SPY + VIXY\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3330,4 +3355,5 @@ def build_command_handlers(
         "backhist": _backhist,
         "circuit": _circuit,
         "cb": _circuit,
+        "regime": _regime,
     }

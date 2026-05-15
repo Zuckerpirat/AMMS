@@ -2394,3 +2394,33 @@ def test_help_includes_circuit() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/circuit" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /regime tests
+# ---------------------------------------------------------------------------
+
+def test_regime_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["regime"]([])
+
+
+def test_regime_shows_label() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["regime"]([])
+    assert any(word in out.upper() for word in ["BULL", "NEUTRAL", "BEAR"])
+
+
+def test_regime_shows_multiplier() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["regime"]([])
+    assert "multiplier" in out.lower() or "×" in out
+
+
+def test_help_includes_regime() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/regime" in h["help"]([])
