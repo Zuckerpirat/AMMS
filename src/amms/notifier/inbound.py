@@ -5306,6 +5306,66 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _trendq_cmd(args: list[str]) -> str:
+        """Trend quality/consistency score for open positions.
+
+        Usage: /trendq [SYM] [LOOKBACK]
+        Measures R², trend efficiency, and noise level.
+        Default lookback: 20 bars.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        lookback = 20
+        sym_filter = None
+        for arg in args:
+            if arg.isdigit():
+                lookback = max(5, min(int(arg), 60))
+            else:
+                sym_filter = arg.upper()
+
+        symbols = ([sym_filter] if sym_filter
+                   else [p.symbol for p in positions])
+        if not symbols:
+            return "no open positions (pass a ticker: /trendq AAPL)"
+
+        from amms.analysis.trend_consistency import score as tc_score
+
+        LABEL_ICON = {
+            "consistent": "▲▲",
+            "moderate": "▲",
+            "choppy": "↕",
+            "random": "?",
+        }
+
+        lines = [f"── Trend Quality ({lookback}d) ──"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=lookback + 5)
+            except Exception as e:
+                lines.append(f"  {sym}: data error {e!r}")
+                continue
+
+            result = tc_score(bars, lookback=lookback)
+            if result is None:
+                lines.append(f"  {sym}: insufficient data")
+                continue
+
+            icon = LABEL_ICON.get(result.label, "?")
+            dir_arrow = "↑" if result.direction == "up" else ("↓" if result.direction == "down" else "→")
+            lines.append(
+                f"  {icon} {sym:<6}  {result.score:.0f}/100 [{result.label}]"
+                f"  {dir_arrow} R² {result.r_squared:.2f}"
+                f"  eff {result.efficiency:.2f}"
+                f"  noise {result.noise_pct:.1f}%%"
+            )
+
+        return "\n".join(lines)
+
     def _overnight_cmd(args: list[str]) -> str:
         """Overnight gap risk for open positions.
 
@@ -6493,4 +6553,6 @@ def build_command_handlers(
         "rs": _rsrank_cmd,
         "overnight": _overnight_cmd,
         "gap_risk": _overnight_cmd,
+        "trendq": _trendq_cmd,
+        "tc": _trendq_cmd,
     }
