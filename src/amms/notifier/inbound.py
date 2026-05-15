@@ -4703,6 +4703,54 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _trendlines_cmd(args: list[str]) -> str:
+        """Auto-detect support and resistance trend lines.
+
+        Usage: /trendlines [SYM]
+        Fits lines through pivot highs/lows to show trend direction and breakout risk.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /trendlines AAPL)"
+
+        from amms.analysis.trendlines import detect_trendlines
+
+        lines = ["Trend Lines (auto-detected support/resistance):"]
+        for sym in symbols[:6]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = detect_trendlines(bars)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 10+ bars)")
+                continue
+            pat_icon = {
+                "uptrend": "📈", "downtrend": "📉",
+                "wedge": "⚠️ ", "ranging": "↔️ ", "unknown": "❓",
+            }.get(result.pattern, "")
+            lines.append(f"  {sym:<6}  price ${result.current_price:.2f}  {pat_icon} {result.pattern}")
+            if result.support:
+                dist = f"  (+{result.support_distance_pct:.1f}%)" if result.support_distance_pct is not None else ""
+                lines.append(
+                    f"    Support:    ${result.support.current_value:.2f}  "
+                    f"{result.support.direction}  slope {result.support.slope:+.3f}{dist}"
+                )
+            if result.resistance:
+                dist = f"  ({result.resistance_distance_pct:.1f}% gap)" if result.resistance_distance_pct is not None else ""
+                lines.append(
+                    f"    Resistance: ${result.resistance.current_value:.2f}  "
+                    f"{result.resistance.direction}  slope {result.resistance.slope:+.3f}{dist}"
+                )
+        return "\n".join(lines)
+
     def _roc_cmd(args: list[str]) -> str:
         """Rate of Change at 10/20/50 bars for a ticker or open positions.
 
@@ -5073,6 +5121,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
             "/roc [SYM] — Rate of Change: 10/20/50-bar momentum + trend alignment\n"
             "/wr [SYM] — Williams %%R: overbought/oversold oscillator (0 to -100)\n"
             "/cci [SYM] — Commodity Channel Index: overbought/oversold (+100/-100)\n"
@@ -5242,6 +5291,8 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "trendlines": _trendlines_cmd,
+        "tl": _trendlines_cmd,
         "roc": _roc_cmd,
         "wr": _wr_cmd,
         "williamsr": _wr_cmd,

@@ -3636,3 +3636,55 @@ def test_roc_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/roc" in h["help"]([])
+
+
+# ── /trendlines tests ─────────────────────────────────────────────────────────
+
+class _TrendDataClient:
+    """Returns 60 bars with zigzag oscillation for trendline tests."""
+    def get_bars(self, symbol, *, limit=80):
+        from amms.data.bars import Bar
+        from datetime import UTC, datetime
+        bars = []
+        for i in range(60):
+            base = 100.0 + i * 0.3
+            wave = 3.0 if (i % 6) < 3 else -3.0
+            mid = base + wave
+            ts = datetime(2026, 1, 1 + i % 28, 12, 0, 0, tzinfo=UTC).isoformat()
+            bars.append(Bar(symbol, "1Day", ts, mid, mid + 1.5, mid - 1.5, mid, 10_000))
+        return bars
+
+
+def test_trendlines_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["trendlines"]([]).lower()
+
+
+def test_trendlines_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_TrendDataClient())
+    assert "no open positions" in h["trendlines"]([])
+
+
+def test_trendlines_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
+    out = h["trendlines"](["AAPL"])
+    assert "AAPL" in out
+    assert "Trend Lines" in out or "trendline" in out.lower() or "pattern" in out.lower()
+
+
+def test_trendlines_alias_tl() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["tl"] is h["trendlines"]
+
+
+def test_trendlines_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/trendlines" in h["help"]([])
