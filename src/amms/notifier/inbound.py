@@ -198,12 +198,34 @@ def build_command_handlers(
             pass
         from amms.data.sectors import sector_for, UNCLASSIFIED
 
+        # Map symbol -> earliest filled buy date so we can show holding days.
+        ages: dict[str, str] = {}
+        if conn is not None:
+            try:
+                rows = conn.execute(
+                    "SELECT symbol, MIN(COALESCE(filled_at, submitted_at)) AS first_buy "
+                    "FROM orders WHERE side = 'buy' AND status IN ('filled', 'partially_filled') "
+                    "GROUP BY symbol"
+                ).fetchall()
+                for r in rows:
+                    if r["first_buy"]:
+                        ages[r["symbol"]] = r["first_buy"][:10]
+            except Exception:
+                pass
+
         lines: list[str] = []
+        today = date.today()
         for p in positions:
             line = (
                 f"{p.symbol}: {p.qty:g} @ ${p.avg_entry_price:.2f} "
                 f"(mv ${p.market_value:.2f}, P&L ${p.unrealized_pl:+.2f})"
             )
+            if p.symbol in ages:
+                try:
+                    held = (today - date.fromisoformat(ages[p.symbol])).days
+                    line += f"  {held}d"
+                except Exception:
+                    pass
             sector = sector_for(p.symbol)
             if sector != UNCLASSIFIED:
                 line += f"  [{sector}]"
@@ -382,6 +404,7 @@ def build_command_handlers(
         lines: list[str] = [f"P&L last {days} days"]
         total_pnl = 0.0
         found = 0
+        daily_equities: list[float] = []
 
         for i in range(days):
             d = today - timedelta(days=i)
@@ -403,6 +426,7 @@ def build_command_handlers(
                 lines.append(f"{d_str}: {arrow} ${pnl:+.2f} ({pct:+.2f}%)")
                 total_pnl += pnl
                 found += 1
+                daily_equities.append(float(last["equity"]))
 
         if found == 0:
             return "No equity data yet — wait for the first trading tick."
@@ -413,7 +437,26 @@ def build_command_handlers(
             lines.append(f"Current equity: ${acc.equity:,.2f}")
         except Exception:
             pass
+        # ASCII sparkline of the equity curve (oldest → newest).
+        if len(daily_equities) >= 2:
+            sparkline = _render_sparkline(list(reversed(daily_equities)))
+            lines.append(f"Trend: {sparkline}")
         return "\n".join(lines)
+
+    def _render_sparkline(values: list[float]) -> str:
+        """Render a list of floats as an 8-level Unicode block sparkline."""
+        if not values:
+            return ""
+        lo = min(values)
+        hi = max(values)
+        if hi == lo:
+            return "▄" * len(values)
+        blocks = "▁▂▃▄▅▆▇█"
+        out = []
+        for v in values:
+            idx = int((v - lo) / (hi - lo) * (len(blocks) - 1))
+            out.append(blocks[idx])
+        return "".join(out)
 
     def _set(args: list[str]) -> str:
         if conn is None:
