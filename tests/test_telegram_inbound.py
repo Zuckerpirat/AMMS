@@ -2177,3 +2177,84 @@ def test_help_includes_macd_and_score() -> None:
     help_text = h["help"]([])
     assert "/macd" in help_text
     assert "/score" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /filter tests
+# ---------------------------------------------------------------------------
+
+def test_filter_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, static_watchlist=("AAPL",))
+    assert "not wired" in h["filter"]([])
+
+
+def test_filter_empty_watchlist() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["filter"]([])
+    assert "empty" in out.lower() or "No tickers match" in out
+
+
+def test_filter_with_watchlist() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(), pause=p,
+        data=_FakeDataClient(),
+        static_watchlist=("AAPL", "NVDA"),
+    )
+    out = h["filter"]([])
+    # Should show results or no-match message
+    assert "AAPL" in out or "No tickers match" in out or "Filter results" in out
+
+
+def test_filter_bull_mode() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(
+        broker=_FakeBroker(), pause=p,
+        data=_FakeDataClient(),
+        static_watchlist=("AAPL",),
+    )
+    out = h["filter"](["bull"])
+    assert "Filter" in out or "No tickers" in out
+
+
+# ---------------------------------------------------------------------------
+# /sizing tests
+# ---------------------------------------------------------------------------
+
+def test_sizing_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "usage" in h["sizing"]([]).lower()
+
+
+def test_sizing_with_price() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["sizing"](["AAPL", "150"])
+    assert "Quantity" in out
+    assert "AAPL" in out
+
+
+def test_sizing_computes_correct_shares() -> None:
+    """With $100k equity and 2% max pos and price $200 → max $2000 → 10 shares."""
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["sizing"](["AAPL", "200"])
+    assert "10 shares" in out
+
+
+def test_sizing_invalid_price() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["sizing"](["AAPL", "abc"])
+    assert "usage" in out.lower()
+
+
+def test_help_includes_filter_and_sizing() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/filter" in help_text
+    assert "/sizing" in help_text

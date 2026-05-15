@@ -2816,6 +2816,172 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _filter(args: list[str]) -> str:
+        """Screen the active watchlist by signal criteria.
+
+        Usage:
+          /filter                   — score >= 0 (positive signals only)
+          /filter score N           — score >= N (e.g. /filter score 30)
+          /filter rsi oversold      — RSI < 35
+          /filter rsi overbought    — RSI > 65
+          /filter bull              — EMA-20 > EMA-50 (bullish trend)
+          /filter bear              — EMA-20 < EMA-50 (bearish trend)
+        """
+        if data is None:
+            return "Data client not wired."
+
+        # Determine the active watchlist
+        symbols: list[str] = list(static_watchlist)
+        if get_wsb_extras is not None:
+            symbols += list(get_wsb_extras())
+        if db_path is not None:
+            from amms.data.dynamic_watchlist import load as load_dyn
+            symbols += list(load_dyn(db_path))
+        symbols = list(dict.fromkeys(s.upper() for s in symbols))  # dedupe
+
+        if not symbols:
+            return "Watchlist is empty. Add tickers with /add SYM."
+
+        # Parse filter criteria
+        mode = "score"
+        threshold = 0.0
+        if args:
+            if args[0].lower() == "score":
+                mode = "score"
+                threshold = float(args[1]) if len(args) > 1 else 0.0
+            elif args[0].lower() == "rsi":
+                mode = "rsi_" + (args[1].lower() if len(args) > 1 else "oversold")
+            elif args[0].lower() in ("bull", "bullish"):
+                mode = "bull"
+            elif args[0].lower() in ("bear", "bearish"):
+                mode = "bear"
+
+        from amms.features.momentum import ema as compute_ema, n_day_return, rsi as compute_rsi
+        from amms.features.volatility import realized_vol
+
+        matches: list[tuple[str, float, str]] = []
+        for sym in symbols[:30]:  # cap scan to 30 tickers
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            if not bars:
+                continue
+
+            if mode == "score" or mode.startswith("rsi"):
+                r = compute_rsi(bars, 14)
+            else:
+                r = None
+
+            if mode.startswith("rsi"):
+                if r is None:
+                    continue
+                if mode == "rsi_oversold" and r >= 35:
+                    continue
+                if mode == "rsi_overbought" and r <= 65:
+                    continue
+                matches.append((sym, r, f"RSI {r:.1f}"))
+                continue
+
+            if mode in ("bull", "bear"):
+                e20 = compute_ema(bars, 20)
+                e50 = compute_ema(bars, 50)
+                if e20 is None or e50 is None:
+                    continue
+                if mode == "bull" and not (e20 > e50):
+                    continue
+                if mode == "bear" and not (e20 < e50):
+                    continue
+                matches.append((sym, e20 - e50, f"EMA20-EMA50={e20-e50:+.2f}"))
+                continue
+
+            # Score mode
+            score = 0.0
+            if r is not None:
+                score += (50 - r) * 0.6
+            e20 = compute_ema(bars, 20)
+            e50 = compute_ema(bars, 50)
+            if e20 and e50:
+                score += 20 if e20 > e50 else -20
+            mom = n_day_return(bars, 20)
+            if mom is not None:
+                score += mom * 500
+            score = max(-100, min(100, score))
+            if score >= threshold:
+                matches.append((sym, score, f"score {score:+.0f}"))
+
+        if not matches:
+            return f"No tickers match the filter criteria (checked {len(symbols)} symbols)."
+
+        matches.sort(key=lambda x: x[1], reverse=True)
+        lines = [f"Filter results ({len(matches)} of {len(symbols)} tickers):"]
+        for sym, val, label in matches[:15]:
+            lines.append(f"  {sym:<6}  {label}")
+        return "\n".join(lines)
+
+    def _sizing(args: list[str]) -> str:
+        """Show recommended position size for a ticker given current risk settings.
+
+        Usage: /sizing SYM [price]
+        Uses max_position_pct (default 2%) and ATR-14 volatility sizing.
+        """
+        if not args:
+            return "usage: /sizing SYM [price]  (e.g. /sizing AAPL)"
+
+        sym = args[0].upper()
+        try:
+            acc = broker.get_account()
+            equity = float(acc.equity)
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        # Get price
+        if len(args) > 1:
+            try:
+                price = float(args[1])
+            except ValueError:
+                return "usage: /sizing SYM [price]"
+        elif data is not None:
+            try:
+                bars = data.get_bars(sym, limit=2)
+                price = bars[-1].close if bars else 0.0
+            except Exception:
+                price = 0.0
+        else:
+            return "Pass a price: /sizing SYM PRICE  (data client not wired)"
+
+        if price <= 0:
+            return f"Cannot size position: price is 0 for {sym}."
+
+        max_pos_pct = 0.02
+        from amms.risk.rules import position_size
+
+        # ATR sizing if data available
+        atr_val = None
+        if data is not None:
+            try:
+                from amms.features.volatility import atr as compute_atr
+                bars = data.get_bars(sym, limit=20)
+                atr_val = compute_atr(bars, 14)
+            except Exception:
+                pass
+
+        qty = position_size(equity, price, max_pos_pct, atr=atr_val)
+        notional = qty * price
+        lines = [
+            f"Suggested position size for {sym}:",
+            f"  Price:          ${price:.2f}",
+            f"  Equity:         ${equity:,.2f}",
+            f"  Max pos (2%):   ${equity * max_pos_pct:,.2f}",
+            f"  Quantity:       {qty} shares",
+            f"  Notional:       ${notional:,.2f}",
+        ]
+        if atr_val:
+            lines.append(f"  ATR-14:         ${atr_val:.2f}  (volatility-adjusted)")
+        else:
+            lines.append("  ATR:            n/a (using max-pct only)")
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -2863,6 +3029,8 @@ def build_command_handlers(
             "/ema [SYM] — EMA-20 / EMA-50 crossover status\n"
             "/macd [SYM] — MACD(12,26,9) line, signal, histogram\n"
             "/score [SYM] — composite signal score (-100..+100) for a ticker\n"
+            "/filter [score N|rsi oversold|bull|bear] — screen watchlist by signal\n"
+            "/sizing SYM [price] — recommended share quantity given equity + risk\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2965,4 +3133,7 @@ def build_command_handlers(
         "ema": _ema_cmd,
         "macd": _macd_cmd,
         "score": _score,
+        "filter": _filter,
+        "sizing": _sizing,
+        "size": _sizing,
     }
