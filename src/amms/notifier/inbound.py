@@ -5656,6 +5656,64 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _vpdetail_cmd(args: list[str]) -> str:
+        """Detailed volume profile: POC, Value Area, HVN/LVN nodes.
+
+        Usage: /vpdetail [SYM]
+        Shows Point of Control, 70% Value Area, high/low volume nodes,
+        and nearest support/resistance levels from volume distribution.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /vpdetail AAPL)"
+
+        from amms.analysis.volume_profile import compute as vp_compute
+
+        lines = []
+        for sym in symbols[:4]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            result = vp_compute(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 10+ bars with volume)")
+                continue
+
+            va_icon = {
+                "above_va": "⬆️ ",
+                "in_va":    "↔️ ",
+                "below_va": "⬇️ ",
+            }.get(result.price_vs_va, "")
+
+            lines += [
+                f"── {sym} Volume Profile ({result.bars_used} bars) ──",
+                f"  Price:    ${result.current_price:.2f}  {va_icon} {result.price_vs_va}",
+                f"  POC:      ${result.poc:.2f}  ({result.price_vs_poc})",
+                f"  VAH:      ${result.vah:.2f}",
+                f"  VAL:      ${result.val:.2f}",
+                f"  HVNs: {result.hvn_count}  LVNs: {result.lvn_count}",
+            ]
+            if result.nearest_hvn_above:
+                lines.append(f"  HVN above: ${result.nearest_hvn_above:.2f}")
+            if result.nearest_hvn_below:
+                lines.append(f"  HVN below: ${result.nearest_hvn_below:.2f}")
+            if result.nearest_lvn_above:
+                lines.append(f"  LVN above: ${result.nearest_lvn_above:.2f}  (gap zone)")
+            if result.nearest_lvn_below:
+                lines.append(f"  LVN below: ${result.nearest_lvn_below:.2f}  (gap zone)")
+            lines.append(f"  {result.verdict}")
+            lines.append("")
+
+        return "\n".join(lines).rstrip()
+
     def _tstreak_cmd(args: list[str]) -> str:
         """Trade streak analysis: win/loss streaks from trade history.
 
@@ -7090,4 +7148,6 @@ def build_command_handlers(
         "perf": _riskratios_cmd,
         "tstreak": _tstreak_cmd,
         "tradestreak": _tstreak_cmd,
+        "vpdetail": _vpdetail_cmd,
+        "vpd": _vpdetail_cmd,
     }
