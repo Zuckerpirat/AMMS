@@ -3299,6 +3299,83 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _obv_cmd(args: list[str]) -> str:
+        """Show On-Balance Volume trend for positions or a ticker.
+
+        Usage: /obv [SYM]
+        Rising OBV = buying pressure. Falling = selling.
+        Divergence = OBV and price moving in opposite directions.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /obv AAPL)"
+
+        from amms.features.obv import obv as compute_obv
+
+        lines = ["On-Balance Volume (OBV):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=30)
+            except Exception:
+                bars = []
+            result = compute_obv(bars)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a")
+                continue
+            trend_label = "▲ rising" if result.trend == "rising" else ("▼ falling" if result.trend == "falling" else "↔ flat")
+            div_label = ""
+            if result.divergence == "bullish":
+                div_label = "  🟢 bullish div (accumulation)"
+            elif result.divergence == "bearish":
+                div_label = "  🔴 bearish div (distribution)"
+            lines.append(
+                f"  {sym:<6}  OBV {result.obv:+,.0f}  EMA {result.obv_ema:+,.0f}  {trend_label}{div_label}"
+            )
+        return "\n".join(lines)
+
+    def _attribution_cmd(_args: list[str]) -> str:
+        """Show performance attribution: which positions drive portfolio returns.
+
+        Shows each position's weight, P&L, and contribution to total return.
+        """
+        try:
+            from amms.analysis.performance_attribution import compute
+            report = compute(broker)
+        except Exception as e:
+            return f"attribution error: {e!r}"
+
+        if not report.rows:
+            return "no open positions"
+
+        lines = [
+            f"Performance Attribution (total P&L: {report.total_unrealized_pnl:+.2f}  "
+            f"portfolio return: {report.total_return_pct:+.2f}%):"
+        ]
+        for r in report.rows:
+            bar_len = int(abs(r.contribution_pct) * 20)
+            bar = ("█" * bar_len).ljust(4)
+            sign = "+" if r.contribution_pct >= 0 else ""
+            lines.append(
+                f"  {r.symbol:<6}  {r.weight_pct:5.1f}% wt  "
+                f"P&L {r.unrealized_pnl:+8.2f} ({r.unrealized_pnl_pct:+.1f}%)  "
+                f"contrib {sign}{r.contribution_pct:.2f}%  [{bar}]"
+            )
+        if report.top_contributor:
+            lines.append(f"Best: {report.top_contributor}")
+        if report.top_detractor:
+            lines.append(f"Worst: {report.top_detractor}")
+        return "\n".join(lines)
+
     def _sar_cmd(args: list[str]) -> str:
         """Show Parabolic SAR for open positions or a ticker.
 
@@ -4130,6 +4207,8 @@ def build_command_handlers(
             "/watchdog — daily risk watchdog: circuit, regime, P&L, technical warnings\n"
             "/sar [SYM] — Parabolic SAR: trend direction + stop distance\n"
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
+            "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
+            "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -4273,4 +4352,7 @@ def build_command_handlers(
         "wd": _watchdog_cmd,
         "sar": _sar_cmd,
         "trend": _trend_cmd,
+        "obv": _obv_cmd,
+        "attribution": _attribution_cmd,
+        "attr": _attribution_cmd,
     }

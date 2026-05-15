@@ -3206,3 +3206,63 @@ def test_trend_help_included() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/trend" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /obv and /attribution tests
+# ---------------------------------------------------------------------------
+
+def test_obv_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["obv"]([])
+
+
+def test_obv_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_GoodDataClient())
+    out = h["obv"]([])
+    assert "no open positions" in out
+
+
+def test_obv_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["obv"](["AAPL"])
+    assert "AAPL" in out
+    assert "OBV" in out
+
+
+def test_obv_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["obv"]([])
+    assert "AAPL" in out
+
+
+def test_obv_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/obv" in h["help"]([])
+
+
+def test_attribution_shows_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["attribution"]([])
+    assert "AAPL" in out or "attribution" in out.lower() or "P&L" in out
+
+
+def test_attribution_alias_attr() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["attr"] is h["attribution"]
+
+
+def test_attribution_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/attribution" in h["help"]([])
