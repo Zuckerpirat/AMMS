@@ -4925,6 +4925,74 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _volpct_cmd(args: list[str]) -> str:
+        """Volatility percentile rank: where is current vol vs history?
+
+        Usage: /volpct [SYM] [VOL_WINDOW] [HIST_WINDOW]
+        Default: 20-day HV vs 252-day history.
+        Regimes: low (≤25th), normal (≤60th), elevated (≤85th), extreme (>85th).
+        """
+        if data is None:
+            return "Data client not wired."
+
+        sym = None
+        vol_window = 20
+        hist_window = 252
+
+        for arg in args:
+            if arg.isdigit():
+                v = int(arg)
+                if v <= 60:
+                    vol_window = v
+                else:
+                    hist_window = v
+            else:
+                sym = arg.upper()
+
+        if sym is None:
+            try:
+                positions = broker.get_positions()
+                if positions:
+                    sym = positions[0].symbol
+            except Exception:
+                pass
+
+        if sym is None:
+            return "usage: /volpct [SYM] [VOL_WIN] [HIST_WIN]  (e.g. /volpct AAPL 20 252)"
+
+        try:
+            bars = data.get_bars(sym, limit=hist_window + vol_window + 10)
+        except Exception as e:
+            return f"data error for {sym}: {e!r}"
+
+        from amms.analysis.vol_percentile import compute as vp_compute
+
+        result = vp_compute(bars, vol_window=vol_window, history_window=hist_window)
+        if result is None:
+            return (
+                f"Insufficient data for {sym} "
+                f"(need {hist_window + vol_window}+ bars)."
+            )
+
+        REGIME_LABEL = {
+            "low": "Low (compression)",
+            "normal": "Normal",
+            "elevated": "Elevated",
+            "extreme": "Extreme (spike)",
+        }
+
+        lines = [
+            f"── Vol Percentile: {sym} ──",
+            f"  Current HV ({vol_window}d):  {result.realized_vol:.1f}%%",
+            f"  Percentile:        {result.percentile:.1f}th  "
+            f"/ {hist_window}d history",
+            f"  Regime:            {REGIME_LABEL.get(result.regime, result.regime)}",
+            f"  Mean HV:           {result.mean_vol:.1f}%%",
+            f"  Median HV:         {result.median_vol:.1f}%%",
+            f"  Vol-of-vol:        {result.vol_of_vol:.1f}%%",
+        ]
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -5880,4 +5948,6 @@ def build_command_handlers(
         "drawdown": _drawdown_cmd,
         "posdd": _posdd_cmd,
         "pdd": _posdd_cmd,
+        "volpct": _volpct_cmd,
+        "volrank": _volpct_cmd,
     }
