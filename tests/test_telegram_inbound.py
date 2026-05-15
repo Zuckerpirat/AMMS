@@ -2691,3 +2691,26 @@ def test_help_includes_risk2r() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/risk2r" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /rotation tests
+# ---------------------------------------------------------------------------
+
+def test_rotation_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["rotation"]([])
+
+
+def test_rotation_shows_sectors() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["rotation"]([])
+    assert "rotation" in out.lower() or "sector" in out.lower() or "n/a" in out
+
+
+def test_help_includes_rotation() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/rotation" in h["help"]([])

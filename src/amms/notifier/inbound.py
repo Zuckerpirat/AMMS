@@ -3105,6 +3105,34 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _rotation(_args: list[str]) -> str:
+        """Show sector rotation: which SPDR sector ETFs are outperforming SPY.
+
+        Uses 20-day momentum relative to SPY as benchmark.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            from amms.analysis.sector_rotation import detect_rotation
+            sectors = detect_rotation(data, n=20)
+        except Exception as e:
+            return f"sector rotation error: {e!r}"
+
+        if not sectors:
+            return "No sector rotation data available."
+
+        lines = ["Sector rotation (20d momentum vs SPY):"]
+        for s in sectors:
+            if s.momentum_20d is None:
+                lines.append(f"  {s.sector:<22} {s.etf:<5}  n/a")
+                continue
+            trend_sym = "📈 in" if s.trend == "in" else ("📉 out" if s.trend == "out" else "↔️ neutral")
+            vs_str = f"{s.vs_spy:+.1f}% vs SPY" if s.vs_spy is not None else ""
+            lines.append(
+                f"  {s.sector:<22} {s.etf:<5}  {s.momentum_20d:+.1f}%  {vs_str}  {trend_sym}"
+            )
+        return "\n".join(lines)
+
     def _risk2r(_args: list[str]) -> str:
         """Show current open P&L for each position in terms of risk units (R).
 
@@ -3548,6 +3576,7 @@ def build_command_handlers(
             "/stopopt [SYM] — suggest stop-loss % based on ATR (tight/balanced/wide)\n"
             "/chart — ASCII equity curve sparkline from equity history\n"
             "/risk2r — show open P&L per position in R-units (multiples of initial risk)\n"
+            "/rotation — sector rotation: which sectors outperform SPY (20d momentum)\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3672,4 +3701,6 @@ def build_command_handlers(
         "curve": _chart,
         "risk2r": _risk2r,
         "r": _risk2r,
+        "rotation": _rotation,
+        "sectors2": _rotation,
     }
