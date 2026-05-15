@@ -5656,6 +5656,50 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _tstreak_cmd(args: list[str]) -> str:
+        """Trade streak analysis: win/loss streaks from trade history.
+
+        Usage: /tstreak [LIMIT]  (default 100 recent trades)
+        Shows current streak, longest streaks, recent form, and tilt risk.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 100
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 500))
+            except ValueError:
+                pass
+
+        from amms.analysis.trade_streak import compute as streak_compute
+
+        result = streak_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 5+ completed trades)."
+
+        streak_icon = "🔥" if result.hot_hand else ("🧊" if result.tilt_risk else "↔️ ")
+        form_icon = {
+            "hot": "🔥", "warm": "🟢", "cool": "🟡", "icy": "🔵",
+        }.get(result.recent_form_label, "")
+        mom_icon = {
+            "improving": "📈", "declining": "📉", "stable": "↔️ ",
+        }.get(result.momentum, "")
+
+        lines = [
+            f"── Trade Streak ({result.n_trades} trades) ──",
+            f"  Current streak:   {streak_icon} {result.current_streak_label}",
+            f"  Longest win run:  {result.longest_win_streak}W",
+            f"  Longest loss run: {result.longest_loss_streak}L",
+            "",
+            f"  Recent form (last 10): {result.recent_form:.0f}%%  {form_icon} {result.recent_form_label}",
+            f"  Momentum:              {mom_icon} {result.momentum}",
+            f"  Overall win rate:      {result.overall_win_rate:.1f}%%",
+            "",
+            f"  {result.verdict}",
+        ]
+        return "\n".join(lines)
+
     def _riskratios_cmd(args: list[str]) -> str:
         """Risk-adjusted performance: Sharpe, Sortino, Calmar.
 
@@ -7044,4 +7088,6 @@ def build_command_handlers(
         "pbeta": _beta_cmd,
         "riskratios": _riskratios_cmd,
         "perf": _riskratios_cmd,
+        "tstreak": _tstreak_cmd,
+        "tradestreak": _tstreak_cmd,
     }
