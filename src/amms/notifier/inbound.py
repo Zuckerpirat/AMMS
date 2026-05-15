@@ -5224,6 +5224,51 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _heat_cmd(args: list[str]) -> str:
+        """Position heat scores: composite rating for each open position.
+
+        Usage: /heat
+        Scores 0-100 on P&L, momentum, drawdown health, and liquidity.
+        hot≥80, warm≥60, neutral≥40, cool≥20, cold<20.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        from amms.analysis.position_heat import analyze as ph_analyze
+
+        report = ph_analyze(broker, data)
+        if report is None:
+            return "No open positions."
+
+        STATUS_ICON = {
+            "hot": "🔥",
+            "warm": "▲",
+            "neutral": "→",
+            "cool": "▼",
+            "cold": "❄",
+        }
+
+        lines = [
+            f"── Position Heat Report ──",
+            f"  Avg score:  {report.avg_score:.0f}/100"
+            f"  |  hot: {report.n_hot}  cold: {report.n_cold}",
+            "",
+        ]
+        for ph in report.positions:
+            icon = STATUS_ICON.get(ph.status, "?")
+            lines.append(
+                f"  {icon} {ph.symbol:<6}  {ph.score:.0f}pt [{ph.status}]"
+                f"  PnL {ph.pnl_pct:+.1f}%%"
+            )
+            lines.append(
+                f"     pnl {ph.pnl_score:.0f}"
+                f"  mom {ph.momentum_score:.0f}"
+                f"  DD {ph.drawdown_score:.0f}"
+                f"  liq {ph.liquidity_score:.0f}"
+            )
+
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -6189,4 +6234,6 @@ def build_command_handlers(
         "liq": _liquidity_cmd,
         "regime": _regime_cmd,
         "mregime": _regime_cmd,
+        "heat": _heat_cmd,
+        "pheat": _heat_cmd,
     }
