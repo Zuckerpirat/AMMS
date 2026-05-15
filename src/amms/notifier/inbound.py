@@ -734,8 +734,18 @@ def build_command_handlers(
                 f"({stats.num_buys} buys / {stats.num_sells} sells)",
                 f"  Closed round-trips: {stats.closed_round_trips}",
                 f"  Win rate: {stats.win_rate * 100:.1f}%",
-                f"  Max drawdown: {stats.max_drawdown_pct * 100:+.2f}%",
+                f"  Max drawdown: {stats.max_drawdown_pct:+.2f}%",
             ]
+            # Enhanced stats (may not be present on older BacktestStats)
+            if hasattr(stats, "sharpe") and stats.sharpe != 0:
+                lines.append(f"  Sharpe (ann.): {stats.sharpe:.2f}")
+            if hasattr(stats, "profit_factor") and stats.profit_factor > 0:
+                lines.append(f"  Profit factor: {stats.profit_factor:.2f}")
+            if hasattr(stats, "avg_win") and stats.avg_win > 0:
+                lines.append(
+                    f"  Avg win: ${stats.avg_win:.2f}  |  "
+                    f"Avg loss: ${getattr(stats, 'avg_loss', 0):.2f}"
+                )
             return "\n".join(lines)
         except AttributeError:
             return f"backtest result: {stats}"

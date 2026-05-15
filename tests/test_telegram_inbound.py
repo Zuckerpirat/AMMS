@@ -477,7 +477,7 @@ def test_backtest_handler_renders_stats() -> None:
         num_sells = 14
         closed_round_trips = 14
         win_rate = 0.64
-        max_drawdown_pct = -0.08
+        max_drawdown_pct = -8.0
 
     p = PauseFlag()
     h = build_command_handlers(

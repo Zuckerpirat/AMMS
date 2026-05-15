@@ -8,6 +8,7 @@ import pytest
 
 from amms.backtest.engine import BacktestConfig, BacktestResult, Portfolio, Trade
 from amms.backtest.stats import (
+    BacktestStats,
     compute_stats,
     write_equity_curve_csv,
     write_trades_csv,
@@ -104,3 +105,66 @@ def test_write_equity_curve_csv(tmp_path: Path) -> None:
     assert rows[0] == ["date", "equity"]
     assert rows[1] == ["2025-01-01", "100000.00"]
     assert rows[2] == ["2025-01-02", "101000.50"]
+
+
+def _make_result_with_trades(equity_curve, trades_def):
+    """Helper: build BacktestResult from a list of (symbol, side, price, qty) tuples."""
+    trades = [
+        Trade(date="2026-01-01", symbol=sym, side=side, price=price, qty=qty, reason="test")
+        for sym, side, price, qty in trades_def
+    ]
+    return _result(trades, equity_curve)
+
+
+def test_profit_factor_mixed():
+    """2 wins ($200 each), 1 loss ($100) → profit_factor = 2.0"""
+    result = _make_result_with_trades(
+        equity_curve=[("d1", 100_000), ("d2", 101_000), ("d3", 99_000)],
+        trades_def=[
+            ("AAPL", "buy",  100.0, 10),
+            ("AAPL", "sell", 120.0, 10),  # +200 win
+            ("MSFT", "buy",  100.0, 10),
+            ("MSFT", "sell",  90.0, 10),  # -100 loss
+        ],
+    )
+    stats = compute_stats(result)
+    assert stats.closed_round_trips == 2
+    assert stats.win_rate == 0.5
+    assert abs(stats.profit_factor - 2.0) < 0.01
+    assert abs(stats.avg_win - 200.0) < 0.01
+    assert abs(stats.avg_loss - 100.0) < 0.01
+
+
+def test_sharpe_computed_from_equity_curve():
+    equity = [
+        ("2026-01-01", 100_000),
+        ("2026-01-02", 101_000),
+        ("2026-01-03", 99_500),
+        ("2026-01-04", 102_000),
+        ("2026-01-05", 100_800),
+    ]
+    result = _make_result_with_trades(equity_curve=equity, trades_def=[])
+    stats = compute_stats(result)
+    assert isinstance(stats.sharpe, float)
+
+
+def test_new_stats_fields_present():
+    stats = BacktestStats(
+        initial_equity=100_000,
+        final_equity=110_000,
+        total_return_pct=10.0,
+        num_trades=10,
+        num_buys=5,
+        num_sells=5,
+        closed_round_trips=5,
+        win_rate=0.6,
+        max_drawdown_pct=-5.0,
+        sharpe=1.5,
+        profit_factor=2.0,
+        avg_win=300.0,
+        avg_loss=150.0,
+    )
+    assert stats.sharpe == 1.5
+    assert stats.profit_factor == 2.0
+    assert stats.avg_win == 300.0
+    assert stats.avg_loss == 150.0
