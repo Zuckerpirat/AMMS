@@ -1482,6 +1482,116 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
+    def _sentiment(args: list[str]) -> str:
+        """Show current WSB sentiment for a symbol.
+
+        Usage: /sentiment [SYM]  — defaults to open positions if no symbol given
+        """
+        syms: list[str] = [a.upper() for a in args[:3]] if args else []
+        if not syms:
+            try:
+                positions = broker.get_positions()
+                syms = [p.symbol for p in positions[:5]]
+            except Exception:
+                pass
+        if not syms:
+            return "No symbols. Try /sentiment AAPL NVDA"
+
+        try:
+            from amms.features.sentiment import ApeWisdomCollector
+
+            coll = ApeWisdomCollector()
+            trending = coll.fetch_trending(filter="all-stocks", page=1)
+        except Exception as e:
+            return f"WSB data unavailable: {e!r}"
+
+        by_sym = {item["ticker"].upper(): item for item in trending if item.get("ticker")}
+        lines = [f"WSB sentiment for: {', '.join(syms)}"]
+        for sym in syms:
+            if sym in by_sym:
+                item = by_sym[sym]
+                rank = item.get("rank", "?")
+                mentions = item.get("mentions", 0)
+                mention_24h = item.get("mentions_24h", 0)
+                lines.append(
+                    f"  {sym}: rank #{rank}, {mentions} mentions total, "
+                    f"{mention_24h} in last 24h"
+                )
+            else:
+                lines.append(f"  {sym}: not in top trending")
+        return "\n".join(lines)
+
+    def _profit(args: list[str]) -> str:
+        """Show realized P&L grouped by period.
+
+        Usage: /profit [day|week|month|all]  — default: week
+        """
+        if conn is None:
+            return "DB not wired."
+
+        period = (args[0].lower() if args else "week")
+        if period not in ("day", "week", "month", "all"):
+            return "usage: /profit [day|week|month|all]"
+
+        if period == "day":
+            date_filter = "date('now')"
+        elif period == "week":
+            date_filter = "date('now', '-7 day')"
+        elif period == "month":
+            date_filter = "date('now', '-30 day')"
+        else:
+            date_filter = "'1970-01-01'"
+
+        rows = conn.execute(
+            "SELECT symbol, side, qty, filled_avg_price, submitted_at "
+            "FROM orders WHERE status = 'filled' "
+            f"AND substr(submitted_at, 1, 10) >= {date_filter} "
+            "ORDER BY symbol, submitted_at"
+        ).fetchall()
+
+        from collections import deque
+
+        buys: dict[str, deque] = {}
+        pairs: list[dict] = []
+        for r in rows:
+            sym = r["symbol"]
+            side = r["side"]
+            qty = float(r["qty"])
+            price = r["filled_avg_price"]
+            if price is None:
+                continue
+            price = float(price)
+            if side == "buy":
+                if sym not in buys:
+                    buys[sym] = deque()
+                buys[sym].append({"qty": qty, "price": price})
+            elif side == "sell" and sym in buys and buys[sym]:
+                buy = buys[sym].popleft()
+                realized = (price - buy["price"]) * min(qty, buy["qty"])
+                pairs.append({"symbol": sym, "realized": realized})
+
+        if not pairs:
+            return f"No completed trades in the selected period ({period})."
+
+        total = sum(p["realized"] for p in pairs)
+        wins = sum(1 for p in pairs if p["realized"] > 0)
+        losses = len(pairs) - wins
+
+        by_sym: dict[str, float] = {}
+        for p in pairs:
+            by_sym[p["symbol"]] = by_sym.get(p["symbol"], 0.0) + p["realized"]
+
+        arrow = "▲" if total >= 0 else "▼"
+        lines = [
+            f"Realized P&L — {period}:",
+            f"  Total: {arrow} ${total:+.2f}  ({wins}W / {losses}L)",
+            "By symbol:",
+        ]
+        for sym, pnl in sorted(by_sym.items(), key=lambda x: -abs(x[1])):
+            a = "▲" if pnl >= 0 else "▼"
+            lines.append(f"  {sym}: {a} ${pnl:+.2f}")
+        return "\n".join(lines)
+
     def _upcoming(_args: list[str]) -> str:
         """Show upcoming earnings dates for held positions (next 14 days)."""
         try:
@@ -1776,6 +1886,8 @@ def build_command_handlers(
             "/scan — run WSB Auto-Discovery now\n"
             "/isin SYM — look up the ISIN for a ticker (debug)\n"
             "/buylist — preview what the bot would buy/sell right now\n"
+            "/sentiment [SYM] — WSB mention rank and sentiment for a ticker\n"
+            "/profit [day|week|month|all] — realized P&L breakdown by period\n"
             "/upcoming — upcoming earnings dates for held positions (14d)\n"
             "/compare SYM1 SYM2 — side-by-side ticker comparison (price, change, sector)\n"
             "/riskreport — full risk diagnostic (drawdown, sector conc., correlation)\n"
@@ -1841,4 +1953,6 @@ def build_command_handlers(
         "upcoming": _upcoming,
         "earnings": _upcoming,  # alias
         "compare": _compare,
+        "sentiment": _sentiment,
+        "profit": _profit,
     }

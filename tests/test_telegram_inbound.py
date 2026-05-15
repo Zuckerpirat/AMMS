@@ -1193,3 +1193,73 @@ def test_help_includes_upcoming_and_compare() -> None:
     help_text = h["help"]([])
     assert "/upcoming" in help_text
     assert "/compare" in help_text
+
+
+def test_sentiment_no_args_uses_positions(monkeypatch: pytest.MonkeyPatch) -> None:
+    from amms.features import sentiment as sent_mod
+
+    class _FakeColl:
+        def fetch_trending(self, *, filter="wallstreetbets", page=1):
+            return [{"ticker": "AAPL", "rank": 5, "mentions": 200, "mentions_24h": 30}]
+
+    monkeypatch.setattr(sent_mod, "ApeWisdomCollector", _FakeColl)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["sentiment"]([])
+    assert "AAPL" in out
+    assert "200" in out
+
+
+def test_sentiment_unknown_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
+    from amms.features import sentiment as sent_mod
+
+    class _FakeColl:
+        def fetch_trending(self, *, filter="wallstreetbets", page=1):
+            return []
+
+    monkeypatch.setattr(sent_mod, "ApeWisdomCollector", _FakeColl)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["sentiment"](["ZZZZ"])
+    assert "not in top trending" in out
+
+
+def test_profit_handler_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["profit"]([]) == "DB not wired."
+
+
+def test_profit_handler_shows_realized_pnl() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["profit"](["all"])
+    assert "NVDA" in out
+    # 10 shares * (115 - 100) = 150 profit
+    assert "150" in out
+
+
+def test_profit_handler_period_filter() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    # Old trades → nothing in 'day' period
+    out = h["profit"](["day"])
+    assert "No completed trades" in out
+
+
+def test_profit_handler_invalid_period() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["profit"](["yearly"])
+    assert "usage" in out.lower()
+
+
+def test_help_includes_sentiment_and_profit() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/sentiment" in help_text
+    assert "/profit" in help_text
