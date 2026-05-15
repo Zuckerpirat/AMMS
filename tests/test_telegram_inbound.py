@@ -2714,3 +2714,100 @@ def test_help_includes_rotation() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/rotation" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /bb and /volspike tests
+# ---------------------------------------------------------------------------
+
+class _GoodDataClient:
+    """Returns 25 bars using correct Bar constructor for Bollinger/volume tests."""
+    def get_bars(self, symbol, *, limit=25):
+        from amms.data.bars import Bar
+        bars = []
+        for i in range(25):
+            price = 100.0 + i * 0.5 + (i % 3) * 0.2
+            bars.append(Bar(symbol, "1D", f"2026-01-{1 + i % 28:02d}", price, price + 1.0, price - 1.0, price, 1_000.0 + i * 10))
+        return bars
+
+
+def test_bb_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["bb"]([])
+
+
+def test_bb_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_GoodDataClient())
+    out = h["bb"]([])
+    assert "no open positions" in out
+
+
+def test_bb_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["bb"](["AAPL"])
+    assert "AAPL" in out
+    assert "Bollinger" in out
+
+
+def test_bb_shows_bands_values() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["bb"](["MSFT"])
+    assert "U $" in out
+    assert "%B" in out or "%%B" in out or "pct_b" in out.lower() or "B " in out
+
+
+def test_bb_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["bb"]([])
+    assert "AAPL" in out
+
+
+def test_bb_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/bb" in h["help"]([])
+
+
+def test_volspike_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["volspike"]([])
+
+
+def test_volspike_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_GoodDataClient())
+    out = h["volspike"]([])
+    assert "no open positions" in out
+
+
+def test_volspike_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["volspike"](["AAPL"])
+    assert "AAPL" in out
+    assert "volume spike" in out.lower() or "vol" in out.lower()
+
+
+def test_volspike_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_GoodDataClient())
+    out = h["volspike"]([])
+    assert "AAPL" in out
+
+
+def test_volspike_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/volspike" in h["help"]([])

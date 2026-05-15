@@ -3105,6 +3105,103 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _bb_cmd(args: list[str]) -> str:
+        """Show Bollinger Bands (20,2) for open positions or a specified ticker.
+
+        Usage: /bb [SYM]
+        %B: 0 = at lower band, 0.5 = at middle, 1 = at upper band.
+        >1 or <0 = price outside bands (potential reversal signal).
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /bb AAPL)"
+
+        from amms.features.bollinger import bollinger
+
+        lines = ["Bollinger Bands (20,2):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=25)
+            except Exception:
+                bars = []
+            bb = bollinger(bars, 20)
+            if bb is None:
+                lines.append(f"  {sym:<6}  n/a (not enough history)")
+                continue
+            price = bars[-1].close if bars else 0.0
+            if bb.pct_b > 1.0:
+                zone = "🔴 above upper band"
+            elif bb.pct_b < 0.0:
+                zone = "🟢 below lower band"
+            elif bb.pct_b > 0.75:
+                zone = "↑ near upper"
+            elif bb.pct_b < 0.25:
+                zone = "↓ near lower"
+            else:
+                zone = "↔️ mid"
+            lines.append(
+                f"  {sym:<6}  ${price:.2f}  "
+                f"U ${bb.upper:.2f}  M ${bb.middle:.2f}  L ${bb.lower:.2f}  "
+                f"%%B {bb.pct_b:.2f}  BW {bb.bandwidth:.3f}  {zone}"
+            )
+        return "\n".join(lines)
+
+    def _volspike(args: list[str]) -> str:
+        """Detect volume spikes for open positions or a specified ticker.
+
+        A spike = current volume > 2× 20-day average volume.
+        Usage: /volspike [SYM]
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /volspike AAPL)"
+
+        from amms.features.bollinger import volume_spike
+
+        lines = ["Volume spike check (vs 20-day average):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=25)
+            except Exception:
+                bars = []
+            ratio = volume_spike(bars, 20)
+            if ratio is None:
+                lines.append(f"  {sym:<6}  n/a")
+                continue
+            if ratio >= 3.0:
+                label = "🔥 extreme spike"
+            elif ratio >= 2.0:
+                label = "⚠️  spike"
+            elif ratio >= 1.5:
+                label = "↑ elevated"
+            else:
+                label = "→ normal"
+            current_vol = bars[-1].volume if bars else 0
+            lines.append(
+                f"  {sym:<6}  vol {current_vol:,.0f}  ratio {ratio:.1f}×  {label}"
+            )
+        return "\n".join(lines)
+
     def _rotation(_args: list[str]) -> str:
         """Show sector rotation: which SPDR sector ETFs are outperforming SPY.
 
@@ -3577,6 +3674,8 @@ def build_command_handlers(
             "/chart — ASCII equity curve sparkline from equity history\n"
             "/risk2r — show open P&L per position in R-units (multiples of initial risk)\n"
             "/rotation — sector rotation: which sectors outperform SPY (20d momentum)\n"
+            "/bb [SYM] — Bollinger Bands for open positions or a single ticker\n"
+            "/volspike [SYM] — volume spike ratio vs 20-day average\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3703,4 +3802,6 @@ def build_command_handlers(
         "r": _risk2r,
         "rotation": _rotation,
         "sectors2": _rotation,
+        "bb": _bb_cmd,
+        "volspike": _volspike,
     }
