@@ -3299,6 +3299,51 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _candles_cmd(args: list[str]) -> str:
+        """Detect candlestick patterns for open positions or a ticker.
+
+        Usage: /candles [SYM]
+        Detects: Doji, Hammer, Shooting Star, Marubozu, Spinning Top,
+        Bullish/Bearish Engulfing, Harami.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /candles AAPL)"
+
+        from amms.features.candlestick import detect_patterns
+
+        lines = ["Candlestick Pattern Analysis (last 5 bars):"]
+        found_any = False
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=10)
+            except Exception:
+                bars = []
+            patterns = detect_patterns(bars, lookback=5)
+            price = bars[-1].close if bars else 0.0
+            if not patterns:
+                lines.append(f"  {sym:<6}  ${price:.2f}  no significant patterns")
+            else:
+                found_any = True
+                for p in patterns:
+                    dir_icon = "🟢" if p.direction == "bullish" else ("🔴" if p.direction == "bearish" else "↔️ ")
+                    lines.append(
+                        f"  {sym:<6}  ${price:.2f}  {dir_icon} {p.name}  "
+                        f"(conf {p.confidence:.0%})"
+                    )
+                    lines.append(f"         {p.description}")
+        return "\n".join(lines)
+
     def _fib_cmd(args: list[str]) -> str:
         """Show Fibonacci retracement and extension levels for a ticker.
 
@@ -4684,6 +4729,7 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/candles [SYM] — candlestick pattern detector (Doji/Hammer/Engulfing/etc.)\n"
             "/fib [SYM] — Fibonacci retracement/extension levels from swing high/low\n"
             "/journalstats — extended trade stats: expectancy, Sharpe, streaks, hold\n"
             "/stress [SCENARIO] — portfolio stress test (2008/covid/dotcom/custom)\n"
@@ -4844,6 +4890,8 @@ def build_command_handlers(
         "mc": _montecarlo_cmd,
         "scan2": _scan2_cmd,
         "signals": _scan2_cmd,
+        "candles": _candles_cmd,
+        "patterns": _candles_cmd,
         "fib": _fib_cmd,
         "fibonacci": _fib_cmd,
         "journalstats": _journalstats_cmd,
