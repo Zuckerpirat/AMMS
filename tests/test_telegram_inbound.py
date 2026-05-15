@@ -891,3 +891,95 @@ def test_help_includes_journal() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/journal" in h["help"]([])
+
+
+def test_budget_handler_shows_slots() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["budget"]([])
+    assert "Budget summary" in out
+    assert "Cash:" in out
+    assert "Equity:" in out
+    assert "slots" in out.lower()
+
+
+def test_corr_handler_needs_two_positions() -> None:
+    import sqlite3 as _sqlite
+
+    conn = _sqlite.connect(":memory:", check_same_thread=False)
+    conn.row_factory = _sqlite.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    # _FakeBroker returns only 1 position
+    out = h["corr"]([])
+    assert "at least 2" in out
+
+
+def test_corr_handler_with_db_data() -> None:
+    import sqlite3 as _sqlite
+
+    conn = _sqlite.connect(":memory:", check_same_thread=False)
+    conn.row_factory = _sqlite.Row
+    conn.execute(
+        "CREATE TABLE bars (symbol TEXT, timeframe TEXT, ts TEXT, "
+        "open REAL, high REAL, low REAL, close REAL, volume REAL, "
+        "PRIMARY KEY (symbol, timeframe, ts))"
+    )
+    # Insert 20 bars for AAPL and MSFT
+    import math
+    for i in range(20):
+        ts = f"2026-04-{i+1:02d}T00:00:00Z"
+        aapl_close = 100 + math.sin(i) * 5
+        msft_close = 200 + math.sin(i) * 8
+        conn.execute(
+            "INSERT INTO bars VALUES (?,?,?,?,?,?,?,?)",
+            ("AAPL", "1Day", ts, aapl_close, aapl_close+1, aapl_close-1, aapl_close, 1_000_000),
+        )
+        conn.execute(
+            "INSERT INTO bars VALUES (?,?,?,?,?,?,?,?)",
+            ("MSFT", "1Day", ts, msft_close, msft_close+1, msft_close-1, msft_close, 800_000),
+        )
+    conn.commit()
+
+    class _TwoBroker:
+        def get_account(self):
+            return _FakeAccount()
+
+        def get_positions(self):
+            class P1:
+                symbol = "AAPL"
+                qty = 5.0
+                avg_entry_price = 100.0
+                market_value = 500.0
+                unrealized_pl = 0.0
+
+            class P2:
+                symbol = "MSFT"
+                qty = 3.0
+                avg_entry_price = 200.0
+                market_value = 600.0
+                unrealized_pl = 0.0
+
+            return [P1(), P2()]
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_TwoBroker(), pause=p, conn=conn)
+    out = h["corr"]([])
+    assert "AAPL" in out
+    assert "MSFT" in out
+    assert "correlation" in out.lower() or "↔" in out
+
+
+def test_corr_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["corr"]([])
+    assert "DB not wired" in out
+
+
+def test_help_includes_budget_and_corr() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/budget" in help_text
+    assert "/corr" in help_text

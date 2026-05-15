@@ -1247,6 +1247,117 @@ def build_command_handlers(
                 lines.append(f"    {url}")
         return "\n".join(lines)
 
+    def _budget(_args: list[str]) -> str:
+        """Show available buying power and estimated position slots remaining."""
+        try:
+            acc = broker.get_account()
+        except Exception as e:
+            return f"broker error: {e!r}"
+        try:
+            positions = broker.get_positions()
+        except Exception:
+            positions = []
+
+        equity = float(acc.equity)
+        cash = float(acc.cash)
+
+        # Read risk config from overrides if available
+        max_pos_pct = 0.02  # default
+        max_positions = 5  # default
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                overrides = get_overrides(conn)
+                if "stop_loss" in overrides:
+                    pass  # no max_position_pct override yet
+            except Exception:
+                pass
+
+        max_position_dollars = equity * max_pos_pct
+        open_slots = max(0, max_positions - len(positions))
+        affordable_slots = int(cash // max_position_dollars) if max_position_dollars > 0 else 0
+        usable_slots = min(open_slots, affordable_slots)
+
+        lines = [
+            f"Budget summary:",
+            f"  Equity:        ${equity:>12,.2f}",
+            f"  Cash:          ${cash:>12,.2f}",
+            f"  Max per pos:   ${max_position_dollars:>12,.2f}  ({max_pos_pct:.0%} of equity)",
+            f"  Open positions: {len(positions)} / {max_positions}",
+            f"  Available slots: {open_slots}",
+            f"  Affordable slots: {affordable_slots}",
+            f"  Usable slots: {usable_slots}",
+        ]
+        if usable_slots == 0:
+            if len(positions) >= max_positions:
+                lines.append("→ Position limit reached. Sell to free a slot.")
+            else:
+                lines.append("→ Insufficient cash for another full position.")
+        return "\n".join(lines)
+
+    def _corr(_args: list[str]) -> str:
+        """Show pairwise return correlation between held positions (30-day bars)."""
+        if conn is None:
+            return "DB not wired."
+
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+        if len(positions) < 2:
+            return "Need at least 2 open positions to compute correlation."
+
+        syms = [p.symbol for p in positions]
+
+        # Load closes from the DB (last 30 bars per symbol)
+        closes: dict[str, list[float]] = {}
+        for sym in syms:
+            rows = conn.execute(
+                "SELECT close FROM bars WHERE symbol = ? AND timeframe = '1Day' "
+                "ORDER BY ts DESC LIMIT 30",
+                (sym,),
+            ).fetchall()
+            if rows and len(rows) >= 5:
+                closes[sym] = [float(r[0]) for r in reversed(rows)]
+
+        present = [s for s in syms if s in closes]
+        if len(present) < 2:
+            return "Not enough bar history in DB — wait for a few ticks."
+
+        # Compute daily returns
+        returns: dict[str, list[float]] = {}
+        for sym in present:
+            c = closes[sym]
+            returns[sym] = [(c[i] - c[i - 1]) / c[i - 1] for i in range(1, len(c))]
+
+        import math
+
+        def _corr_pair(a: list[float], b: list[float]) -> float:
+            n = min(len(a), len(b))
+            if n < 2:
+                return float("nan")
+            a, b = a[:n], b[:n]
+            ma = sum(a) / n
+            mb = sum(b) / n
+            num = sum((ai - ma) * (bi - mb) for ai, bi in zip(a, b))
+            sa = math.sqrt(sum((ai - ma) ** 2 for ai in a))
+            sb = math.sqrt(sum((bi - mb) ** 2 for bi in b))
+            if sa == 0 or sb == 0:
+                return float("nan")
+            return num / (sa * sb)
+
+        lines = [f"Return correlation ({len(present)} positions, ~30-day):"]
+        for i, s1 in enumerate(present):
+            for s2 in present[i + 1:]:
+                c = _corr_pair(returns[s1], returns[s2])
+                if math.isnan(c):
+                    lines.append(f"  {s1} ↔ {s2}: insufficient data")
+                else:
+                    level = "high" if abs(c) >= 0.7 else "moderate" if abs(c) >= 0.4 else "low"
+                    lines.append(f"  {s1} ↔ {s2}: {c:+.2f}  [{level}]")
+
+        return "\n".join(lines)
+
     def _summary(_args: list[str]) -> str:
         """On-demand AI narrative of the current portfolio state."""
         if conn is None:
@@ -1348,6 +1459,8 @@ def build_command_handlers(
             "/scan — run WSB Auto-Discovery now\n"
             "/isin SYM — look up the ISIN for a ticker (debug)\n"
             "/buylist — preview what the bot would buy/sell right now\n"
+            "/budget — available buying power and position slot breakdown\n"
+            "/corr — pairwise return correlation between held positions\n"
             "/journal [SYM] — completed trade pairs (BUY→SELL) with realized P&L\n"
             "/top — best and worst open positions by unrealized P&L %%\n"
             "/news [SYM] — recent news headlines for a ticker (or open positions)\n"
@@ -1396,4 +1509,7 @@ def build_command_handlers(
         "top": _top,
         "news": _news,
         "journal": _journal,
+        "budget": _budget,
+        "corr": _corr,
+        "correlation": _corr,
     }
