@@ -3299,6 +3299,59 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _fib_cmd(args: list[str]) -> str:
+        """Show Fibonacci retracement and extension levels for a ticker.
+
+        Usage: /fib [SYM]
+        Auto-detects swing high/low from last 50 bars.
+        Shows key levels (23.6%, 38.2%, 50%, 61.8%, 78.6%) with nearest
+        support and resistance highlighted.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /fib AAPL)"
+
+        from amms.features.fibonacci import fibonacci
+
+        lines = []
+        for sym in symbols[:3]:
+            try:
+                bars = data.get_bars(sym, limit=55)
+            except Exception:
+                bars = []
+            result = fibonacci(bars)
+            if result is None:
+                lines.append(f"{sym}: n/a (not enough history)")
+                continue
+
+            dir_label = "▲ uptrend" if result.direction == "uptrend" else "▼ downtrend"
+            lines.append(
+                f"── {sym} Fibonacci ({dir_label}  "
+                f"swing L ${result.swing_low:.2f}  H ${result.swing_high:.2f}) ──"
+            )
+            lines.append(f"  Current price: ${result.current_price:.2f}")
+            lines.append("")
+
+            for lv in result.levels:
+                marker = ""
+                if result.nearest_support and abs(lv.price - result.nearest_support.price) < 0.001:
+                    marker = "  ← support"
+                elif result.nearest_resistance and abs(lv.price - result.nearest_resistance.price) < 0.001:
+                    marker = "  ← resistance"
+                lines.append(f"  {lv.label:>10}  ${lv.price:.2f}{marker}")
+
+        return "\n".join(lines)
+
     def _journalstats_cmd(_args: list[str]) -> str:
         """Extended trade journal statistics.
 
@@ -4631,6 +4684,7 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/fib [SYM] — Fibonacci retracement/extension levels from swing high/low\n"
             "/journalstats — extended trade stats: expectancy, Sharpe, streaks, hold\n"
             "/stress [SCENARIO] — portfolio stress test (2008/covid/dotcom/custom)\n"
             "/strategy — regime-based strategy recommendation\n"
@@ -4790,6 +4844,8 @@ def build_command_handlers(
         "mc": _montecarlo_cmd,
         "scan2": _scan2_cmd,
         "signals": _scan2_cmd,
+        "fib": _fib_cmd,
+        "fibonacci": _fib_cmd,
         "journalstats": _journalstats_cmd,
         "js": _journalstats_cmd,
         "stress": _stress_cmd,
