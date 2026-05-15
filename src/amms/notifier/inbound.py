@@ -5306,6 +5306,64 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _rsrank_cmd(args: list[str]) -> str:
+        """Relative strength ranking for open positions.
+
+        Usage: /rsrank [LOOKBACK]
+        Ranks positions by return vs portfolio-average benchmark.
+        Default lookback: 20 bars.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if not positions:
+            return "No open positions."
+
+        lookback = 20
+        if args and args[0].isdigit():
+            lookback = max(5, min(int(args[0]), 90))
+
+        bars_map: dict[str, list] = {}
+        for pos in positions:
+            try:
+                bars = data.get_bars(pos.symbol, limit=lookback + 5)
+                if bars:
+                    bars_map[pos.symbol] = bars
+            except Exception:
+                pass
+
+        from amms.analysis.relative_strength import rank as rs_rank
+
+        result = rs_rank(bars_map, lookback=lookback)
+        if result is None:
+            return "Insufficient data to rank positions."
+
+        TREND_ICON = {
+            "outperforming": "▲",
+            "neutral": "→",
+            "underperforming": "▼",
+        }
+
+        lines = [
+            f"── Relative Strength Ranking ({lookback}d) ──",
+            f"  Benchmark (portfolio avg): {result.benchmark_return_pct:+.1f}%%",
+            "",
+            f"  {'#':<3}  {'Sym':<6}  {'RS':>5}  {'Abs%%':>7}  {'Rel%%':>7}",
+        ]
+        for rank_i, row in enumerate(result.rows, 1):
+            icon = TREND_ICON.get(row.trend, "?")
+            lines.append(
+                f"  {rank_i:<3}  {row.symbol:<6}  {row.rs_score:>5.0f}"
+                f"  {row.abs_return_pct:>+6.1f}%%"
+                f"  {row.rel_return_pct:>+6.1f}%%  {icon}"
+            )
+
+        return "\n".join(lines)
+
     def _stopopt_cmd(args: list[str]) -> str:
         """ATR-based stop loss optimizer for open positions.
 
@@ -6380,4 +6438,6 @@ def build_command_handlers(
         "ht": _holdtime_cmd,
         "stopopt": _stopopt_cmd,
         "stop": _stopopt_cmd,
+        "rsrank": _rsrank_cmd,
+        "rs": _rsrank_cmd,
     }
