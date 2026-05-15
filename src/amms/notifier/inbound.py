@@ -2056,6 +2056,103 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _drawdown(_args: list[str]) -> str:
+        """Detailed drawdown analytics: current DD, historical worst, recovery info."""
+        if conn is None:
+            return "DB not wired."
+        try:
+            acc = broker.get_account()
+            current_equity = float(acc.equity)
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        try:
+            from amms.risk.drawdown import compute_drawdown
+            state = compute_drawdown(conn, current_equity, lookback_days=30)
+        except Exception as e:
+            return f"drawdown error: {e!r}"
+
+        # Compute historical worst drawdown from full equity_snapshots history
+        try:
+            rows = conn.execute(
+                "SELECT equity FROM equity_snapshots ORDER BY ts ASC"
+            ).fetchall()
+            equities = [float(r[0]) for r in rows if r[0] is not None]
+        except Exception:
+            equities = []
+
+        worst_dd = 0.0
+        recovery_days: int | None = None
+        if len(equities) >= 2:
+            peak = equities[0]
+            in_drawdown = False
+            dd_start = 0
+            for i, eq in enumerate(equities):
+                if eq > peak:
+                    if in_drawdown:
+                        # recovered
+                        if recovery_days is None:
+                            recovery_days = i - dd_start
+                        in_drawdown = False
+                    peak = eq
+                dd = (eq - peak) / peak * 100
+                if dd < worst_dd:
+                    worst_dd = dd
+                    if not in_drawdown:
+                        in_drawdown = True
+                        dd_start = i
+
+        sign = "" if state.drawdown_pct >= 0 else ""
+        lines = [
+            "Drawdown analytics (30-day window):",
+            f"  Peak equity:    ${state.peak_equity:>12,.2f}",
+            f"  Current equity: ${state.current_equity:>12,.2f}",
+            f"  Current DD:     {state.drawdown_pct:+.2f}%",
+            "",
+            f"  All-time worst DD: {worst_dd:.2f}%",
+        ]
+        if recovery_days is not None:
+            lines.append(f"  Last recovery:  {recovery_days} day(s)")
+        if abs(state.drawdown_pct) > 5.0:
+            lines.append("\n⚠️  Drawdown alert threshold exceeded.")
+        return "\n".join(lines)
+
+    def _alloc(args: list[str]) -> str:
+        """Show portfolio allocation by sector vs a simple equal-weight target.
+
+        Usage: /alloc — show current sector weights vs equal-weight target
+        """
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+        if not positions:
+            return "no open positions"
+
+        from amms.data.sectors import group_by_sector
+
+        total_mv = sum(float(p.market_value) for p in positions)
+        if total_mv <= 0:
+            return "no market value"
+
+        grouped = group_by_sector(
+            (p.symbol, float(p.market_value)) for p in positions
+        )
+        n_sectors = len(grouped)
+        target_pct = 100.0 / n_sectors if n_sectors else 0.0
+
+        ordered = sorted(grouped.items(), key=lambda kv: kv[1], reverse=True)
+        lines = [f"Allocation vs equal-weight target ({target_pct:.1f}% per sector):"]
+        for sector, value in ordered:
+            actual_pct = value / total_mv * 100
+            diff = actual_pct - target_pct
+            arrow = "▲" if diff > 1 else ("▼" if diff < -1 else "≈")
+            lines.append(
+                f"  {arrow} {sector:<22} actual {actual_pct:5.1f}%  target {target_pct:.1f}%  diff {diff:+.1f}%"
+            )
+        lines.append(f"\nTotal market value: ${total_mv:,.2f}")
+        return "\n".join(lines)
+
     def _heatmap(_args: list[str]) -> str:
         """Text heat-map: positions ranked by intraday % change with bar chart."""
         try:
@@ -2170,6 +2267,8 @@ def build_command_handlers(
             "/calendar — NYSE market hours + upcoming holidays\n"
             "/heatmap — positions ranked by % gain/loss with ASCII bars\n"
             "/limit [N|off] — show or set max daily buy orders\n"
+            "/drawdown — detailed drawdown analytics (current, worst, recovery)\n"
+            "/alloc — portfolio sector allocation vs equal-weight target\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2256,4 +2355,6 @@ def build_command_handlers(
         "calendar": _calendar,
         "heatmap": _heatmap,
         "limit": _limit,
+        "drawdown": _drawdown,
+        "alloc": _alloc,
     }

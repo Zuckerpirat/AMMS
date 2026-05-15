@@ -1544,3 +1544,78 @@ def test_help_includes_heatmap_and_limit() -> None:
     help_text = h["help"]([])
     assert "/heatmap" in help_text
     assert "/limit" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /drawdown tests
+# ---------------------------------------------------------------------------
+
+def _make_conn_with_equity(tmp_path, equities: list[float]):
+    """Create conn with equity_snapshots."""
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS equity_snapshots (ts TEXT, equity REAL)"
+    )
+    from amms.runtime_overrides import ensure_table
+    ensure_table(conn)
+    for i, eq in enumerate(equities):
+        conn.execute(
+            "INSERT INTO equity_snapshots VALUES (?, ?)",
+            (f"2026-0{1 + i // 28}-{1 + (i % 28):02d}T10:00:00", eq),
+        )
+    conn.commit()
+    return conn
+
+
+def test_drawdown_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["drawdown"]([]) == "DB not wired."
+
+
+def test_drawdown_shows_analytics(tmp_path) -> None:
+    conn = _make_conn_with_equity(tmp_path, [100_000, 105_000, 95_000])
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["drawdown"]([])
+    assert "Peak equity" in out
+    assert "Current DD" in out
+    assert "worst" in out.lower()
+
+
+def test_drawdown_no_breach_when_flat(tmp_path) -> None:
+    conn = _make_conn_with_equity(tmp_path, [100_000, 100_000])
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["drawdown"]([])
+    assert "⚠️" not in out
+
+
+# ---------------------------------------------------------------------------
+# /alloc tests
+# ---------------------------------------------------------------------------
+
+def test_alloc_shows_sectors() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["alloc"]([])
+    assert "Allocation" in out
+    assert "target" in out.lower()
+
+
+def test_alloc_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p)
+    assert "no open positions" in h["alloc"]([])
+
+
+def test_help_includes_drawdown_and_alloc() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/drawdown" in help_text
+    assert "/alloc" in help_text
