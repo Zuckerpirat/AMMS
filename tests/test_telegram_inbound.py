@@ -2105,3 +2105,75 @@ def test_help_includes_rsi_and_ema() -> None:
     help_text = h["help"]([])
     assert "/rsi" in help_text
     assert "/ema" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /macd tests
+# ---------------------------------------------------------------------------
+
+def test_macd_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["macd"]([])
+
+
+def test_macd_shows_for_position() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["macd"]([])
+    assert "MACD" in out
+    assert "AAPL" in out
+
+
+def test_macd_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["macd"](["NVDA"])
+    assert "NVDA" in out
+
+
+def test_macd_function() -> None:
+    from amms.data.bars import Bar
+    from amms.features.momentum import macd
+
+    bars = [
+        Bar("X", "1D", f"2026-{1 + i // 31:02d}-{1 + (i % 30):02d}", 100 + i * 0.5, 101 + i * 0.5, 99 + i * 0.5, 100 + i * 0.5, 1000)
+        for i in range(40)
+    ]
+    result = macd(bars)
+    assert result is not None
+    m_line, sig_line, hist = result
+    assert hist == pytest.approx(m_line - sig_line)
+
+
+# ---------------------------------------------------------------------------
+# /score tests
+# ---------------------------------------------------------------------------
+
+def test_score_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["score"]([])
+
+
+def test_score_shows_for_position() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["score"]([])
+    assert "score" in out.lower()
+    assert "AAPL" in out
+
+
+def test_score_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["score"](["TSLA"])
+    assert "TSLA" in out
+
+
+def test_help_includes_macd_and_score() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/macd" in help_text
+    assert "/score" in help_text

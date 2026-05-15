@@ -46,6 +46,51 @@ def sma(bars: list[Bar], n: int = 20) -> float | None:
     return sum(b.close for b in bars[-n:]) / n
 
 
+def macd(
+    bars: list[Bar],
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+) -> tuple[float, float, float] | None:
+    """MACD line, signal line, and histogram.
+
+    Returns (macd_line, signal_line, histogram) or None if not enough history.
+    MACD line = EMA(fast) - EMA(slow)
+    Signal = EMA(MACD, signal)
+    Histogram = MACD - Signal
+    """
+    if len(bars) < slow + signal:
+        return None
+    k_fast = 2.0 / (fast + 1)
+    k_slow = 2.0 / (slow + 1)
+    k_sig = 2.0 / (signal + 1)
+
+    closes = [b.close for b in bars]
+    # warm-up: compute EMA for entire series
+    ema_fast = closes[0]
+    ema_slow = closes[0]
+    for c in closes[1:]:
+        ema_fast = c * k_fast + ema_fast * (1 - k_fast)
+        ema_slow = c * k_slow + ema_slow * (1 - k_slow)
+
+    macd_line = ema_fast - ema_slow
+
+    # Compute MACD line over last (slow + signal) bars to get signal EMA
+    macd_values: list[float] = []
+    ema_f = closes[-(slow + signal)]; ema_s = closes[-(slow + signal)]
+    for c in closes[-(slow + signal):]:
+        ema_f = c * k_fast + ema_f * (1 - k_fast)
+        ema_s = c * k_slow + ema_s * (1 - k_slow)
+        macd_values.append(ema_f - ema_s)
+
+    sig_val = macd_values[0]
+    for mv in macd_values[1:]:
+        sig_val = mv * k_sig + sig_val * (1 - k_sig)
+
+    histogram = macd_line - sig_val
+    return macd_line, sig_val, histogram
+
+
 def rsi(bars: list[Bar], n: int = 14) -> float | None:
     """Wilder-style RSI computed over the last ``n`` close-to-close changes.
 

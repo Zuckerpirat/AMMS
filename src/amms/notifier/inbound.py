@@ -2703,6 +2703,119 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _macd_cmd(args: list[str]) -> str:
+        """Show MACD(12,26,9) for open positions or a specified ticker.
+
+        Positive histogram = bullish momentum. Negative = bearish.
+        Usage: /macd [SYM]
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /macd AAPL)"
+
+        from amms.features.momentum import macd as compute_macd
+
+        lines = ["MACD (12,26,9) indicators:"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            result = compute_macd(bars)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (not enough history)")
+                continue
+            m_line, sig_line, hist = result
+            trend = "📈" if hist > 0 else "📉"
+            cross = " 🔔 crossover!" if abs(m_line - sig_line) < abs(hist) * 0.1 else ""
+            lines.append(
+                f"  {sym:<6}  MACD {m_line:+.4f}  signal {sig_line:+.4f}  "
+                f"hist {hist:+.4f} {trend}{cross}"
+            )
+        return "\n".join(lines)
+
+    def _score(args: list[str]) -> str:
+        """Composite signal score [-100..+100] for a ticker or open positions.
+
+        Combines: RSI (contrarian), EMA trend, 20-day momentum, ATR/vol.
+        Usage: /score [SYM]
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /score AAPL)"
+
+        from amms.features.momentum import ema as compute_ema, n_day_return, rsi as compute_rsi
+        from amms.features.volatility import realized_vol
+
+        lines = ["Composite signal score (-100..+100):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+
+            score = 0.0
+            components: list[str] = []
+
+            # RSI component (contrarian: oversold=+, overbought=-)
+            r = compute_rsi(bars, 14)
+            if r is not None:
+                rsi_score = (50 - r) * 0.6  # max ±30
+                score += rsi_score
+                components.append(f"RSI={r:.0f}")
+
+            # EMA trend component
+            e20 = compute_ema(bars, 20)
+            e50 = compute_ema(bars, 50)
+            if e20 and e50:
+                if e20 > e50:
+                    score += 20
+                    components.append("EMA↑")
+                else:
+                    score -= 20
+                    components.append("EMA↓")
+
+            # Momentum (20d return)
+            mom = n_day_return(bars, 20)
+            if mom is not None:
+                score += mom * 500  # 10% move → ±50 pts, capped later
+                components.append(f"mom={mom*100:.1f}%")
+
+            # Volatility penalty (high vol = lower confidence)
+            rv = realized_vol(bars, 20)
+            if rv and rv > 0.4:
+                score -= 10
+                components.append("hiVol")
+
+            score = max(-100, min(100, score))
+            bar_w = int(abs(score) / 2)
+            bar = ("█" * bar_w).ljust(50)
+            sign = "+" if score >= 0 else ""
+            lines.append(
+                f"  {sym:<6}  score {sign}{score:.0f}  [{bar[:20]}]  ({', '.join(components)})"
+            )
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -2748,6 +2861,8 @@ def build_command_handlers(
             "/recap — brief daily summary (equity, trades, top mover, status)\n"
             "/rsi [SYM] — 14-day RSI for open positions or a ticker\n"
             "/ema [SYM] — EMA-20 / EMA-50 crossover status\n"
+            "/macd [SYM] — MACD(12,26,9) line, signal, histogram\n"
+            "/score [SYM] — composite signal score (-100..+100) for a ticker\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2848,4 +2963,6 @@ def build_command_handlers(
         "recap": _recap,
         "rsi": _rsi,
         "ema": _ema_cmd,
+        "macd": _macd_cmd,
+        "score": _score,
     }
