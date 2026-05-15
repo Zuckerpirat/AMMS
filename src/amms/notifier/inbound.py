@@ -5433,6 +5433,67 @@ def build_command_handlers(
         lines.append("  /heat  /concentration  /rsrank  /regime  /breakout")
         return "\n".join(lines)
 
+    def _targets_cmd(args: list[str]) -> str:
+        """Profit target tracker: 1R/2R/3R targets for open positions.
+
+        Usage: /targets [SYM]
+        Shows ATR-based profit targets and current progress (R-multiple).
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if not positions:
+            return "No open positions."
+
+        if args:
+            sym_filter = args[0].upper()
+            positions = [p for p in positions if p.symbol == sym_filter]
+            if not positions:
+                return f"{sym_filter} not in open positions."
+
+        from amms.analysis.profit_target import compute as pt_compute
+
+        lines = ["── Profit Targets (ATR-based) ──"]
+        for pos in positions[:8]:
+            sym = pos.symbol
+            try:
+                entry = float(pos.avg_entry_price)
+            except Exception:
+                entry = 0.0
+            try:
+                bars = data.get_bars(sym, limit=25)
+            except Exception as e:
+                lines.append(f"  {sym}: data error {e!r}")
+                continue
+
+            result = pt_compute(sym, entry, bars)
+            if result is None:
+                lines.append(f"  {sym}: insufficient data")
+                continue
+
+            exceeded = " ✓" if result.exceeded_2r else ""
+            bar_w = max(0, min(20, int(result.pct_to_2r / 5)))
+            progress_bar = "█" * bar_w + "░" * (20 - bar_w)
+            lines.append(
+                f"  {sym:<6}  {result.r_multiple:+.2f}R  "
+                f"PnL {result.pnl_pct:+.1f}%%{exceeded}"
+            )
+            lines.append(
+                f"    [{progress_bar}] {result.pct_to_2r:.0f}%% to 2R"
+            )
+            lines.append(
+                f"    stop ${result.stop_1atr:.2f}"
+                f"  1R ${result.target_1r:.2f}"
+                f"  2R ${result.target_2r:.2f}"
+                f"  3R ${result.target_3r:.2f}"
+            )
+
+        return "\n".join(lines)
+
     def _watch_cmd(args: list[str]) -> str:
         """Watchlist manager: add, remove, list, scan symbols.
 
@@ -6767,4 +6828,6 @@ def build_command_handlers(
         "dash": _dashboard_cmd,
         "watch": _watch_cmd,
         "wl": _watch_cmd,
+        "atrtargets": _targets_cmd,
+        "atrt": _targets_cmd,
     }
