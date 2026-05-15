@@ -1714,3 +1714,97 @@ def test_help_includes_vol_and_reload() -> None:
     help_text = h["help"]([])
     assert "/vol" in help_text
     assert "/reload" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /bench tests
+# ---------------------------------------------------------------------------
+
+def _make_conn_with_bench_equities(tmp_path, equities):
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE IF NOT EXISTS equity_snapshots (ts TEXT, equity REAL)")
+    from amms.runtime_overrides import ensure_table
+    ensure_table(conn)
+    from datetime import date, timedelta
+    base = date.today() - timedelta(days=len(equities))
+    for i, eq in enumerate(equities):
+        d = (base + timedelta(days=i)).isoformat()
+        conn.execute("INSERT INTO equity_snapshots VALUES (?, ?)", (f"{d}T10:00:00", eq))
+    conn.commit()
+    return conn
+
+
+def test_bench_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["bench"]([]) == "DB not wired."
+
+
+def test_bench_insufficient_history(tmp_path) -> None:
+    conn = _make_conn_with_bench_equities(tmp_path, [100_000])
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["bench"]([])
+    assert "Not enough" in out
+
+
+def test_bench_shows_portfolio_return(tmp_path) -> None:
+    conn = _make_conn_with_bench_equities(tmp_path, [100_000, 102_000, 105_000])
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["bench"]([])
+    assert "Portfolio return" in out
+    assert "5.00%" in out or "+5.00" in out
+
+
+def test_bench_invalid_arg(tmp_path) -> None:
+    conn = _make_conn_with_bench_equities(tmp_path, [100_000, 102_000])
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["bench"](["abc"])
+    assert "usage" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# /targets tests
+# ---------------------------------------------------------------------------
+
+def test_targets_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p)
+    assert "no open positions" in h["targets"]([])
+
+
+def test_targets_shows_entry_stop_target() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["targets"]([])
+    assert "entry" in out
+    assert "stop" in out
+    assert "target" in out
+    assert "AAPL" in out
+
+
+def test_targets_uses_stop_override(tmp_path) -> None:
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    conn.row_factory = sqlite3.Row
+    from amms.runtime_overrides import ensure_table, set_override
+    ensure_table(conn)
+    set_override(conn, "stop_loss", "0.05")
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["targets"]([])
+    # 5% stop on entry 100 → stop at $95
+    assert "95.00" in out
+
+
+def test_help_includes_bench_and_targets() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/bench" in help_text
+    assert "/targets" in help_text

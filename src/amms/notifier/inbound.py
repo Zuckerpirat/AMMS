@@ -2285,6 +2285,114 @@ def build_command_handlers(
         except Exception as e:
             return f"reload failed: {e!r}"
 
+    def _bench(args: list[str]) -> str:
+        """Compare portfolio equity curve vs SPY over N days.
+
+        Usage: /bench [N]  — default 30 days
+        Pulls equity_snapshots from DB and SPY bars, computes % return of each.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        days = 30
+        if args:
+            try:
+                days = max(1, min(int(args[0]), 365))
+            except ValueError:
+                return "usage: /bench [N]  (number of days, e.g. /bench 30)"
+
+        # Portfolio returns from equity_snapshots
+        try:
+            rows = conn.execute(
+                "SELECT equity FROM equity_snapshots "
+                "WHERE substr(ts, 1, 10) >= date('now', ?) "
+                "ORDER BY ts ASC",
+                (f"-{days} day",),
+            ).fetchall()
+        except Exception as e:
+            return f"DB error: {e!r}"
+
+        equities = [float(r[0]) for r in rows if r[0] is not None]
+        if len(equities) < 2:
+            return f"Not enough equity history for {days}-day benchmark."
+
+        port_return = (equities[-1] - equities[0]) / equities[0] * 100
+
+        # SPY benchmark via data client if available
+        spy_return_str = "n/a (data client not wired)"
+        if data is not None:
+            try:
+                spy_bars = data.get_bars("SPY", limit=days + 5)
+                if len(spy_bars) >= 2:
+                    spy_start = spy_bars[0].close
+                    spy_end = spy_bars[-1].close
+                    spy_return = (spy_end - spy_start) / spy_start * 100
+                    spy_return_str = f"{spy_return:+.2f}%"
+            except Exception:
+                spy_return_str = "n/a (error fetching SPY)"
+
+        alpha_str = ""
+        if spy_return_str not in ("n/a (data client not wired)", "n/a (error fetching SPY)"):
+            try:
+                spy_ret = float(spy_return_str.strip("%+"))
+                alpha = port_return - spy_ret
+                alpha_str = f"\n  Alpha (vs SPY):   {alpha:+.2f}%"
+            except ValueError:
+                pass
+
+        lines = [
+            f"Benchmark comparison (last {days} days):",
+            f"  Portfolio return: {port_return:+.2f}%",
+            f"  SPY return:       {spy_return_str}",
+        ]
+        if alpha_str:
+            lines.append(alpha_str)
+        lines.append(f"\n  Based on {len(equities)} equity snapshots.")
+        return "\n".join(lines)
+
+    def _targets(_args: list[str]) -> str:
+        """Show entry price, stop-loss level, and take-profit target per position.
+
+        Stop-loss derived from runtime override or default 3% below entry.
+        Take-profit shown at 2× the risk (2R).
+        """
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+        if not positions:
+            return "no open positions"
+
+        stop_pct = 0.03  # default
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                overrides = get_overrides(conn)
+                sl = overrides.get("stop_loss", 0.0)
+                if sl and float(sl) > 0:
+                    stop_pct = float(sl)
+            except Exception:
+                pass
+
+        lines = [f"Position targets (stop-loss {stop_pct:.1%} | take-profit 2R):"]
+        for p in positions:
+            try:
+                entry = float(p.avg_entry_price)
+                stop = entry * (1 - stop_pct)
+                target = entry * (1 + stop_pct * 2)
+                mv = float(p.market_value)
+                qty = float(p.qty)
+                current = mv / qty if qty > 0 else entry
+                dist_pct = (current - entry) / entry * 100
+                lines.append(
+                    f"  {p.symbol:<6}  entry ${entry:.2f}  "
+                    f"stop ${stop:.2f}  target ${target:.2f}  "
+                    f"({dist_pct:+.1f}% vs entry)"
+                )
+            except (TypeError, ValueError, ZeroDivisionError):
+                lines.append(f"  {p.symbol}: data error")
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -2319,6 +2427,8 @@ def build_command_handlers(
             "/alloc — portfolio sector allocation vs equal-weight target\n"
             "/vol [SYM] — realized volatility + ATR for open positions or a ticker\n"
             "/reload — hot-reload config.yaml without restarting the bot\n"
+            "/bench [N] — compare portfolio return vs SPY over N days (default 30)\n"
+            "/targets — entry price, stop-loss, and 2R take-profit per position\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2409,4 +2519,7 @@ def build_command_handlers(
         "alloc": _alloc,
         "vol": _vol,
         "reload": _reload,
+        "bench": _bench,
+        "benchmark": _bench,
+        "targets": _targets,
     }
