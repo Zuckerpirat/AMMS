@@ -2393,6 +2393,98 @@ def build_command_handlers(
                 lines.append(f"  {p.symbol}: data error")
         return "\n".join(lines)
 
+    def _mdd(_args: list[str]) -> str:
+        """Show the 5 worst single-day equity drops from equity_snapshots."""
+        if conn is None:
+            return "DB not wired."
+        try:
+            rows = conn.execute(
+                "SELECT substr(ts, 1, 10) AS day, equity "
+                "FROM equity_snapshots ORDER BY ts ASC"
+            ).fetchall()
+        except Exception as e:
+            return f"DB error: {e!r}"
+
+        if len(rows) < 2:
+            return "Not enough equity history for daily drawdown table."
+
+        daily: list[tuple[str, float]] = []
+        for i in range(1, len(rows)):
+            prev = float(rows[i - 1]["equity"])
+            curr = float(rows[i]["equity"])
+            if prev > 0:
+                chg = (curr - prev) / prev * 100
+                daily.append((rows[i]["day"], chg))
+
+        if not daily:
+            return "No daily changes found."
+
+        worst = sorted(daily, key=lambda x: x[1])[:5]
+        lines = ["5 worst single-day equity drops:"]
+        for rank, (day, chg) in enumerate(worst, 1):
+            lines.append(f"  #{rank}  {day}  {chg:+.2f}%")
+        best = sorted(daily, key=lambda x: x[1], reverse=True)[:3]
+        lines.append("\n3 best single-day gains:")
+        for rank, (day, chg) in enumerate(best, 1):
+            lines.append(f"  #{rank}  {day}  {chg:+.2f}%")
+        return "\n".join(lines)
+
+    def _optout(args: list[str]) -> str:
+        """Block or unblock a specific ticker from being traded.
+
+        Usage:
+          /optout SYM         — block SYM from being bought (still on watchlist)
+          /optout SYM remove  — unblock SYM
+          /optout list        — show all blocked tickers
+        """
+        if conn is None:
+            return "DB not wired."
+
+        # Persist the blocklist directly in runtime_overrides table (key: blocked_symbols).
+        # We bypass get_overrides() because blocked_symbols is not in _ALLOWED.
+        try:
+            from amms.runtime_overrides import ensure_table
+            ensure_table(conn)
+            row = conn.execute(
+                "SELECT value FROM runtime_overrides WHERE key = 'blocked_symbols'"
+            ).fetchone()
+        except Exception as e:
+            return f"DB error: {e!r}"
+
+        raw_blocked = str(row[0] if row else "").strip()
+        blocked: set[str] = {s.strip().upper() for s in raw_blocked.split(",") if s.strip()}
+
+        if not args or args[0].lower() == "list":
+            if not blocked:
+                return "No tickers blocked. Use /optout SYM to block one."
+            return "Blocked from trading:\n" + "\n".join(f"  {s}" for s in sorted(blocked))
+
+        try:
+            from amms.data.dynamic_watchlist import normalize_symbol
+            sym = normalize_symbol(args[0])
+        except ValueError as e:
+            return str(e)
+
+        action = args[1].lower() if len(args) > 1 else "add"
+
+        if action in ("remove", "unblock", "del", "delete"):
+            if sym not in blocked:
+                return f"{sym} is not blocked."
+            blocked.discard(sym)
+        else:
+            blocked.add(sym)
+
+        new_val = ",".join(sorted(blocked))
+        conn.execute(
+            "INSERT OR REPLACE INTO runtime_overrides (key, value) VALUES (?, ?)",
+            ("blocked_symbols", new_val),
+        )
+        conn.commit()
+
+        if action in ("remove", "unblock", "del", "delete"):
+            return f"{sym} unblocked. Blocked list: {', '.join(sorted(blocked)) or '(empty)'}"
+        return f"{sym} blocked from trading. Blocked list: {', '.join(sorted(blocked))}"
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -2429,6 +2521,10 @@ def build_command_handlers(
             "/reload — hot-reload config.yaml without restarting the bot\n"
             "/bench [N] — compare portfolio return vs SPY over N days (default 30)\n"
             "/targets — entry price, stop-loss, and 2R take-profit per position\n"
+            "/mdd — 5 worst and 3 best single-day equity moves\n"
+            "/optout SYM — block ticker from being traded (still on watchlist)\n"
+            "/optout SYM remove — unblock ticker\n"
+            "/optout list — show blocked tickers\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2522,4 +2618,7 @@ def build_command_handlers(
         "bench": _bench,
         "benchmark": _bench,
         "targets": _targets,
+        "mdd": _mdd,
+        "optout": _optout,
+        "block": _optout,
     }

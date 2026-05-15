@@ -1808,3 +1808,109 @@ def test_help_includes_bench_and_targets() -> None:
     help_text = h["help"]([])
     assert "/bench" in help_text
     assert "/targets" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /mdd tests
+# ---------------------------------------------------------------------------
+
+def test_mdd_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["mdd"]([]) == "DB not wired."
+
+
+def test_mdd_insufficient_history(tmp_path) -> None:
+    conn = _make_conn_with_bench_equities(tmp_path, [100_000])
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["mdd"]([])
+    assert "Not enough" in out or "No daily" in out
+
+
+def test_mdd_shows_worst_days(tmp_path) -> None:
+    conn = _make_conn_with_bench_equities(
+        tmp_path, [100_000, 98_000, 95_000, 97_000, 102_000, 101_000]
+    )
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["mdd"]([])
+    assert "worst" in out.lower()
+    assert "#1" in out
+
+
+def test_mdd_shows_best_days(tmp_path) -> None:
+    conn = _make_conn_with_bench_equities(
+        tmp_path, [100_000, 98_000, 105_000, 104_000, 108_000]
+    )
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["mdd"]([])
+    assert "best" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# /optout tests
+# ---------------------------------------------------------------------------
+
+def test_optout_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["optout"](["TSLA"]) == "DB not wired."
+
+
+def test_optout_blocks_ticker(tmp_path) -> None:
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE IF NOT EXISTS runtime_overrides (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["optout"](["TSLA"])
+    assert "TSLA" in out
+    assert "blocked" in out.lower()
+
+
+def test_optout_list_shows_blocked(tmp_path) -> None:
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE IF NOT EXISTS runtime_overrides (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    h["optout"](["TSLA"])
+    h["optout"](["NVDA"])
+    out = h["optout"](["list"])
+    assert "TSLA" in out
+    assert "NVDA" in out
+
+
+def test_optout_remove_unblocks(tmp_path) -> None:
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE IF NOT EXISTS runtime_overrides (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    h["optout"](["TSLA"])
+    out = h["optout"](["TSLA", "remove"])
+    assert "unblocked" in out.lower()
+
+
+def test_optout_empty_list(tmp_path) -> None:
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE IF NOT EXISTS runtime_overrides (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["optout"](["list"])
+    assert "No tickers blocked" in out or "blocked" in out.lower()
+
+
+def test_help_includes_mdd_and_optout() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/mdd" in help_text
+    assert "/optout" in help_text
