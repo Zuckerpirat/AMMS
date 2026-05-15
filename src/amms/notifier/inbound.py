@@ -4759,6 +4759,62 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
+    def _tradequality_cmd(args: list[str]) -> str:
+        """Trade quality scoring from trade journal.
+
+        Usage: /tradequality [N]
+        Scores recent closed trades on outcome, hold time, risk-reward.
+        Total 0-80 pts.  Grades: A≥70, B≥55, C≥40, D≥25, F<25
+        """
+        limit = 50
+        if args and args[0].isdigit():
+            limit = max(1, min(int(args[0]), 200))
+
+        from amms.analysis.trade_quality import compute_quality
+
+        try:
+            report = compute_quality(conn, limit=limit)
+        except Exception as e:
+            return f"trade quality error: {e!r}"
+
+        if report is None:
+            return "No completed trades in journal to score."
+
+        dist = report.grade_distribution
+        dist_str = "  ".join(
+            f"{g}:{dist.get(g, 0)}" for g in ("A", "B", "C", "D", "F")
+        )
+
+        lines = [
+            f"── Trade Quality Report ({report.n_trades} trades) ──",
+            f"  Avg score:  {report.avg_score:.1f}/80",
+            f"  Grades:     {dist_str}",
+        ]
+
+        if report.best_trade:
+            b = report.best_trade
+            lines.append(
+                f"  Best:       {b.symbol} [{b.grade}] "
+                f"{b.total_score:.0f}pts  PnL ${b.pnl:+.2f}"
+            )
+        if report.worst_quality_trade:
+            w = report.worst_quality_trade
+            lines.append(
+                f"  Worst:      {w.symbol} [{w.grade}] "
+                f"{w.total_score:.0f}pts  PnL ${w.pnl:+.2f}"
+            )
+
+        lines.append("")
+        lines.append("Recent trades:")
+        for s in report.scores[:10]:
+            hold_str = f"{s.hold_days:.1f}d" if s.hold_days is not None else "?d"
+            lines.append(
+                f"  [{s.grade}] {s.symbol:<6} {s.total_score:>4.0f}pt  "
+                f"PnL {s.pnl_pct:+.1f}%%  {hold_str}"
+            )
+
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -5709,4 +5765,6 @@ def build_command_handlers(
         "stresstest": _stress_cmd,
         "strategy": _strategy_selector_cmd,
         "stratselect": _strategy_selector_cmd,
+        "tradequality": _tradequality_cmd,
+        "tq": _tradequality_cmd,
     }
