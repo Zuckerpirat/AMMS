@@ -3299,6 +3299,41 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _pairs_cmd(args: list[str]) -> str:
+        """Pairs trading spread analyzer.
+
+        Usage: /pairs SYM1 SYM2
+        Computes ratio Z-score, correlation, and mean-reversion signal.
+        """
+        if data is None:
+            return "Data client not wired."
+        if len(args) < 2:
+            return "usage: /pairs SYM1 SYM2  (e.g. /pairs AAPL MSFT)"
+
+        sym1, sym2 = args[0].upper(), args[1].upper()
+        try:
+            bars1 = data.get_bars(sym1, limit=80)
+            bars2 = data.get_bars(sym2, limit=80)
+        except Exception as e:
+            return f"data error: {e!r}"
+
+        from amms.analysis.pairs_trading import analyze_pair
+
+        result = analyze_pair(bars1, bars2)
+        if result is None:
+            return f"Insufficient data for {sym1}/{sym2} (need 31+ bars each)."
+
+        signal_icon = {"long_spread": "📈", "short_spread": "📉", "neutral": "↔️ "}.get(result.signal, "")
+        lines = [
+            f"── Pairs: {sym1} / {sym2} ──",
+            f"  Ratio:       {result.current_ratio:.4f}  (mean {result.ratio_mean:.4f}, σ {result.ratio_std:.4f})",
+            f"  Z-score:     {result.ratio_zscore:+.3f}",
+            f"  Correlation: {result.correlation:.3f}  (30d returns)",
+            f"  Signal:      {signal_icon} {result.signal}  (strength {result.signal_strength:.2f})",
+            f"  Action:      {result.recommended_action}",
+        ]
+        return "\n".join(lines)
+
     def _vregime_cmd(args: list[str]) -> str:
         """Show volatility regime classification for positions or a ticker.
 
@@ -4882,6 +4917,7 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/pairs SYM1 SYM2 — pairs trading: ratio Z-score, correlation, mean-reversion signal\n"
             "/vregime [SYM] — volatility regime: ATR percentile + size multiplier\n"
             "/health [SYM] — full indicator health check for a position\n"
             "/candles [SYM] — candlestick pattern detector (Doji/Hammer/Engulfing/etc.)\n"
@@ -5045,6 +5081,7 @@ def build_command_handlers(
         "mc": _montecarlo_cmd,
         "scan2": _scan2_cmd,
         "signals": _scan2_cmd,
+        "pairs": _pairs_cmd,
         "vregime": _vregime_cmd,
         "volregime": _vregime_cmd,
         "health": _health_cmd,

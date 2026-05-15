@@ -3402,3 +3402,65 @@ def test_montecarlo_help_included() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/montecarlo" in h["help"]([])
+
+
+# ── /pairs tests ──────────────────────────────────────────────────────────────
+
+class _PairsDataClient:
+    """Returns 40 bars for pairs trading tests."""
+    def get_bars(self, symbol, *, limit=80):
+        from amms.data.bars import Bar
+        from datetime import UTC, datetime
+        bars = []
+        for i in range(40):
+            if symbol == "AAA":
+                price = 200.0 + i * 0.1
+            else:
+                price = 100.0 + i * 0.05
+            ts = datetime(2026, 1, 1 + i % 28, 12, 0, 0, tzinfo=UTC).isoformat()
+            bars.append(Bar(symbol, "1Day", ts, price, price * 1.01, price * 0.99, price, 10_000))
+        return bars
+
+
+def test_pairs_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["pairs"](["AAA", "BBB"])
+    assert "not wired" in out.lower()
+
+
+def test_pairs_missing_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_PairsDataClient())
+    out = h["pairs"]([])
+    assert "usage" in out.lower()
+
+
+def test_pairs_one_arg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_PairsDataClient())
+    out = h["pairs"](["AAA"])
+    assert "usage" in out.lower()
+
+
+def test_pairs_returns_ratio_and_signal() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_PairsDataClient())
+    out = h["pairs"](["AAA", "BBB"])
+    assert "Ratio" in out or "ratio" in out.lower()
+    assert "Z-score" in out or "zscore" in out.lower()
+    assert "Signal" in out or "signal" in out.lower()
+
+
+def test_pairs_shows_symbols() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_PairsDataClient())
+    out = h["pairs"](["AAA", "BBB"])
+    assert "AAA" in out
+    assert "BBB" in out
+
+
+def test_pairs_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/pairs" in h["help"]([])
