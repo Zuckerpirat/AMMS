@@ -3537,3 +3537,71 @@ def test_volprofile_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/volprofile" in h["help"]([])
+
+
+# ── /wr and /cci tests ────────────────────────────────────────────────────────
+
+class _OscDataClient:
+    """Returns 25 bars for Williams %R and CCI tests."""
+    def get_bars(self, symbol, *, limit=50):
+        from amms.data.bars import Bar
+        from datetime import UTC, datetime
+        bars = []
+        for i in range(25):
+            price = 100.0 + i * 0.3
+            ts = datetime(2026, 1, 1 + i % 28, 12, 0, 0, tzinfo=UTC).isoformat()
+            bars.append(Bar(symbol, "1Day", ts, price, price + 1.5, price - 1.5, price, 10_000))
+        return bars
+
+
+def test_wr_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["wr"]([]).lower()
+
+
+def test_wr_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_OscDataClient())
+    assert "no open positions" in h["wr"]([])
+
+
+def test_wr_returns_value() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_OscDataClient())
+    out = h["wr"](["AAPL"])
+    assert "%%R" in out or "%R" in out or "Williams" in out
+
+
+def test_wr_alias_williamsr() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["williamsr"] is h["wr"]
+
+
+def test_wr_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/wr" in h["help"]([])
+
+
+def test_cci_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["cci"]([]).lower()
+
+
+def test_cci_returns_value() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_OscDataClient())
+    out = h["cci"](["AAPL"])
+    assert "CCI" in out
+
+
+def test_cci_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/cci" in h["help"]([])

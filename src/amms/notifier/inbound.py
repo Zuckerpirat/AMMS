@@ -4703,12 +4703,11 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
-    def _vwap_cmd(args: list[str]) -> str:
-        """Show VWAP and price deviation for held positions or a ticker.
+    def _wr_cmd(args: list[str]) -> str:
+        """Williams %%R oscillator for a ticker or open positions.
 
-        Usage: /vwap [SYM]
-        Negative deviation = price below VWAP (potential buy zone).
-        Positive deviation = price above VWAP (extended / sell zone).
+        Usage: /wr [SYM]
+        Range 0 to -100. Above -20 = overbought; below -80 = oversold.
         """
         if data is None:
             return "Data client not wired."
@@ -4717,32 +4716,63 @@ def build_command_handlers(
         except Exception as e:
             return f"broker error: {e!r}"
 
-        if args:
-            symbols = [args[0].upper()]
-        elif positions:
-            symbols = [p.symbol for p in positions]
-        else:
-            return "no open positions (pass a ticker: /vwap AAPL)"
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /wr AAPL)"
 
-        from amms.features.vwap import vwap as compute_vwap, vwap_deviation_pct
+        from amms.features.williams_r import williams_r
 
-        lines = ["VWAP deviation (20-bar rolling):"]
+        lines = ["Williams %%R (0 to -100 | overbought>-20, oversold<-80):"]
         for sym in symbols[:8]:
             try:
-                bars = data.get_bars(sym, limit=25)
+                bars = data.get_bars(sym, limit=50)
             except Exception:
                 bars = []
-            v = compute_vwap(bars, 20) if len(bars) >= 20 else None
-            if v is None:
-                lines.append(f"  {sym:<6}  n/a")
+            result = williams_r(bars, period=14, smooth=3)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 17+ bars)")
                 continue
-            price = bars[-1].close if bars else 0.0
-            dev = vwap_deviation_pct(price, bars, 20)
-            if dev is None:
-                lines.append(f"  {sym:<6}  VWAP ${v:.2f}  n/a deviation")
+            zone_icon = {"overbought": "🔴", "oversold": "🟢", "neutral": "↔️ "}.get(result.zone, "")
+            lines.append(
+                f"  {sym:<6}  %%R {result.value:.1f}  smooth {result.smoothed:.1f}  "
+                f"{zone_icon} {result.zone}  → {result.signal}"
+            )
+        return "\n".join(lines)
+
+    def _cci_cmd(args: list[str]) -> str:
+        """Commodity Channel Index for a ticker or open positions.
+
+        Usage: /cci [SYM]
+        Above +100 = overbought; below -100 = oversold.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /cci AAPL)"
+
+        from amms.features.cci import cci as compute_cci
+
+        lines = ["CCI (Commodity Channel Index | overbought>+100, oversold<-100):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=50)
+            except Exception:
+                bars = []
+            result = compute_cci(bars, period=20)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 20+ bars)")
                 continue
-            zone = "🟢 below VWAP" if dev < -1.5 else ("🔴 above VWAP" if dev > 1.5 else "⚪ near VWAP")
-            lines.append(f"  {sym:<6}  ${price:.2f}  VWAP ${v:.2f}  dev {dev:+.1f}%  {zone}")
+            zone_icon = {"overbought": "🔴", "oversold": "🟢", "neutral": "↔️ "}.get(result.zone, "")
+            lines.append(
+                f"  {sym:<6}  CCI {result.value:+.1f}  "
+                f"{zone_icon} {result.zone}  → {result.signal}"
+            )
         return "\n".join(lines)
 
     def _optimize(args: list[str]) -> str:
@@ -4997,6 +5027,8 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/wr [SYM] — Williams %%R: overbought/oversold oscillator (0 to -100)\n"
+            "/cci [SYM] — Commodity Channel Index: overbought/oversold (+100/-100)\n"
             "/pairs SYM1 SYM2 — pairs trading: ratio Z-score, correlation, mean-reversion signal\n"
             "/vregime [SYM] — volatility regime: ATR percentile + size multiplier\n"
             "/health [SYM] — full indicator health check for a position\n"
@@ -5124,7 +5156,6 @@ def build_command_handlers(
         "ms": _momscan,
         "optimize": _optimize,
         "opt": _optimize,
-        "vwap": _vwap_cmd,
         "strategies": _strategies,
         "strats": _strategies,
         "stopopt": _stopopt,
@@ -5164,6 +5195,9 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "wr": _wr_cmd,
+        "williamsr": _wr_cmd,
+        "cci": _cci_cmd,
         "pairs": _pairs_cmd,
         "vregime": _vregime_cmd,
         "volregime": _vregime_cmd,
