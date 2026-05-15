@@ -4703,6 +4703,45 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _corrmatrix_cmd(args: list[str]) -> str:
+        """Portfolio correlation matrix: pairwise return correlation + diversity score.
+
+        Usage: /corrmatrix
+        Identifies highly correlated pairs (concentration risk) and diversification quality.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        from amms.analysis.correlation_matrix import compute as compute_corr
+
+        result = compute_corr(broker, data)
+        if result is None:
+            return "Need at least 2 positions with sufficient bar history."
+
+        level_icon = {
+            "very_high": "🔴", "high": "🟠", "moderate": "🟡",
+            "low": "🟢", "negative": "💚",
+        }
+
+        lines = [
+            f"── Correlation Matrix ({len(result.symbols)} positions, {result.n_bars} bars) ──",
+            f"  Avg correlation:     {result.avg_correlation:.2f}",
+            f"  Diversification:     {result.diversification_score:.0f}/100",
+        ]
+
+        if result.high_corr_pairs:
+            lines.append(f"  ⚠️  High-corr pairs ({len(result.high_corr_pairs)}):")
+            for p in result.high_corr_pairs:
+                lines.append(f"    {p.sym1} ↔ {p.sym2}: {p.correlation:+.2f}")
+
+        lines.append("")
+        lines.append("  All pairs:")
+        for p in result.pairs:
+            icon = level_icon.get(p.level, "")
+            lines.append(f"  {icon} {p.sym1:<6} ↔ {p.sym2:<6}  {p.correlation:+.3f}  [{p.level}]")
+
+        return "\n".join(lines)
+
     def _gaps_cmd(args: list[str]) -> str:
         """Gap analysis: recent price gaps, fill status, and gap S/R levels.
 
@@ -5317,6 +5356,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/corrmatrix — portfolio correlation matrix + diversification score\n"
             "/gaps [SYM] — gap analysis: recent price gaps, fill status, gap S/R levels\n"
             "/sectorheat — sector momentum heatmap: 5d/20d/60d ranked by composite score\n"
             "/btstats [DAYS] — extended backtest stats: Calmar, Sortino, recovery, streaks\n"
@@ -5492,6 +5532,8 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "corrmatrix": _corrmatrix_cmd,
+        "cm": _corrmatrix_cmd,
         "gaps": _gaps_cmd,
         "sectorheat": _sectorheat_cmd,
         "sh": _sectorheat_cmd,

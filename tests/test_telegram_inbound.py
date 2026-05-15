@@ -3818,3 +3818,31 @@ def test_gaps_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/gaps" in h["help"]([])
+
+
+# ── /corrmatrix tests ─────────────────────────────────────────────────────────
+
+def test_corrmatrix_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["corrmatrix"]([]).lower()
+
+
+def test_corrmatrix_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
+    out = h["corrmatrix"]([])
+    # FakeBroker has only 1 position → not enough
+    assert "2 position" in out.lower() or "correlation" in out.lower() or "not enough" in out.lower()
+
+
+def test_corrmatrix_alias_cm() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["cm"] is h["corrmatrix"]
+
+
+def test_corrmatrix_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/corrmatrix" in h["help"]([])
