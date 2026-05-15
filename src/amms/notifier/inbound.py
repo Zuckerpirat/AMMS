@@ -3299,6 +3299,84 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _vwap_cmd(args: list[str]) -> str:
+        """VWAP with std dev bands for a ticker or open positions.
+
+        Usage: /vwap [SYM]
+        Shows VWAP, ±1σ/±2σ bands, deviation%, and position (above/below/at).
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /vwap AAPL)"
+
+        from amms.features.vwap import vwap_full
+
+        lines = ["VWAP (volume-weighted avg price + σ bands):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            result = vwap_full(bars)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 5+ bars)")
+                continue
+            pos_icon = {"above_vwap": "↑", "below_vwap": "↓", "at_vwap": "↔️ "}.get(result.position, "")
+            lines.append(
+                f"  {sym:<6}  VWAP ${result.vwap:.2f}  "
+                f"price ${result.current_price:.2f} ({result.deviation_pct:+.1f}%)  "
+                f"{pos_icon} {result.position}"
+            )
+            lines.append(
+                f"          ±1σ [{result.std1_lower:.2f}–{result.std1_upper:.2f}]  "
+                f"±2σ [{result.std2_lower:.2f}–{result.std2_upper:.2f}]"
+            )
+        return "\n".join(lines)
+
+    def _volprofile_cmd(args: list[str]) -> str:
+        """Volume Profile: POC and Value Area for a ticker.
+
+        Usage: /volprofile [SYM]
+        POC = price level with most traded volume (70% value area).
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /volprofile AAPL)"
+
+        from amms.features.vwap import volume_profile
+
+        lines = ["Volume Profile (POC + 70% Value Area):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            result = volume_profile(bars)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 5+ bars)")
+                continue
+            rel_icon = {"above_poc": "↑", "below_poc": "↓", "at_poc": "↔️ "}.get(result.poc_relation, "")
+            lines.append(
+                f"  {sym:<6}  POC ${result.poc_price:.2f}  "
+                f"VA [{result.val:.2f}–{result.vah:.2f}]  "
+                f"price ${result.current_price:.2f}  {rel_icon} {result.poc_relation}"
+            )
+        return "\n".join(lines)
+
     def _pairs_cmd(args: list[str]) -> str:
         """Pairs trading spread analyzer.
 
@@ -4917,6 +4995,8 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
+            "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
             "/pairs SYM1 SYM2 — pairs trading: ratio Z-score, correlation, mean-reversion signal\n"
             "/vregime [SYM] — volatility regime: ATR percentile + size multiplier\n"
             "/health [SYM] — full indicator health check for a position\n"
@@ -5081,6 +5161,9 @@ def build_command_handlers(
         "mc": _montecarlo_cmd,
         "scan2": _scan2_cmd,
         "signals": _scan2_cmd,
+        "vwap": _vwap_cmd,
+        "volprofile": _volprofile_cmd,
+        "vp": _volprofile_cmd,
         "pairs": _pairs_cmd,
         "vregime": _vregime_cmd,
         "volregime": _vregime_cmd,

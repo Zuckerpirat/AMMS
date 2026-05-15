@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from amms.data.bars import Bar
-from amms.features.vwap import vwap, vwap_deviation_pct
+from amms.features.vwap import vwap, vwap_deviation_pct, vwap_full, volume_profile
 from amms.strategy.vwap_strategy import VwapStrategy
 
 
@@ -121,3 +121,114 @@ def test_registered_in_strategy_module() -> None:
     from amms.strategy import build_strategy
     s = build_strategy("vwap", {})
     assert s.name == "vwap"
+
+
+# ---------------------------------------------------------------------------
+# vwap_full() tests
+# ---------------------------------------------------------------------------
+
+def test_vwap_full_returns_none_insufficient() -> None:
+    bars = _bars([100.0] * 4)
+    assert vwap_full(bars) is None
+
+
+def test_vwap_full_equal_prices() -> None:
+    bars = _bars([100.0] * 20)
+    result = vwap_full(bars)
+    assert result is not None
+    assert result.symbol == "X"
+    assert abs(result.vwap - 100.0) < 0.5
+    assert result.bars_used == 20
+
+
+def test_vwap_full_position_above() -> None:
+    bars = _bars([100.0] * 19 + [120.0])
+    result = vwap_full(bars)
+    assert result is not None
+    assert result.position == "above_vwap"
+    assert result.deviation_pct > 0
+
+
+def test_vwap_full_position_below() -> None:
+    bars = _bars([100.0] * 19 + [80.0])
+    result = vwap_full(bars)
+    assert result is not None
+    assert result.position == "below_vwap"
+    assert result.deviation_pct < 0
+
+
+def test_vwap_full_std_bands_ordered() -> None:
+    bars = _bars([100.0 + i for i in range(20)])
+    result = vwap_full(bars)
+    assert result is not None
+    assert result.std2_lower < result.std1_lower < result.vwap
+    assert result.vwap < result.std1_upper < result.std2_upper
+
+
+def test_vwap_full_window() -> None:
+    bars = _bars([100.0] * 10 + [200.0] * 10)
+    r_all = vwap_full(bars)
+    r_last10 = vwap_full(bars, n=10)
+    assert r_last10 is not None
+    assert r_last10.vwap > r_all.vwap
+
+
+def test_vwap_full_zero_volume_returns_none() -> None:
+    bars = _bars([100.0] * 10, vol=0.0)
+    assert vwap_full(bars) is None
+
+
+# ---------------------------------------------------------------------------
+# volume_profile() tests
+# ---------------------------------------------------------------------------
+
+def test_volume_profile_returns_none_insufficient() -> None:
+    bars = _bars([100.0] * 3)
+    assert volume_profile(bars) is None
+
+
+def test_volume_profile_returns_result() -> None:
+    bars = _bars([90.0 + i for i in range(20)])
+    result = volume_profile(bars)
+    assert result is not None
+    assert result.symbol == "X"
+    assert result.bars_used == 20
+    assert result.n_buckets == 20
+
+
+def test_volume_profile_poc_within_range() -> None:
+    bars = _bars([90.0 + i for i in range(20)])
+    result = volume_profile(bars)
+    assert result is not None
+    low = min(b.low for b in bars)
+    high = max(b.high for b in bars)
+    assert low <= result.poc_price <= high
+
+
+def test_volume_profile_value_area_ordered() -> None:
+    bars = _bars([90.0 + i for i in range(20)])
+    result = volume_profile(bars)
+    assert result is not None
+    assert result.val <= result.poc_price <= result.vah
+
+
+def test_volume_profile_poc_relation() -> None:
+    # Use bars all at the same price → POC near that price → "at_poc"
+    bars = _bars([100.0] * 20)
+    result = volume_profile(bars)
+    assert result is not None
+    assert result.poc_relation in {"above_poc", "below_poc", "at_poc"}
+
+
+def test_volume_profile_custom_buckets() -> None:
+    bars = _bars([100.0 + i for i in range(20)])
+    result = volume_profile(bars, n_buckets=10)
+    assert result is not None
+    assert result.n_buckets == 10
+
+
+def test_volume_profile_same_price_range_returns_none() -> None:
+    bars = _bars([100.0] * 10)
+    # high = 101, low = 99, so price_high = 101 > price_low = 99 → not None
+    result = volume_profile(bars)
+    assert result is not None

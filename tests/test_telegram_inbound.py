@@ -3464,3 +3464,76 @@ def test_pairs_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/pairs" in h["help"]([])
+
+
+# ── /vwap and /volprofile tests ───────────────────────────────────────────────
+
+class _VWAPDataClient:
+    """Returns 20 bars for VWAP tests."""
+    def get_bars(self, symbol, *, limit=60):
+        from amms.data.bars import Bar
+        from datetime import UTC, datetime
+        bars = []
+        for i in range(20):
+            price = 100.0 + i * 0.5
+            ts = datetime(2026, 1, 1 + i % 28, 12, 0, 0, tzinfo=UTC).isoformat()
+            bars.append(Bar(symbol, "1Day", ts, price, price + 1.0, price - 1.0, price, 10_000))
+        return bars
+
+
+def test_vwap_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["vwap"]([])
+    assert "not wired" in out.lower()
+
+
+def test_vwap_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_VWAPDataClient())
+    out = h["vwap"]([])
+    assert "no open positions" in out
+
+
+def test_vwap_returns_vwap_info() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_VWAPDataClient())
+    out = h["vwap"](["AAPL"])
+    assert "VWAP" in out
+    assert "AAPL" in out
+
+
+def test_vwap_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/vwap" in h["help"]([])
+
+
+def test_volprofile_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["volprofile"]([])
+    assert "not wired" in out.lower()
+
+
+def test_volprofile_returns_poc_info() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_VWAPDataClient())
+    out = h["volprofile"](["AAPL"])
+    assert "POC" in out
+    assert "AAPL" in out
+
+
+def test_volprofile_alias_vp() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["vp"] is h["volprofile"]
+
+
+def test_volprofile_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/volprofile" in h["help"]([])
