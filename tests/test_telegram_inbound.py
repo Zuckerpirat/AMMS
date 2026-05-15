@@ -1263,3 +1263,59 @@ def test_help_includes_sentiment_and_profit() -> None:
     help_text = h["help"]([])
     assert "/sentiment" in help_text
     assert "/profit" in help_text
+
+
+def test_ping_handler_returns_pong() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["ping"]([])
+    assert "pong" in out.lower()
+    assert "100,000" in out or "100000" in out
+
+
+def test_version_handler_returns_git_info() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["version"]([])
+    assert "amms" in out
+    assert "git" in out
+
+
+def test_fees_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["fees"]([]) == "DB not wired."
+
+
+def test_fees_shows_cost_estimate() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["fees"]([])
+    assert "Simulated fee" in out
+    assert "notional" in out.lower()
+
+
+def test_fees_custom_bps() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["fees"](["10"])
+    assert "10.0 bps" in out
+
+
+def test_fees_invalid_bps() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["fees"](["abc"])
+    assert "usage" in out.lower()
+
+
+def test_help_includes_ping_version_fees() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/ping" in help_text
+    assert "/version" in help_text
+    assert "/fees" in help_text

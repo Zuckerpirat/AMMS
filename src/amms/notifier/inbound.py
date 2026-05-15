@@ -1855,6 +1855,81 @@ def build_command_handlers(
             return plain + f"\n\n(LLM error: {e!r})"
         return narrated
 
+    def _ping(_args: list[str]) -> str:
+        from datetime import UTC, datetime
+
+        ts = datetime.now(UTC).strftime("%H:%M:%S UTC")
+        try:
+            acc = broker.get_account()
+            return f"pong! {ts}  |  equity ${acc.equity:,.2f}"
+        except Exception:
+            return f"pong! {ts}  (broker unreachable)"
+
+    def _version(_args: list[str]) -> str:
+        import subprocess
+
+        try:
+            sha = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except Exception:
+            sha = "unknown"
+        try:
+            branch = subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except Exception:
+            branch = "unknown"
+        return f"amms  git {sha}  branch {branch}"
+
+    def _fees(args: list[str]) -> str:
+        """Estimate cumulative transaction cost for paper trades.
+
+        Alpaca paper trading has no real fees, but this simulates the cost
+        using a configurable basis-point rate so the user can see impact.
+        Usage: /fees [bps]  — default 5 bps per trade (0.05%)
+        """
+        if conn is None:
+            return "DB not wired."
+
+        bps = 5.0
+        if args:
+            try:
+                bps = float(args[0])
+            except ValueError:
+                return "usage: /fees [BPS]  (e.g. /fees 5 for 5 basis points)"
+
+        rate = bps / 10_000
+
+        rows = conn.execute(
+            "SELECT side, qty, filled_avg_price "
+            "FROM orders WHERE status = 'filled' AND filled_avg_price IS NOT NULL"
+        ).fetchall()
+
+        if not rows:
+            return "No filled orders yet."
+
+        total_notional = sum(
+            float(r["qty"]) * float(r["filled_avg_price"]) for r in rows
+        )
+        total_fees = total_notional * rate
+        trade_count = len(rows)
+
+        lines = [
+            f"Simulated fee analysis ({bps:.1f} bps/trade):",
+            f"  Trades:          {trade_count}",
+            f"  Total notional:  ${total_notional:,.2f}",
+            f"  Estimated fees:  ${total_fees:,.2f}",
+            f"  Avg per trade:   ${total_fees/trade_count:.2f}",
+            "",
+            "(Alpaca paper trades have no real fees. This is a simulation.)",
+        ]
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -1898,7 +1973,10 @@ def build_command_handlers(
             "/journal [SYM] — completed trade pairs (BUY→SELL) with realized P&L\n"
             "/top — best and worst open positions by unrealized P&L %%\n"
             "/news [SYM] — recent news headlines for a ticker (or open positions)\n"
+            "/fees [BPS] — estimate simulated transaction cost (default 5 bps)\n"
             "/summary — AI-generated narrative of the current portfolio state\n"
+            "/ping — health check (shows timestamp and equity)\n"
+            "/version — git sha and branch of the running bot\n"
             "/pause — stop placing new orders\n"
             "/resume — re-enable placing orders\n"
             "/help — this message"
@@ -1955,4 +2033,7 @@ def build_command_handlers(
         "compare": _compare,
         "sentiment": _sentiment,
         "profit": _profit,
+        "ping": _ping,
+        "version": _version,
+        "fees": _fees,
     }
