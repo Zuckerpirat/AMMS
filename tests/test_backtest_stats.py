@@ -9,6 +9,8 @@ import pytest
 from amms.backtest.engine import BacktestConfig, BacktestResult, Portfolio, Trade
 from amms.backtest.stats import (
     BacktestStats,
+    ExtendedStats,
+    compute_extended_stats,
     compute_stats,
     write_equity_curve_csv,
     write_trades_csv,
@@ -146,6 +148,76 @@ def test_sharpe_computed_from_equity_curve():
     result = _make_result_with_trades(equity_curve=equity, trades_def=[])
     stats = compute_stats(result)
     assert isinstance(stats.sharpe, float)
+
+
+def test_extended_stats_returns_instance():
+    equity = [("2026-01-01", 100_000), ("2026-01-05", 105_000), ("2026-01-10", 102_000)]
+    trades = [
+        Trade("2026-01-02", "AAPL", "buy",  10, 100.0, ""),
+        Trade("2026-01-04", "AAPL", "sell", 10, 105.0, ""),  # win
+        Trade("2026-01-06", "AAPL", "buy",  10, 105.0, ""),
+        Trade("2026-01-09", "AAPL", "sell", 10,  95.0, ""),  # loss
+    ]
+    result = _result(trades, equity)
+    base = compute_stats(result)
+    ext = compute_extended_stats(result, base)
+    assert isinstance(ext, ExtendedStats)
+
+
+def test_extended_stats_consec_wins_losses():
+    equity = [("2026-01-01", 100_000), ("2026-01-10", 110_000)]
+    trades = [
+        Trade("d1", "AAPL", "buy",  1, 100.0, ""),
+        Trade("d2", "AAPL", "sell", 1, 110.0, ""),  # win
+        Trade("d3", "AAPL", "buy",  1, 100.0, ""),
+        Trade("d4", "AAPL", "sell", 1, 110.0, ""),  # win
+        Trade("d5", "MSFT", "buy",  1, 100.0, ""),
+        Trade("d6", "MSFT", "sell", 1,  90.0, ""),  # loss
+    ]
+    result = _result(trades, equity)
+    base = compute_stats(result)
+    ext = compute_extended_stats(result, base)
+    assert ext.max_consec_wins == 2
+    assert ext.max_consec_losses == 1
+
+
+def test_extended_stats_calmar_positive_return():
+    equity = [
+        ("2026-01-01", 100_000),
+        ("2026-01-02", 105_000),
+        ("2026-01-03", 100_000),  # 5% dd from peak
+        ("2026-01-04", 110_000),
+    ]
+    result = _result([], equity)
+    base = compute_stats(result)
+    ext = compute_extended_stats(result, base)
+    # Calmar = annualized_return / max_dd; max_dd > 0, return > 0
+    assert isinstance(ext.calmar_ratio, float)
+
+
+def test_extended_stats_payoff_ratio():
+    equity = [("2026-01-01", 100_000), ("2026-01-10", 105_000)]
+    trades = [
+        Trade("d1", "AAPL", "buy",  1, 100.0, ""),
+        Trade("d2", "AAPL", "sell", 1, 120.0, ""),  # +20 win
+        Trade("d3", "MSFT", "buy",  1, 100.0, ""),
+        Trade("d4", "MSFT", "sell", 1,  95.0, ""),  # -5 loss
+    ]
+    result = _result(trades, equity)
+    base = compute_stats(result)
+    ext = compute_extended_stats(result, base)
+    # avg_win=20, avg_loss=5 → payoff=4.0
+    assert ext.payoff_ratio == pytest.approx(4.0, abs=0.01)
+
+
+def test_extended_stats_no_trades():
+    equity = [("2026-01-01", 100_000), ("2026-01-02", 100_000)]
+    result = _result([], equity)
+    base = compute_stats(result)
+    ext = compute_extended_stats(result, base)
+    assert ext.max_consec_wins == 0
+    assert ext.max_consec_losses == 0
+    assert ext.expectancy == 0.0
 
 
 def test_new_stats_fields_present():

@@ -98,6 +98,102 @@ def compute_stats(result: BacktestResult) -> BacktestStats:
     )
 
 
+@dataclass(frozen=True)
+class ExtendedStats:
+    """Additional backtest metrics beyond the basics."""
+    calmar_ratio: float          # annualized return / max drawdown (higher = better)
+    sortino_ratio: float         # annualized return / downside deviation
+    recovery_factor: float       # total return / max drawdown (abs)
+    max_consec_wins: int
+    max_consec_losses: int
+    expectancy: float            # avg(win_pct * win_size - loss_pct * loss_size)
+    payoff_ratio: float          # avg_win / avg_loss (>1 = wins > losses in size)
+    tail_ratio: float            # 95th pctile return / abs(5th pctile return)
+
+
+def compute_extended_stats(result: BacktestResult, base: BacktestStats) -> ExtendedStats:
+    """Compute extended backtest metrics from a result and its base stats."""
+    initial = result.config.initial_equity
+
+    # Annualised return estimate (assume 252 trading days)
+    equities = [eq for _, eq in result.equity_curve] if result.equity_curve else [initial]
+    n_days = max(len(equities) - 1, 1)
+    annual_factor = 252.0 / n_days
+    annualized_return = ((base.final_equity / initial) ** annual_factor - 1.0) * 100 if initial > 0 else 0.0
+
+    max_dd_abs = abs(base.max_drawdown_pct)
+
+    # Calmar ratio
+    calmar = annualized_return / max_dd_abs if max_dd_abs > 0 else 0.0
+
+    # Sortino ratio (downside deviation only)
+    sortino = 0.0
+    if len(equities) >= 3:
+        rets = [(equities[i] - equities[i - 1]) / equities[i - 1] for i in range(1, len(equities))]
+        mean = sum(rets) / len(rets)
+        neg_rets = [r for r in rets if r < 0]
+        if neg_rets:
+            downside_var = sum(r ** 2 for r in neg_rets) / len(neg_rets)
+            downside_dev = math.sqrt(downside_var)
+            sortino = mean / downside_dev * math.sqrt(252) if downside_dev > 0 else 0.0
+
+    # Recovery factor
+    recovery = base.total_return_pct / max_dd_abs if max_dd_abs > 0 else 0.0
+
+    # Consecutive wins/losses
+    streak_wins = 0
+    streak_losses = 0
+    max_w = 0
+    max_l = 0
+    buys: dict[str, list[Trade]] = {}
+    for t in result.trades:
+        if t.side == "buy":
+            buys.setdefault(t.symbol, []).append(t)
+            continue
+        queue = buys.get(t.symbol, [])
+        if not queue:
+            continue
+        entry = queue.pop(0)
+        pnl = (t.price - entry.price) * t.qty
+        if pnl > 0:
+            streak_wins += 1
+            streak_losses = 0
+        else:
+            streak_losses += 1
+            streak_wins = 0
+        max_w = max(max_w, streak_wins)
+        max_l = max(max_l, streak_losses)
+
+    # Expectancy
+    win_rate = base.win_rate
+    loss_rate = 1.0 - win_rate
+    expectancy = (win_rate * base.avg_win - loss_rate * base.avg_loss) if base.closed_round_trips > 0 else 0.0
+
+    # Payoff ratio
+    payoff = base.avg_win / base.avg_loss if base.avg_loss > 0 else 0.0
+
+    # Tail ratio from equity curve returns
+    tail = 0.0
+    if len(equities) >= 10:
+        rets = sorted((equities[i] - equities[i - 1]) / equities[i - 1] for i in range(1, len(equities)))
+        p95_idx = int(len(rets) * 0.95)
+        p05_idx = int(len(rets) * 0.05)
+        p95 = rets[p95_idx] if p95_idx < len(rets) else rets[-1]
+        p05 = rets[p05_idx] if p05_idx < len(rets) else rets[0]
+        tail = abs(p95 / p05) if p05 != 0 else 0.0
+
+    return ExtendedStats(
+        calmar_ratio=round(calmar, 3),
+        sortino_ratio=round(sortino, 3),
+        recovery_factor=round(recovery, 3),
+        max_consec_wins=max_w,
+        max_consec_losses=max_l,
+        expectancy=round(expectancy, 2),
+        payoff_ratio=round(payoff, 3),
+        tail_ratio=round(tail, 3),
+    )
+
+
 def write_trades_csv(trades: list[Trade], path: Path) -> int:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

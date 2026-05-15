@@ -4703,6 +4703,49 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _btstats_cmd(args: list[str]) -> str:
+        """Extended backtest statistics from the last backtest run.
+
+        Usage: /btstats [DAYS]
+        Shows Calmar, Sortino, recovery factor, streaks, expectancy, payoff ratio.
+        Requires /backtest to be wired.
+        """
+        if run_backtest is None:
+            return "backtest not wired (only available when launched from scheduler)"
+        try:
+            days = int(args[0]) if args else 90
+        except ValueError:
+            return "usage: /btstats [DAYS]  (default 90)"
+        days = max(5, min(days, 730))
+        try:
+            bt_result = run_backtest(days)
+        except Exception as e:
+            return f"backtest failed: {e!r}"
+        if bt_result is None:
+            return "backtest produced no result"
+
+        try:
+            from amms.backtest.stats import compute_extended_stats
+            ext = compute_extended_stats(bt_result._result, bt_result) if hasattr(bt_result, "_result") else None
+        except Exception:
+            ext = None
+
+        if ext is None:
+            return "Extended stats not available (backtest result format mismatch)."
+
+        lines = [
+            f"── Extended Backtest Stats ({days}d) ──",
+            f"  Calmar ratio:    {ext.calmar_ratio:.2f}  (ann. return / max DD)",
+            f"  Sortino ratio:   {ext.sortino_ratio:.2f}  (ann. return / downside σ)",
+            f"  Recovery factor: {ext.recovery_factor:.2f}  (total return / max DD)",
+            f"  Payoff ratio:    {ext.payoff_ratio:.2f}  (avg win / avg loss)",
+            f"  Expectancy:      ${ext.expectancy:.2f}  per trade",
+            f"  Max win streak:  {ext.max_consec_wins}",
+            f"  Max loss streak: {ext.max_consec_losses}",
+            f"  Tail ratio:      {ext.tail_ratio:.2f}  (95th / 5th pctile return)",
+        ]
+        return "\n".join(lines)
+
     def _meanrev_cmd(args: list[str]) -> str:
         """Mean reversion score: how stretched is the price from its mean?
 
@@ -5198,6 +5241,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/btstats [DAYS] — extended backtest stats: Calmar, Sortino, recovery, streaks\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
@@ -5370,6 +5414,7 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "btstats": _btstats_cmd,
         "meanrev": _meanrev_cmd,
         "mr": _meanrev_cmd,
         "breadth": _breadth_cmd,
