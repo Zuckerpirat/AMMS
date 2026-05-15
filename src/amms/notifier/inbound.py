@@ -3299,6 +3299,159 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _vregime_cmd(args: list[str]) -> str:
+        """Show volatility regime classification for positions or a ticker.
+
+        Usage: /vregime [SYM]
+        Classifies ATR into low/normal/high/extreme using percentile rank vs history.
+        Shows recommended position size multiplier.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /vregime AAPL)"
+
+        from amms.analysis.volatility_regime import classify
+
+        lines = ["Volatility Regime (ATR percentile vs history):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=100)
+            except Exception:
+                bars = []
+            result = classify(bars)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 30+ bars)")
+                continue
+            regime_icon = {"low": "🟢", "normal": "↔️ ", "high": "⚠️ ", "extreme": "🚨"}.get(result.regime, "")
+            lines.append(
+                f"  {sym:<6}  ATR ${result.current_atr:.2f} ({result.atr_pct_of_price:.1f}%)  "
+                f"pctile {result.percentile:.0f}th  {regime_icon} {result.regime}  "
+                f"→ size ×{result.recommended_size_mult:.2f}"
+            )
+        return "\n".join(lines)
+
+    def _health_cmd(args: list[str]) -> str:
+        """Comprehensive position health check for a single ticker.
+
+        Usage: /health SYM
+        Combines: RSI, MACD, Bollinger, ADX, Z-score, SAR, OBV, candle pattern.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        if not args:
+            # Use first open position if no arg
+            try:
+                positions = broker.get_positions()
+                if not positions:
+                    return "usage: /health SYM  (e.g. /health AAPL)"
+                sym = positions[0].symbol
+            except Exception as e:
+                return f"broker error: {e!r}"
+        else:
+            sym = args[0].upper()
+
+        try:
+            bars = data.get_bars(sym, limit=80)
+        except Exception as e:
+            return f"data error for {sym}: {e!r}"
+
+        if len(bars) < 5:
+            return f"Insufficient data for {sym}."
+
+        price = bars[-1].close
+        lines = [f"── Health Check: {sym}  ${price:.2f} ──"]
+
+        # RSI
+        try:
+            from amms.features.momentum import rsi
+            rsi_val = rsi(bars, 14)
+            if rsi_val is not None:
+                zone = "overbought" if rsi_val > 70 else ("oversold" if rsi_val < 30 else "neutral")
+                lines.append(f"  RSI-14:    {rsi_val:.1f}  ({zone})")
+        except Exception:
+            pass
+
+        # Bollinger
+        try:
+            from amms.features.bollinger import bollinger
+            bb = bollinger(bars, 20)
+            if bb:
+                zone = "above band" if bb.pct_b > 1 else ("below band" if bb.pct_b < 0 else f"%B {bb.pct_b:.2f}")
+                lines.append(f"  Bollinger: U {bb.upper:.2f} / M {bb.middle:.2f} / L {bb.lower:.2f}  {zone}")
+        except Exception:
+            pass
+
+        # MACD
+        try:
+            from amms.features.momentum import macd
+            mc = macd(bars)
+            if mc:
+                ml, sl, hist = mc
+                lines.append(f"  MACD:      {ml:.3f}  signal {sl:.3f}  hist {'▲' if hist > 0 else '▼'}{abs(hist):.3f}")
+        except Exception:
+            pass
+
+        # ADX
+        try:
+            from amms.features.adx import adx as compute_adx
+            adx_r = compute_adx(bars, 14)
+            if adx_r:
+                lines.append(f"  ADX:       {adx_r.adx:.1f} ({adx_r.trend_strength})  {adx_r.direction}")
+        except Exception:
+            pass
+
+        # Z-score
+        try:
+            from amms.features.zscore import zscore
+            z = zscore(bars, 20)
+            if z is not None:
+                lines.append(f"  Z-score:   {z:+.2f}")
+        except Exception:
+            pass
+
+        # Parabolic SAR
+        try:
+            from amms.features.parabolic_sar import parabolic_sar
+            sar = parabolic_sar(bars)
+            if sar:
+                lines.append(f"  SAR:       {sar.trend} trend  stop ${sar.sar:.2f}  ({sar.distance_pct:.1f}% away)")
+        except Exception:
+            pass
+
+        # OBV
+        try:
+            from amms.features.obv import obv as compute_obv
+            obv_r = compute_obv(bars)
+            if obv_r:
+                div_str = f"  {obv_r.divergence} div" if obv_r.divergence != "none" else ""
+                lines.append(f"  OBV:       {obv_r.trend}{div_str}")
+        except Exception:
+            pass
+
+        # Candlestick
+        try:
+            from amms.features.candlestick import detect_patterns
+            patterns = detect_patterns(bars, lookback=3)
+            if patterns:
+                p = patterns[-1]
+                dir_icon = "🟢" if p.direction == "bullish" else ("🔴" if p.direction == "bearish" else "↔")
+                lines.append(f"  Candle:    {dir_icon} {p.name} (conf {p.confidence:.0%})")
+        except Exception:
+            pass
+
+        return "\n".join(lines)
+
     def _candles_cmd(args: list[str]) -> str:
         """Detect candlestick patterns for open positions or a ticker.
 
@@ -4729,6 +4882,8 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/vregime [SYM] — volatility regime: ATR percentile + size multiplier\n"
+            "/health [SYM] — full indicator health check for a position\n"
             "/candles [SYM] — candlestick pattern detector (Doji/Hammer/Engulfing/etc.)\n"
             "/fib [SYM] — Fibonacci retracement/extension levels from swing high/low\n"
             "/journalstats — extended trade stats: expectancy, Sharpe, streaks, hold\n"
@@ -4890,6 +5045,9 @@ def build_command_handlers(
         "mc": _montecarlo_cmd,
         "scan2": _scan2_cmd,
         "signals": _scan2_cmd,
+        "vregime": _vregime_cmd,
+        "volregime": _vregime_cmd,
+        "health": _health_cmd,
         "candles": _candles_cmd,
         "patterns": _candles_cmd,
         "fib": _fib_cmd,
