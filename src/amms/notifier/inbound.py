@@ -3299,6 +3299,64 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _scan2_cmd(args: list[str]) -> str:
+        """Multi-indicator signal scanner for the watchlist.
+
+        Usage: /scan2 [min_score]
+        Scans all watchlist symbols for BB + RSI + Stoch + MACD + Z-score setups.
+        min_score: minimum combined signal score (default 3.0, max 10)
+        """
+        if data is None:
+            return "Data client not wired."
+
+        min_score = 3.0
+        if args:
+            try:
+                min_score = float(args[0])
+            except ValueError:
+                pass
+
+        # Get watchlist symbols
+        from amms.data.dynamic_watchlist import load as load_watchlist
+        watchlist = list(load_watchlist())
+        if not watchlist:
+            return "Watchlist is empty — use /setlist to add symbols."
+
+        from amms.analysis.signal_scanner import scan_signals
+
+        setups = scan_signals(watchlist, data, min_score=min_score, top_n=10)
+
+        if not setups:
+            return f"No setups found with score >= {min_score:.0f}. Try lowering the threshold."
+
+        buys = [s for s in setups if s.direction == "buy"]
+        sells = [s for s in setups if s.direction == "sell"]
+
+        lines = [f"Signal Scanner (watchlist: {len(watchlist)} symbols  min score: {min_score:.0f}):"]
+
+        if buys:
+            lines.append("  🟢 Buy Setups:")
+            for s in buys[:5]:
+                lines.append(
+                    f"    {s.symbol:<6}  ${s.price:.2f}  score {s.score:.1f}/10  [{s.confidence}]"
+                )
+                for sig in s.signals[:3]:
+                    lines.append(f"      • {sig}")
+
+        if sells:
+            lines.append("  🔴 Sell/Short Setups:")
+            for s in sells[:5]:
+                lines.append(
+                    f"    {s.symbol:<6}  ${s.price:.2f}  score {s.score:.1f}/10  [{s.confidence}]"
+                )
+                for sig in s.signals[:3]:
+                    lines.append(f"      • {sig}")
+
+        if not buys and not sells:
+            lines.append("  No directional setups above threshold.")
+
+        return "\n".join(lines)
+
     def _montecarlo_cmd(args: list[str]) -> str:
         """Monte Carlo simulation from trade history.
 
@@ -4402,6 +4460,7 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/scan2 [min_score] — multi-indicator scanner: BB+RSI+Stoch+MACD setups\n"
             "/montecarlo [N] — Monte Carlo simulation from trade history (1000 paths)\n"
             "/kelly PRICE STOP%% [WIN_RATE] — Kelly criterion + fixed-fraction sizing\n"
             "/rr ENTRY STOP TARGET [QTY] — risk/reward calculator\n"
@@ -4555,4 +4614,6 @@ def build_command_handlers(
         "riskreward": _rr_calc,
         "montecarlo": _montecarlo_cmd,
         "mc": _montecarlo_cmd,
+        "scan2": _scan2_cmd,
+        "signals": _scan2_cmd,
     }
