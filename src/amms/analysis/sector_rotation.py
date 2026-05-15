@@ -101,3 +101,80 @@ def detect_rotation(data, *, n: int = 20) -> list[SectorMomentum]:
         reverse=True,
     )
     return results
+
+
+@dataclass(frozen=True)
+class SectorHeatRow:
+    sector: str
+    etf: str
+    mom_5d: float | None     # 5-day return %
+    mom_20d: float | None    # 20-day return %
+    mom_60d: float | None    # 60-day return %
+    trend_5d: str            # "hot" | "warm" | "cool" | "cold" | "n/a"
+    trend_20d: str
+    composite_score: float   # weighted average, higher = stronger momentum
+
+
+def sector_heatmap(data) -> list[SectorHeatRow]:
+    """Compute multi-timeframe sector momentum heatmap.
+
+    Returns rows sorted by composite_score descending.
+    Composite score: 0.2 × 5d + 0.5 × 20d + 0.3 × 60d
+    """
+    from amms.features.momentum import n_day_return
+
+    def classify(pct: float | None) -> str:
+        if pct is None:
+            return "n/a"
+        if pct > 3.0:
+            return "hot"
+        if pct > 0.5:
+            return "warm"
+        if pct < -3.0:
+            return "cold"
+        if pct < -0.5:
+            return "cool"
+        return "flat"
+
+    rows: list[SectorHeatRow] = []
+    for sector, etf in SECTOR_ETFS.items():
+        try:
+            bars = data.get_bars(etf, limit=70)
+        except Exception:
+            bars = []
+
+        from amms.features.momentum import n_day_return as ndr
+        m5 = ndr(bars, 5)
+        m5 = m5 * 100 if m5 is not None else None
+        m20 = ndr(bars, 20)
+        m20 = m20 * 100 if m20 is not None else None
+        m60 = ndr(bars, 60)
+        m60 = m60 * 100 if m60 is not None else None
+
+        score_parts = []
+        weights = []
+        if m5 is not None:
+            score_parts.append(m5 * 0.2)
+            weights.append(0.2)
+        if m20 is not None:
+            score_parts.append(m20 * 0.5)
+            weights.append(0.5)
+        if m60 is not None:
+            score_parts.append(m60 * 0.3)
+            weights.append(0.3)
+
+        composite = sum(score_parts) / sum(weights) if weights else 0.0
+
+        rows.append(SectorHeatRow(
+            sector=sector,
+            etf=etf,
+            mom_5d=round(m5, 2) if m5 is not None else None,
+            mom_20d=round(m20, 2) if m20 is not None else None,
+            mom_60d=round(m60, 2) if m60 is not None else None,
+            trend_5d=classify(m5),
+            trend_20d=classify(m20),
+            composite_score=round(composite, 2),
+        ))
+
+    rows.sort(key=lambda r: r.composite_score, reverse=True)
+    return rows

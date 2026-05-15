@@ -4703,6 +4703,38 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _sectorheat_cmd(args: list[str]) -> str:
+        """Sector momentum heatmap: 5d/20d/60d returns for all 11 sectors.
+
+        Usage: /sectorheat
+        Ranks sectors by composite momentum score. Hot = outperforming.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        from amms.analysis.sector_rotation import sector_heatmap
+
+        rows = sector_heatmap(data)
+        if not rows:
+            return "No sector data available."
+
+        heat_icon = {
+            "hot": "🔥", "warm": "🟢", "flat": "↔️ ", "cool": "🟡", "cold": "🔵", "n/a": "❓",
+        }
+
+        lines = ["── Sector Heatmap (5d / 20d / 60d momentum) ──"]
+        for row in rows:
+            m5 = f"{row.mom_5d:+.1f}%%" if row.mom_5d is not None else "  n/a"
+            m20 = f"{row.mom_20d:+.1f}%%" if row.mom_20d is not None else "  n/a"
+            m60 = f"{row.mom_60d:+.1f}%%" if row.mom_60d is not None else "  n/a"
+            icon = heat_icon.get(row.trend_20d, "")
+            lines.append(
+                f"  {icon} {row.sector:<22}  "
+                f"5d {m5:>7}  20d {m20:>7}  60d {m60:>7}  "
+                f"score {row.composite_score:+.1f}"
+            )
+        return "\n".join(lines)
+
     def _btstats_cmd(args: list[str]) -> str:
         """Extended backtest statistics from the last backtest run.
 
@@ -5241,6 +5273,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/sectorheat — sector momentum heatmap: 5d/20d/60d ranked by composite score\n"
             "/btstats [DAYS] — extended backtest stats: Calmar, Sortino, recovery, streaks\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
@@ -5414,6 +5447,8 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "sectorheat": _sectorheat_cmd,
+        "sh": _sectorheat_cmd,
         "btstats": _btstats_cmd,
         "meanrev": _meanrev_cmd,
         "mr": _meanrev_cmd,

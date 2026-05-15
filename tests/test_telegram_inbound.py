@@ -3747,3 +3747,43 @@ def test_meanrev_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/meanrev" in h["help"]([])
+
+
+# ── /sectorheat tests ─────────────────────────────────────────────────────────
+
+class _SectorDataClient:
+    """Returns 70 bars for each ETF for sector heatmap tests."""
+    def get_bars(self, symbol, *, limit=70):
+        from amms.data.bars import Bar
+        from datetime import UTC, datetime
+        bars = []
+        for i in range(min(limit, 70)):
+            price = 100.0 + i * 0.2
+            ts = datetime(2026, 1, 1 + i % 28, 12, 0, 0, tzinfo=UTC).isoformat()
+            bars.append(Bar(symbol, "1Day", ts, price, price + 1, price - 1, price, 10_000))
+        return bars
+
+
+def test_sectorheat_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["sectorheat"]([]).lower()
+
+
+def test_sectorheat_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_SectorDataClient())
+    out = h["sectorheat"]([])
+    assert "Heatmap" in out or "Sector" in out
+
+
+def test_sectorheat_alias_sh() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["sh"] is h["sectorheat"]
+
+
+def test_sectorheat_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/sectorheat" in h["help"]([])
