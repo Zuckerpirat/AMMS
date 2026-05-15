@@ -4703,6 +4703,52 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _meanrev_cmd(args: list[str]) -> str:
+        """Mean reversion score: how stretched is the price from its mean?
+
+        Usage: /meanrev [SYM]
+        Aggregates Bollinger %B, Z-score, RSI deviation, Williams %%R.
+        Score 0-100: extreme stretch → high probability of mean reversion.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /meanrev AAPL)"
+
+        from amms.analysis.mean_reversion import score as mr_score
+
+        lines = ["Mean Reversion Score (0=near mean, 100=extreme stretch):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=50)
+            except Exception:
+                bars = []
+            result = mr_score(bars)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 20+ bars)")
+                continue
+            dir_icon = {
+                "bullish_reversion": "🟢 BUY",
+                "bearish_reversion": "🔴 SELL",
+                "neutral": "↔️  HOLD",
+            }.get(result.direction, "")
+            verdict_icon = {
+                "extreme": "🚨", "strong": "⚠️ ", "moderate": "📊",
+                "mild": "📉", "none": "➖",
+            }.get(result.verdict, "")
+            lines.append(
+                f"  {sym:<6}  score {result.score:.0f}/100  "
+                f"{verdict_icon} {result.verdict}  {dir_icon}"
+            )
+            lines.append(f"         {result.recommended_action}")
+        return "\n".join(lines)
+
     def _breadth_cmd(args: list[str]) -> str:
         """Portfolio breadth: how many positions are technically healthy?
 
@@ -5152,6 +5198,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
             "/roc [SYM] — Rate of Change: 10/20/50-bar momentum + trend alignment\n"
@@ -5323,6 +5370,8 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "meanrev": _meanrev_cmd,
+        "mr": _meanrev_cmd,
         "breadth": _breadth_cmd,
         "trendlines": _trendlines_cmd,
         "tl": _trendlines_cmd,

@@ -3710,3 +3710,40 @@ def test_breadth_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/breadth" in h["help"]([])
+
+
+# ── /meanrev tests ────────────────────────────────────────────────────────────
+
+def test_meanrev_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["meanrev"]([]).lower()
+
+
+def test_meanrev_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_TrendDataClient())
+    assert "no open positions" in h["meanrev"]([])
+
+
+def test_meanrev_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
+    out = h["meanrev"](["AAPL"])
+    assert "AAPL" in out
+    assert "score" in out.lower() or "Mean Reversion" in out
+
+
+def test_meanrev_alias_mr() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["mr"] is h["meanrev"]
+
+
+def test_meanrev_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/meanrev" in h["help"]([])
