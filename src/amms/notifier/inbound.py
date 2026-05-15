@@ -2982,6 +2982,129 @@ def build_command_handlers(
             lines.append("  ATR:            n/a (using max-pct only)")
         return "\n".join(lines)
 
+    def _winloss(args: list[str]) -> str:
+        """Win/loss breakdown by ticker from all filled BUY→SELL round trips.
+
+        Usage: /winloss [SYM]
+        """
+        if conn is None:
+            return "DB not wired."
+
+        rows = conn.execute(
+            "SELECT symbol, side, qty, filled_avg_price, filled_at "
+            "FROM orders WHERE status = 'filled' AND filled_avg_price IS NOT NULL "
+            "ORDER BY filled_at ASC"
+        ).fetchall()
+
+        # FIFO pairing per symbol
+        buys: dict[str, list] = {}
+        stats: dict[str, dict] = {}
+        filter_sym = args[0].upper() if args else None
+
+        for r in rows:
+            try:
+                sym = r["symbol"] if isinstance(r, __import__("sqlite3").Row) else r[0]
+                side = r["side"] if isinstance(r, __import__("sqlite3").Row) else r[1]
+                qty = float(r["qty"] if isinstance(r, __import__("sqlite3").Row) else r[2])
+                price = float(r["filled_avg_price"] if isinstance(r, __import__("sqlite3").Row) else r[3])
+            except (KeyError, TypeError, ValueError):
+                try:
+                    sym, side, qty, price = r[0], r[1], float(r[2]), float(r[3])
+                except Exception:
+                    continue
+
+            if filter_sym and sym != filter_sym:
+                continue
+
+            if side == "buy":
+                buys.setdefault(sym, []).append((price, qty))
+                continue
+
+            queue = buys.get(sym, [])
+            if not queue:
+                continue
+            entry_price, _ = queue.pop(0)
+            pnl = (price - entry_price) * qty
+            s = stats.setdefault(sym, {"wins": 0, "losses": 0, "gross_profit": 0.0, "gross_loss": 0.0})
+            if pnl > 0:
+                s["wins"] += 1
+                s["gross_profit"] += pnl
+            else:
+                s["losses"] += 1
+                s["gross_loss"] += abs(pnl)
+
+        if not stats:
+            return "No completed round trips found." + (f" (for {filter_sym})" if filter_sym else "")
+
+        lines = ["Win/loss by ticker:"]
+        all_syms = sorted(stats.keys())
+        for sym in all_syms:
+            s = stats[sym]
+            total = s["wins"] + s["losses"]
+            wr = s["wins"] / total if total else 0
+            net = s["gross_profit"] - s["gross_loss"]
+            lines.append(
+                f"  {sym:<6}  {s['wins']}W {s['losses']}L  "
+                f"WR {wr:.0%}  net ${net:+,.2f}  "
+                f"(profit ${s['gross_profit']:,.2f}  loss ${s['gross_loss']:,.2f})"
+            )
+        return "\n".join(lines)
+
+    def _hold(_args: list[str]) -> str:
+        """Show average holding period (in days) per ticker from filled orders.
+
+        Pairs BUY→SELL by symbol and computes calendar days between fills.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        rows = conn.execute(
+            "SELECT symbol, side, filled_at "
+            "FROM orders WHERE status = 'filled' AND filled_at IS NOT NULL "
+            "ORDER BY filled_at ASC"
+        ).fetchall()
+
+        buys: dict[str, list[str]] = {}
+        hold_days: dict[str, list[float]] = {}
+
+        for r in rows:
+            try:
+                sym = r["symbol"]
+                side = r["side"]
+                filled_at = r["filled_at"]
+            except (KeyError, TypeError):
+                sym, side, filled_at = r[0], r[1], r[2]
+
+            if side == "buy":
+                buys.setdefault(sym, []).append(filled_at[:10])
+                continue
+            queue = buys.get(sym, [])
+            if not queue:
+                continue
+            buy_date = queue.pop(0)
+            try:
+                from datetime import date as _date
+                d1 = _date.fromisoformat(buy_date)
+                d2 = _date.fromisoformat(filled_at[:10])
+                days = (d2 - d1).days
+                hold_days.setdefault(sym, []).append(max(0, days))
+            except Exception:
+                pass
+
+        if not hold_days:
+            return "No completed round trips with date data found."
+
+        lines = ["Average holding periods:"]
+        for sym in sorted(hold_days.keys()):
+            days_list = hold_days[sym]
+            avg = sum(days_list) / len(days_list)
+            mn = min(days_list)
+            mx = max(days_list)
+            lines.append(
+                f"  {sym:<6}  avg {avg:.1f}d  (min {mn}d, max {mx}d, {len(days_list)} trades)"
+            )
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -3031,6 +3154,8 @@ def build_command_handlers(
             "/score [SYM] — composite signal score (-100..+100) for a ticker\n"
             "/filter [score N|rsi oversold|bull|bear] — screen watchlist by signal\n"
             "/sizing SYM [price] — recommended share quantity given equity + risk\n"
+            "/winloss [SYM] — win/loss count and net P&L by ticker\n"
+            "/hold — average holding period per ticker from completed trades\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3136,4 +3261,7 @@ def build_command_handlers(
         "filter": _filter,
         "sizing": _sizing,
         "size": _sizing,
+        "winloss": _winloss,
+        "wl": _winloss,
+        "hold": _hold,
     }

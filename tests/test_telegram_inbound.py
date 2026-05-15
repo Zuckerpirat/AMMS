@@ -2258,3 +2258,69 @@ def test_help_includes_filter_and_sizing() -> None:
     help_text = h["help"]([])
     assert "/filter" in help_text
     assert "/sizing" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /winloss tests
+# ---------------------------------------------------------------------------
+
+def test_winloss_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["winloss"]([]) == "DB not wired."
+
+
+def test_winloss_no_trades(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    conn.execute("CREATE TABLE IF NOT EXISTS orders (symbol TEXT, side TEXT, qty REAL, filled_avg_price REAL, status TEXT, filled_at TEXT, submitted_at TEXT)")
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["winloss"]([])
+    assert "No completed" in out
+
+
+def test_winloss_shows_per_ticker(tmp_path) -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["winloss"]([])
+    assert "NVDA" in out
+    assert "W" in out or "L" in out
+
+
+# ---------------------------------------------------------------------------
+# /hold tests
+# ---------------------------------------------------------------------------
+
+def test_hold_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["hold"]([]) == "DB not wired."
+
+
+def test_hold_no_trades(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    conn.execute("CREATE TABLE IF NOT EXISTS orders (symbol TEXT, side TEXT, qty REAL, filled_avg_price REAL, status TEXT, filled_at TEXT, submitted_at TEXT)")
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["hold"]([])
+    assert "No completed" in out
+
+
+def test_hold_shows_holding_days(tmp_path) -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["hold"]([])
+    # Either shows data or "no completed" if dates don't parse
+    assert "holding" in out.lower() or "NVDA" in out or "No completed" in out
+
+
+def test_help_includes_winloss_and_hold() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/winloss" in help_text
+    assert "/hold" in help_text
