@@ -1,66 +1,75 @@
-"""Tests for volatility-adjusted position sizing."""
+"""Tests for position sizing strategies."""
 
 from __future__ import annotations
 
-from amms.risk.rules import RiskConfig, check_buy, position_size
+from amms.risk.position_sizing import atr_based, fixed_fraction, kelly_criterion
 
 
-def test_position_size_basic():
-    qty = position_size(100_000, 200.0, 0.02)
-    # 100000 * 0.02 = 2000 / 200 = 10 shares
-    assert qty == 10
+class TestFixedFraction:
+    def test_basic_sizing(self) -> None:
+        result = fixed_fraction(100_000, 100.0, 2.0, risk_pct=1.0)
+        assert result.shares == 200
+        assert result.strategy == "fixed_fraction"
+
+    def test_zero_price_returns_empty(self) -> None:
+        result = fixed_fraction(100_000, 0.0, 2.0)
+        assert result.shares == 0
+
+    def test_zero_stop_returns_empty(self) -> None:
+        result = fixed_fraction(100_000, 100.0, 0.0)
+        assert result.shares == 0
+
+    def test_respects_max_position_pct(self) -> None:
+        result = fixed_fraction(100_000, 100.0, 0.1, risk_pct=1.0, max_position_pct=10.0)
+        assert result.dollar_amount <= 10_100.0
+
+    def test_pct_of_equity_reasonable(self) -> None:
+        result = fixed_fraction(100_000, 100.0, 2.0)
+        assert 0.0 <= result.pct_of_equity <= 100.0
+
+    def test_risk_pct_equity_matches_intent(self) -> None:
+        result = fixed_fraction(100_000, 100.0, 2.0, risk_pct=1.0)
+        assert result.risk_pct_equity < 1.0  # capped by max_position_pct
 
 
-def test_position_size_with_low_atr_no_reduction():
-    # Low ATR: vol_dollars = (100000 * 0.01) / 0.5 * 200 = 400_000 — above target
-    qty = position_size(100_000, 200.0, 0.02, atr=0.5)
-    assert qty == 10  # unchanged
+class TestKellyCriterion:
+    def test_basic_kelly(self) -> None:
+        result = kelly_criterion(100_000, 100.0, 2.0, win_rate=0.55, avg_win_pct=3.0, avg_loss_pct=1.5)
+        assert result.strategy == "kelly"
+        assert result.shares >= 0
+
+    def test_negative_edge_returns_zero(self) -> None:
+        result = kelly_criterion(100_000, 100.0, 2.0, win_rate=0.2, avg_win_pct=1.0, avg_loss_pct=5.0)
+        assert result.shares == 0
+
+    def test_invalid_win_rate_returns_empty(self) -> None:
+        result = kelly_criterion(100_000, 100.0, 2.0, win_rate=0.0)
+        assert result.shares == 0
+
+    def test_respects_max_position(self) -> None:
+        result = kelly_criterion(100_000, 100.0, 2.0, win_rate=0.7, avg_win_pct=10.0, avg_loss_pct=1.0, max_position_pct=10.0)
+        assert result.dollar_amount <= 10_100.0
+
+    def test_fractional_kelly_smaller_than_full(self) -> None:
+        r_full = kelly_criterion(100_000, 100.0, 2.0, win_rate=0.6, kelly_fraction=1.0)
+        r_frac = kelly_criterion(100_000, 100.0, 2.0, win_rate=0.6, kelly_fraction=0.25)
+        assert r_frac.shares <= r_full.shares
 
 
-def test_position_size_with_high_atr_reduces():
-    # vol budget: qty = (equity * target_risk_pct) / atr
-    #           = (100000 * 0.01) / 200 = 5 shares
-    # max_pct budget: 100000 * 0.02 / 200 = 10 shares
-    # vol cap wins → 5 shares
-    qty = position_size(100_000, 200.0, 0.02, atr=200.0)
-    assert qty == 5
+class TestAtrBased:
+    def test_basic_atr_sizing(self) -> None:
+        result = atr_based(100_000, 100.0, 2.0, atr_multiplier=2.0, risk_pct=1.0)
+        assert result.shares == 200  # capped by max_position_pct=20%
+        assert result.strategy == "atr_based"
 
+    def test_zero_atr_returns_empty(self) -> None:
+        result = atr_based(100_000, 100.0, 0.0)
+        assert result.shares == 0
 
-def test_position_size_zero_equity():
-    assert position_size(0, 200.0, 0.02) == 0
+    def test_notes_include_stop_price(self) -> None:
+        result = atr_based(100_000, 100.0, 2.0)
+        assert "stop" in result.notes.lower() or "ATR" in result.notes
 
-
-def test_position_size_zero_price():
-    assert position_size(100_000, 0.0, 0.02) == 0
-
-
-def test_check_buy_passes_atr():
-    config = RiskConfig()
-    # Normal case — atr is passed and shouldn't break check_buy
-    decision = check_buy(
-        equity=100_000,
-        price=200.0,
-        cash=50_000,
-        open_positions=1,
-        daily_pnl_pct=0.0,
-        already_holds=False,
-        config=config,
-        atr=2.0,
-    )
-    assert decision.allowed
-    assert decision.qty > 0
-
-
-def test_check_buy_with_none_atr():
-    config = RiskConfig()
-    decision = check_buy(
-        equity=100_000,
-        price=200.0,
-        cash=50_000,
-        open_positions=1,
-        daily_pnl_pct=0.0,
-        already_holds=False,
-        config=config,
-        atr=None,
-    )
-    assert decision.allowed
+    def test_respects_max_position(self) -> None:
+        result = atr_based(100_000, 100.0, 0.1, atr_multiplier=0.5, max_position_pct=10.0)
+        assert result.dollar_amount <= 10_100.0
