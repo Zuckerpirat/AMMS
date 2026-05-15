@@ -374,6 +374,30 @@ def run_loop(
                 except Exception:
                     logger.exception("drawdown alert check failed")
 
+                # Price alerts: check each tick, fire once per alert.
+                try:
+                    from amms.data.alerts import check_alerts
+
+                    watchlist_syms = list(
+                        {p.symbol for p in broker.get_positions()}
+                    )
+                    if watchlist_syms:
+                        snaps = data.get_snapshots(watchlist_syms)
+                        price_map = {
+                            s: v["price"]
+                            for s, v in snaps.items()
+                            if v.get("price")
+                        }
+                        fired = check_alerts(conn, price_map)
+                        for a in fired:
+                            notifier.send(
+                                f"🔔 price alert: {a.symbol} "
+                                f"{'≥' if a.direction == 'above' else '≤'} "
+                                f"${a.price:.2f} (now ${price_map.get(a.symbol, 0):.2f})"
+                            )
+                except Exception:
+                    logger.exception("price alert check failed")
+
                 try:
                     result = run_tick(
                         broker=broker,

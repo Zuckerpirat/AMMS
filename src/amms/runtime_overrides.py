@@ -53,6 +53,9 @@ _ALLOWED: dict[str, tuple[str, Callable[[str], Any]]] = {
     "drawdown_alert": (
         "Drawdown %% below 30d peak that triggers an alert (default 5.0)", float
     ),
+    "trading_mode": (
+        "Active strategy mode: conservative | swing | meme | event", str
+    ),
 }
 
 
@@ -89,6 +92,12 @@ def parse_value(key: str, raw: str) -> Any:
         raise ValueError(f"{key} must be > 0")
     if key == "drawdown_alert" and value <= 0:
         raise ValueError("drawdown_alert must be > 0")
+    if key == "trading_mode":
+        allowed_modes = {"conservative", "swing", "meme", "event"}
+        if value not in allowed_modes:
+            raise ValueError(
+                f"trading_mode must be one of: {', '.join(sorted(allowed_modes))}"
+            )
     return value
 
 

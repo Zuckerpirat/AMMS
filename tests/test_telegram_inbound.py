@@ -602,3 +602,121 @@ def test_help_lists_performance_command() -> None:
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/performance" in h["help"]([])
 
+
+
+def _make_conn_with_overrides():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_overrides "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    conn.commit()
+    return conn
+
+
+def test_mode_handler_shows_current_mode() -> None:
+    conn = _make_conn_with_overrides()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["mode"]([])
+    assert "Active mode:" in out
+    assert "swing" in out  # default mode
+
+
+def test_mode_handler_switches_mode() -> None:
+    conn = _make_conn_with_overrides()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["mode"](["conservative"])
+    assert "conservative" in out.lower()
+
+
+def test_mode_handler_rejects_invalid_mode() -> None:
+    conn = _make_conn_with_overrides()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["mode"](["turbo"])
+    assert "Unknown mode" in out
+
+
+def test_mode_handler_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["mode"]([])
+    assert "DB not wired" in out
+
+
+def test_pnl_handler_shows_position_detail() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["pnl"]([])
+    assert "AAPL" in out
+    assert "cost" in out or "$" in out
+
+
+def test_pnl_handler_specific_symbol() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["pnl"](["AAPL"])
+    assert "AAPL" in out
+
+
+def test_pnl_handler_unknown_symbol() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["pnl"](["ZZZZ"])
+    assert "no open position" in out
+
+
+def test_alert_handler_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["alert"]([])
+    assert "DB not wired" in out
+
+
+def test_alert_handler_add_and_list() -> None:
+    conn = _make_conn_with_overrides()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["alert"](["AAPL", "200", "above"])
+    assert "Alert set" in out
+    assert "AAPL" in out
+    out2 = h["alert"](["list"])
+    assert "AAPL" in out2
+    assert "200" in out2
+
+
+def test_alert_handler_delete() -> None:
+    conn = _make_conn_with_overrides()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    h["alert"](["AAPL", "200", "above"])
+    out = h["alert"](["del", "1"])
+    assert "deleted" in out.lower()
+
+
+def test_alert_handler_empty_list() -> None:
+    conn = _make_conn_with_overrides()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["alert"]([])
+    assert "No active" in out
+
+
+def test_alert_handler_invalid_direction() -> None:
+    conn = _make_conn_with_overrides()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["alert"](["AAPL", "200", "sideways"])
+    assert "must be" in out.lower() or "Error" in out
+
+
+def test_help_lists_new_commands() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/pnl" in help_text
+    assert "/mode" in help_text
+    assert "/alert" in help_text

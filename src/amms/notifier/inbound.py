@@ -967,6 +967,146 @@ def build_command_handlers(
             lines.append(f"{sym}: {isin or '— not found'}")
         return "\n".join(lines)
 
+    def _pnl(args: list[str]) -> str:
+        """Detailed P&L for one or all positions."""
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+        if not positions:
+            return "no open positions"
+
+        if args:
+            sym = args[0].upper()
+            positions = [p for p in positions if p.symbol == sym]
+            if not positions:
+                return f"no open position for {sym}"
+
+        # Fetch current prices for accurate unrealized P&L display.
+        price_map: dict[str, float] = {}
+        if data is not None:
+            try:
+                syms = [p.symbol for p in positions]
+                snaps = data.get_snapshots(syms)
+                price_map = {s: v["price"] for s, v in snaps.items() if v.get("price")}
+            except Exception:
+                pass
+
+        lines: list[str] = ["Position P&L detail:"]
+        total_unrealized = 0.0
+        for p in positions:
+            current = price_map.get(p.symbol, p.current_price if hasattr(p, "current_price") else None)
+            market_value = float(p.qty) * current if current else None
+            cost_basis = float(p.qty) * float(p.avg_entry_price)
+            unrealized = float(p.unrealized_pl)
+            total_unrealized += unrealized
+            pct = unrealized / cost_basis * 100 if cost_basis else 0.0
+            arrow = "▲" if unrealized >= 0 else "▼"
+            line = (
+                f"  {p.symbol}: {p.qty:g} × ${float(p.avg_entry_price):.2f} "
+                f"= ${cost_basis:,.2f} cost"
+            )
+            lines.append(line)
+            if current:
+                lines.append(
+                    f"    Now: ${current:.2f}  MktVal: ${market_value:,.2f}  "
+                    f"{arrow} {pct:+.2f}% (${unrealized:+.2f})"
+                )
+            else:
+                lines.append(f"    Unrealized: {arrow} ${unrealized:+.2f} ({pct:+.2f}%)")
+        if len(positions) > 1:
+            total_arrow = "▲" if total_unrealized >= 0 else "▼"
+            lines.append(f"Total unrealized: {total_arrow} ${total_unrealized:+.2f}")
+        return "\n".join(lines)
+
+    def _mode(args: list[str]) -> str:
+        """Show or set the active trading mode."""
+        valid_modes = ("conservative", "swing", "meme", "event")
+        mode_desc = {
+            "conservative": "Long-term research, fundamentals, low volatility, defensive",
+            "swing": "Momentum trades, technical analysis, medium-term holds",
+            "meme": "Meme stocks, retail hype, social spikes — high risk, sandboxed",
+            "event": "Earnings, Fed, macro shocks, hedging, sector rotation",
+        }
+        if conn is None:
+            return "DB not wired — cannot read or set mode."
+        if not args:
+            from amms.runtime_overrides import get_overrides
+            overrides = get_overrides(conn)
+            current = overrides.get("trading_mode", "swing")
+            lines = [f"Active mode: {current}  — {mode_desc.get(current, '')}"]
+            lines.append("\nAvailable modes:")
+            for m in valid_modes:
+                marker = "→" if m == current else " "
+                lines.append(f"  {marker} {m} — {mode_desc[m]}")
+            lines.append("\nTo switch: /mode swing")
+            return "\n".join(lines)
+
+        new_mode = args[0].lower()
+        if new_mode not in valid_modes:
+            return f"Unknown mode '{new_mode}'. Choose: {', '.join(valid_modes)}"
+        from amms.runtime_overrides import set_override
+        try:
+            set_override(conn, "trading_mode", new_mode)
+        except ValueError as e:
+            return f"Error: {e}"
+        return f"Trading mode set to: {new_mode}\n{mode_desc[new_mode]}"
+
+    def _alert(args: list[str]) -> str:
+        """Manage price alerts.
+
+        Usage:
+          /alert AAPL 200 above   — alert when AAPL >= $200
+          /alert AAPL 150 below   — alert when AAPL <= $150
+          /alert list             — show active alerts
+          /alert del 3            — delete alert #3
+        """
+        if conn is None:
+            return "DB not wired — cannot manage alerts."
+        from amms.data.alerts import add_alert, delete_alert, list_alerts
+
+        if not args or args[0].lower() == "list":
+            alerts = list_alerts(conn)
+            if not alerts:
+                return "No active price alerts."
+            lines = ["Active price alerts:"]
+            for a in alerts:
+                lines.append(
+                    f"  #{a.id} {a.symbol} {a.direction} ${a.price:.2f}"
+                )
+            return "\n".join(lines)
+
+        if args[0].lower() in ("del", "delete", "rm") and len(args) >= 2:
+            try:
+                alert_id = int(args[1])
+            except ValueError:
+                return "usage: /alert del ID"
+            deleted = delete_alert(conn, alert_id)
+            return f"Alert #{alert_id} deleted." if deleted else f"Alert #{alert_id} not found."
+
+        # Add alert: /alert SYM PRICE above|below
+        if len(args) < 3:
+            return (
+                "usage:\n"
+                "  /alert AAPL 200 above   — alert when AAPL >= $200\n"
+                "  /alert AAPL 150 below   — alert when AAPL <= $150\n"
+                "  /alert list             — show active alerts\n"
+                "  /alert del ID           — delete alert"
+            )
+        sym = args[0].upper()
+        try:
+            price = float(args[1])
+        except ValueError:
+            return f"Invalid price: {args[1]!r}"
+        direction = args[2].lower()
+        if direction not in ("above", "below"):
+            return "direction must be 'above' or 'below'"
+        try:
+            alert = add_alert(conn, sym, price, direction)
+        except ValueError as e:
+            return f"Error: {e}"
+        return f"Alert set: #{alert.id} — notify when {sym} goes {direction} ${price:.2f}"
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -981,6 +1121,11 @@ def build_command_handlers(
             "/risk — show currently active risk settings + overrides\n"
             "/stops — show distance to stop-loss trigger per position\n"
             "/sectors — portfolio exposure broken down by sector\n"
+            "/pnl [SYM] — detailed P&L per position (cost basis, current price, %)\n"
+            "/mode [MODE] — show or switch trading mode (conservative/swing/meme/event)\n"
+            "/alert SYM PRICE above|below — set a price alert\n"
+            "/alert list — show active price alerts\n"
+            "/alert del ID — delete a price alert\n"
             "/set KEY VALUE — change a safe runtime setting (stop_loss, trailing_stop, max_buys)\n"
             "/unset KEY — remove a runtime override\n"
             "/show — list active runtime overrides\n"
@@ -1030,4 +1175,7 @@ def build_command_handlers(
         "resume": _resume,
         "help": _help,
         "start": _help,
+        "pnl": _pnl,
+        "mode": _mode,
+        "alert": _alert,
     }
