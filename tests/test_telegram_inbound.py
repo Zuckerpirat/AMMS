@@ -2023,3 +2023,85 @@ def test_help_includes_note_and_recap() -> None:
     help_text = h["help"]([])
     assert "/note" in help_text
     assert "/recap" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /rsi tests
+# ---------------------------------------------------------------------------
+
+def test_rsi_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["rsi"]([])
+
+
+def test_rsi_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_FakeDataClient())
+    assert "no open positions" in h["rsi"]([])
+
+
+def test_rsi_shows_for_position() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["rsi"]([])
+    assert "RSI" in out
+    assert "AAPL" in out
+
+
+def test_rsi_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["rsi"](["NVDA"])
+    assert "NVDA" in out
+
+
+# ---------------------------------------------------------------------------
+# /ema tests
+# ---------------------------------------------------------------------------
+
+def test_ema_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["ema"]([])
+
+
+def test_ema_shows_for_position() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["ema"]([])
+    assert "EMA" in out
+    assert "AAPL" in out
+
+
+def test_ema_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["ema"](["TSLA"])
+    assert "TSLA" in out
+
+
+def test_ema_function_basic() -> None:
+    from amms.data.bars import Bar
+    from amms.features.momentum import ema, sma
+
+    bars = [
+        Bar("X", "1D", f"2026-01-{i:02d}", 100+i, 101+i, 99+i, 100+i, 1000)
+        for i in range(1, 26)
+    ]
+    e = ema(bars, 20)
+    s = sma(bars, 20)
+    assert e is not None
+    assert s is not None
+    assert abs(e - s) < 5  # EMA and SMA should be in the same ballpark
+
+
+def test_help_includes_rsi_and_ema() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/rsi" in help_text
+    assert "/ema" in help_text

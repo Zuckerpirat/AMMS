@@ -2622,6 +2622,87 @@ def build_command_handlers(
         lines.append(f"Bot status: {'⏸ PAUSED' if pause.paused else '▶ running'}")
         return "\n".join(lines)
 
+    def _rsi(args: list[str]) -> str:
+        """Show 14-day RSI for open positions or a specified ticker.
+
+        RSI > 70 = overbought, RSI < 30 = oversold.
+        Usage: /rsi [SYM]
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /rsi AAPL)"
+
+        from amms.features.momentum import rsi as compute_rsi
+
+        lines = ["RSI-14 indicators:"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=30)
+            except Exception:
+                bars = []
+            r = compute_rsi(bars, 14)
+            if r is None:
+                lines.append(f"  {sym:<6}  n/a (not enough history)")
+            else:
+                label = "🔴 overbought" if r > 70 else ("🟢 oversold" if r < 30 else "⚪ neutral")
+                lines.append(f"  {sym:<6}  RSI {r:.1f}  {label}")
+        return "\n".join(lines)
+
+    def _ema_cmd(args: list[str]) -> str:
+        """Show EMA-20 and EMA-50 crossover status for positions or a ticker.
+
+        Usage: /ema [SYM]
+        Bullish: price > EMA-20 > EMA-50. Bearish: price < EMA-20 < EMA-50.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /ema AAPL)"
+
+        from amms.features.momentum import ema as compute_ema
+
+        lines = ["EMA crossover status (EMA-20 / EMA-50):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            e20 = compute_ema(bars, 20)
+            e50 = compute_ema(bars, 50)
+            price = bars[-1].close if bars else None
+            if e20 is None or e50 is None or price is None:
+                lines.append(f"  {sym:<6}  n/a (not enough history)")
+                continue
+            if price > e20 > e50:
+                signal = "📈 bullish"
+            elif price < e20 < e50:
+                signal = "📉 bearish"
+            else:
+                signal = "↔️ mixed"
+            lines.append(
+                f"  {sym:<6}  ${price:.2f}  EMA20 ${e20:.2f}  EMA50 ${e50:.2f}  {signal}"
+            )
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -2665,6 +2746,8 @@ def build_command_handlers(
             "/note SYM [text] — save or read a freetext note for a ticker\n"
             "/note list — list all tickers with notes\n"
             "/recap — brief daily summary (equity, trades, top mover, status)\n"
+            "/rsi [SYM] — 14-day RSI for open positions or a ticker\n"
+            "/ema [SYM] — EMA-20 / EMA-50 crossover status\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2763,4 +2846,6 @@ def build_command_handlers(
         "block": _optout,
         "note": _note,
         "recap": _recap,
+        "rsi": _rsi,
+        "ema": _ema_cmd,
     }
