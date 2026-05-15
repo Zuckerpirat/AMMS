@@ -1630,17 +1630,19 @@ class _FakeDataClient:
     def get_bars(self, symbol, *, limit=30):
         from amms.data.bars import Bar
         # 32 bars with tiny variation to produce non-None vol
+        n = max(limit, 32)
         bars = []
-        for i in range(32):
+        for i in range(n):
             price = 150.0 + i * 0.1
             bars.append(Bar(
                 symbol=symbol,
-                timestamp=f"2026-01-{1 + i % 28:02d}T10:00:00Z",
+                timeframe="1Day",
+                ts=f"2026-01-{1 + i % 28:02d}T10:00:00Z",
                 open=price,
                 high=price + 1.0,
                 low=price - 1.0,
                 close=price,
-                volume=1_000,
+                volume=1_000_000,
             ))
         return bars
 

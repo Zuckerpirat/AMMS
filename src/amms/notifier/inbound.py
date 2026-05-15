@@ -5153,6 +5153,77 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _regime_cmd(args: list[str]) -> str:
+        """Market regime classification: trending/ranging, vol level.
+
+        Usage: /regime [SYM]
+        Classifies into: trending_up, trending_down, ranging_low_vol,
+        ranging_high_vol.  Includes strategy hint for each regime.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /regime AAPL)"
+
+        from amms.analysis.regime_classifier import classify as rc_classify
+
+        REGIME_ICON = {
+            "trending_up": "▲",
+            "trending_down": "▼",
+            "ranging_low_vol": "→",
+            "ranging_high_vol": "↕",
+        }
+        REGIME_BIAS = {
+            "trending_up": "BULL",
+            "trending_down": "BEAR",
+            "ranging_low_vol": "NEUTRAL",
+            "ranging_high_vol": "NEUTRAL",
+        }
+        SIZE_MULTIPLIER = {
+            "trending_up": 1.0,
+            "trending_down": 0.5,
+            "ranging_low_vol": 0.75,
+            "ranging_high_vol": 0.5,
+        }
+
+        lines = ["── Market Regime ──"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=30)
+            except Exception as e:
+                lines.append(f"  {sym}: data error {e!r}")
+                continue
+
+            result = rc_classify(bars)
+            if result is None:
+                lines.append(f"  {sym}: insufficient data")
+                continue
+
+            icon = REGIME_ICON.get(result.regime, "?")
+            bias = REGIME_BIAS.get(result.regime, "NEUTRAL")
+            multiplier = SIZE_MULTIPLIER.get(result.regime, 1.0)
+            lines.append(
+                f"  {icon} {sym:<6}  {bias}  [{result.regime}]  "
+                f"conf {result.confidence:.0f}%%"
+            )
+            lines.append(
+                f"     trend {result.trend_strength:.0f}  "
+                f"vol {result.vol_regime}  "
+                f"mom {result.momentum_pct:+.1f}%%"
+            )
+            lines.append(
+                f"     Size multiplier: ×{multiplier:.2f}"
+            )
+            lines.append(f"     → {result.strategy_hint}")
+
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -6116,4 +6187,6 @@ def build_command_handlers(
         "sr": _srlevels_cmd,
         "liquidity": _liquidity_cmd,
         "liq": _liquidity_cmd,
+        "regime": _regime_cmd,
+        "mregime": _regime_cmd,
     }
