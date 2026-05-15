@@ -551,6 +551,122 @@ def build_command_handlers(
                 lines.append(f"  {key}: {default}")
         return "\n".join(lines)
 
+    def _riskreport(_args: list[str]) -> str:
+        """Comprehensive risk diagnostic: concentration, drawdown, sectors, corr."""
+        import math
+
+        sections: list[str] = ["=== Risk Report ==="]
+
+        # 1. Drawdown vs 30d peak
+        if conn is not None:
+            try:
+                from amms.risk.drawdown import compute_drawdown
+
+                acc = broker.get_account()
+                dd = compute_drawdown(conn, float(acc.equity))
+                arrow = "▼" if dd.drawdown_pct < 0 else "▲"
+                sections.append(
+                    f"Drawdown: {arrow} {dd.drawdown_pct:.2f}%  "
+                    f"(equity ${dd.current_equity:,.0f}, 30d peak ${dd.peak_equity:,.0f})"
+                )
+            except Exception:
+                pass
+
+        # 2. Sector concentration
+        try:
+            positions = broker.get_positions()
+        except Exception:
+            positions = []
+        if positions:
+            try:
+                acc = broker.get_account()
+                equity = float(acc.equity)
+                from amms.data.sectors import group_by_sector
+
+                pairs = [(p.symbol, float(getattr(p, "market_value", 0) or 0)) for p in positions]
+                sectors = group_by_sector(pairs)
+                sections.append("Sector concentration:")
+                for sec, val in sorted(sectors.items(), key=lambda x: -x[1]):
+                    pct = val / equity * 100 if equity > 0 else 0
+                    flag = " ⚠" if pct > 40 else ""
+                    sections.append(f"  {sec}: {pct:.1f}%{flag}")
+            except Exception:
+                pass
+
+        # 3. Largest single position
+        if positions:
+            try:
+                acc = broker.get_account()
+                equity = float(acc.equity)
+                biggest = max(positions, key=lambda p: float(getattr(p, "market_value", 0) or 0))
+                biggest_pct = float(getattr(biggest, "market_value", 0)) / equity * 100
+                flag = " ⚠ (concentrated)" if biggest_pct > 20 else ""
+                sections.append(
+                    f"Largest position: {biggest.symbol} "
+                    f"${float(getattr(biggest, 'market_value', 0)):,.0f}  "
+                    f"({biggest_pct:.1f}% of equity){flag}"
+                )
+            except Exception:
+                pass
+
+        # 4. Correlation warning (uses DB bars)
+        if conn is not None and len(positions) >= 2:
+            try:
+                syms = [p.symbol for p in positions]
+                closes: dict[str, list[float]] = {}
+                for sym in syms:
+                    rows = conn.execute(
+                        "SELECT close FROM bars WHERE symbol = ? AND timeframe = '1Day' "
+                        "ORDER BY ts DESC LIMIT 30",
+                        (sym,),
+                    ).fetchall()
+                    if rows and len(rows) >= 5:
+                        closes[sym] = [float(r[0]) for r in reversed(rows)]
+                rets: dict[str, list[float]] = {}
+                for sym, c in closes.items():
+                    rets[sym] = [(c[i] - c[i - 1]) / c[i - 1] for i in range(1, len(c))]
+                present = list(closes.keys())
+                high_corr_pairs = []
+                for i, s1 in enumerate(present):
+                    for s2 in present[i + 1:]:
+                        a, b = rets[s1], rets[s2]
+                        n = min(len(a), len(b))
+                        if n < 5:
+                            continue
+                        a, b = a[:n], b[:n]
+                        ma, mb = sum(a) / n, sum(b) / n
+                        num = sum((ai - ma) * (bi - mb) for ai, bi in zip(a, b))
+                        sa = math.sqrt(sum((ai - ma) ** 2 for ai in a))
+                        sb = math.sqrt(sum((bi - mb) ** 2 for bi in b))
+                        if sa > 0 and sb > 0:
+                            c_val = num / (sa * sb)
+                            if abs(c_val) >= 0.75:
+                                high_corr_pairs.append((s1, s2, c_val))
+                if high_corr_pairs:
+                    sections.append("High correlation pairs (>0.75):")
+                    for s1, s2, c_val in high_corr_pairs:
+                        sections.append(f"  {s1} ↔ {s2}: {c_val:+.2f} ⚠")
+                else:
+                    sections.append("Correlation: no highly correlated pairs")
+            except Exception:
+                pass
+
+        # 5. Open overrides summary
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+
+                ovr = get_overrides(conn)
+                if ovr:
+                    sections.append(
+                        "Active overrides: "
+                        + ", ".join(f"{k}={v}" for k, v in ovr.items())
+                    )
+            except Exception:
+                pass
+
+        return "\n".join(sections)
+
     def _stops(_args: list[str]) -> str:
         """Show, per position, the distance to its stop-loss trigger."""
         positions = broker.get_positions()
@@ -1578,6 +1694,7 @@ def build_command_handlers(
             "/scan — run WSB Auto-Discovery now\n"
             "/isin SYM — look up the ISIN for a ticker (debug)\n"
             "/buylist — preview what the bot would buy/sell right now\n"
+            "/riskreport — full risk diagnostic (drawdown, sector conc., correlation)\n"
             "/streak — current win/loss streak from completed trade history\n"
             "/sharpe — rolling Sharpe ratio + max drawdown from equity curve\n"
             "/budget — available buying power and position slot breakdown\n"
@@ -1635,4 +1752,6 @@ def build_command_handlers(
         "correlation": _corr,
         "streak": _streak,
         "sharpe": _sharpe,
+        "riskreport": _riskreport,
+        "rr": _riskreport,  # alias
     }

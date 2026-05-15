@@ -484,6 +484,9 @@ def _handle_closed(
         if today not in state.sent_summary_dates:
             try:
                 plain = build_daily_summary(broker, conn)
+                extra = _build_close_extras(broker, conn)
+                if extra:
+                    plain = plain + "\n" + extra
                 trades_today = _fetch_today_trades(conn, today)
                 summary = augment_summary(plain, trades_today=trades_today, conn=conn)
                 notifier.send(summary)
@@ -491,6 +494,92 @@ def _handle_closed(
             except Exception:
                 logger.exception("daily summary failed")
     state.last_saw_open = False
+
+
+def _build_close_extras(broker: AlpacaClient, conn: sqlite3.Connection) -> str:
+    """Append sector exposure, Sharpe stub, and streak to the end-of-day summary."""
+    import math
+    from collections import deque
+
+    lines: list[str] = []
+
+    # Sector breakdown of open positions
+    try:
+        from amms.data.sectors import group_by_sector
+
+        positions = broker.get_positions()
+        if positions:
+            equity = float(broker.get_account().equity)
+            pairs = [(p.symbol, float(getattr(p, "market_value", 0) or 0)) for p in positions]
+            sectors = group_by_sector(pairs)
+            if equity > 0 and sectors:
+                lines.append("Sector exposure:")
+                for sec, val in sorted(sectors.items(), key=lambda x: -x[1]):
+                    lines.append(f"  {sec}: {val/equity:.1%}")
+    except Exception:
+        pass
+
+    # Rolling Sharpe (7-day)
+    try:
+        rows = conn.execute(
+            "SELECT substr(ts, 1, 10) AS day, MAX(equity) AS equity "
+            "FROM equity_snapshots "
+            "WHERE substr(ts, 1, 10) >= date('now', '-7 day') "
+            "GROUP BY day ORDER BY day"
+        ).fetchall()
+        if len(rows) >= 3:
+            equities = [float(r[1]) for r in rows]
+            rets = [(equities[i] - equities[i - 1]) / equities[i - 1] for i in range(1, len(equities))]
+            n = len(rets)
+            mean = sum(rets) / n
+            variance = sum((r - mean) ** 2 for r in rets) / n
+            std = math.sqrt(variance) if variance > 0 else 0.0
+            sharpe = mean / std * math.sqrt(252) if std > 0 else 0.0
+            lines.append(f"7d Sharpe: {sharpe:.2f}")
+    except Exception:
+        pass
+
+    # Win streak
+    try:
+        order_rows = conn.execute(
+            "SELECT symbol, side, qty, filled_avg_price "
+            "FROM orders WHERE status = 'filled' "
+            "ORDER BY symbol, submitted_at"
+        ).fetchall()
+        buys: dict[str, deque] = {}
+        results: list[bool] = []
+        for r in order_rows:
+            sym = r["symbol"]
+            side = r["side"]
+            price = r["filled_avg_price"]
+            if price is None:
+                continue
+            price = float(price)
+            if side == "buy":
+                if sym not in buys:
+                    buys[sym] = deque()
+                buys[sym].append(price)
+            elif side == "sell" and sym in buys and buys[sym]:
+                buy_price = buys[sym].popleft()
+                results.append(price > buy_price)
+        if results:
+            streak_type = "W" if results[-1] else "L"
+            streak = 0
+            for r in reversed(results):
+                if (r and streak_type == "W") or (not r and streak_type == "L"):
+                    streak += 1
+                else:
+                    break
+            wins = sum(results)
+            total = len(results)
+            lines.append(
+                f"Streak: {streak}× {streak_type}  |  "
+                f"Win rate: {wins}/{total} ({wins/total:.0%})"
+            )
+    except Exception:
+        pass
+
+    return "\n".join(lines)
 
 
 def _fetch_today_trades(conn: sqlite3.Connection, today_iso: str) -> list[dict]:

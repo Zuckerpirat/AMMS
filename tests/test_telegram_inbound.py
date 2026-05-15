@@ -1077,3 +1077,43 @@ def test_help_includes_streak_and_sharpe() -> None:
     help_text = h["help"]([])
     assert "/streak" in help_text
     assert "/sharpe" in help_text
+
+
+def test_riskreport_handler_basic() -> None:
+    import sqlite3 as _sqlite
+
+    conn = _sqlite.connect(":memory:", check_same_thread=False)
+    conn.row_factory = _sqlite.Row
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_overrides "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS equity_snapshots "
+        "(ts TEXT PRIMARY KEY, equity REAL, cash REAL, buying_power REAL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bars "
+        "(symbol TEXT, timeframe TEXT, ts TEXT, open REAL, high REAL, "
+        "low REAL, close REAL, volume REAL, PRIMARY KEY(symbol, timeframe, ts))"
+    )
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["riskreport"]([])
+    assert "Risk Report" in out
+    # AAPL is in positions, should show sector
+    assert "Technology" in out or "Sector" in out
+
+
+def test_riskreport_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["riskreport"]([])
+    assert "Risk Report" in out
+
+
+def test_rr_alias_routes_to_riskreport() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["rr"] is h["riskreport"]
