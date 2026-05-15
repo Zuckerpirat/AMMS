@@ -3846,3 +3846,24 @@ def test_corrmatrix_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/corrmatrix" in h["help"]([])
+
+
+# ── /aging tests ──────────────────────────────────────────────────────────────
+
+def test_aging_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["aging"]([])
+    assert "AAPL" in out or "aging" in out.lower() or "position" in out.lower()
+
+
+def test_aging_alias_age() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["age"] is h["aging"]
+
+
+def test_aging_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/aging" in h["help"]([])

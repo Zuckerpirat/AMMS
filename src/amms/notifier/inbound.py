@@ -4703,6 +4703,40 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _aging_cmd(args: list[str]) -> str:
+        """Position aging report: hold time, style, P&L, overstay flags.
+
+        Usage: /aging
+        Shows how long each position has been held and flags potential overstays.
+        """
+        from amms.analysis.position_aging import analyze_aging
+
+        result = analyze_aging(broker, conn=conn)
+        if result is None:
+            return "No open positions."
+
+        style_icon = {
+            "day": "⚡", "swing": "📊", "medium": "📈", "long": "🏔️", "unknown": "❓",
+        }
+
+        lines = [
+            f"── Position Aging ({result.total_positions} positions) ──",
+        ]
+        if result.avg_hold_days is not None:
+            lines.append(f"  Avg hold: {result.avg_hold_days:.0f} days")
+        if result.overstayed_count > 0:
+            lines.append(f"  ⚠️  Overstayed: {result.overstayed_count}")
+        lines.append("")
+
+        for pos in result.positions:
+            days_str = f"{pos.hold_days}d" if pos.hold_days is not None else "n/a"
+            pnl_str = f"{pos.pnl_pct:+.1f}%%" if pos.pnl_pct else "n/a"
+            icon = style_icon.get(pos.hold_style, "")
+            flag = "  ⚠️ " + pos.overstay_reason if pos.overstay_flag else ""
+            lines.append(f"  {pos.symbol:<6}  {days_str:>5}  {pnl_str:>8}  {icon} {pos.hold_style}{flag}")
+
+        return "\n".join(lines)
+
     def _corrmatrix_cmd(args: list[str]) -> str:
         """Portfolio correlation matrix: pairwise return correlation + diversity score.
 
@@ -5356,6 +5390,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/aging — position aging: hold time, style, P&L, overstay flags\n"
             "/corrmatrix — portfolio correlation matrix + diversification score\n"
             "/gaps [SYM] — gap analysis: recent price gaps, fill status, gap S/R levels\n"
             "/sectorheat — sector momentum heatmap: 5d/20d/60d ranked by composite score\n"
@@ -5532,6 +5567,8 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "aging": _aging_cmd,
+        "age": _aging_cmd,
         "corrmatrix": _corrmatrix_cmd,
         "cm": _corrmatrix_cmd,
         "gaps": _gaps_cmd,
