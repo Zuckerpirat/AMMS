@@ -5306,6 +5306,57 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _overnight_cmd(args: list[str]) -> str:
+        """Overnight gap risk for open positions.
+
+        Usage: /overnight [SYM]
+        Analyzes historical open-vs-prev-close gaps to quantify
+        overnight holding risk.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /overnight AAPL)"
+
+        from amms.analysis.overnight_risk import analyze as or_analyze
+
+        LABEL_ICON = {
+            "low": "✓",
+            "moderate": "→",
+            "elevated": "⚠",
+            "high": "✗",
+        }
+
+        lines = ["── Overnight Gap Risk ──"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=40)
+            except Exception as e:
+                lines.append(f"  {sym}: data error {e!r}")
+                continue
+
+            result = or_analyze(bars)
+            if result is None:
+                lines.append(f"  {sym}: insufficient data")
+                continue
+
+            icon = LABEL_ICON.get(result.risk_label, "?")
+            lines.append(
+                f"  [{icon}] {sym:<6}  {result.risk_label:<8}"
+                f"  score {result.risk_score:.0f}"
+                f"  freq {result.gap_frequency_pct:.0f}%%"
+                f"  avg {result.avg_gap_pct:.1f}%%"
+                f"  max {result.max_gap_pct:.1f}%%"
+            )
+
+        return "\n".join(lines)
+
     def _rsrank_cmd(args: list[str]) -> str:
         """Relative strength ranking for open positions.
 
@@ -6440,4 +6491,6 @@ def build_command_handlers(
         "stop": _stopopt_cmd,
         "rsrank": _rsrank_cmd,
         "rs": _rsrank_cmd,
+        "overnight": _overnight_cmd,
+        "gap_risk": _overnight_cmd,
     }
