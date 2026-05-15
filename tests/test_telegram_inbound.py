@@ -3867,3 +3867,40 @@ def test_aging_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/aging" in h["help"]([])
+
+
+# ── /swings tests ─────────────────────────────────────────────────────────────
+
+def test_swings_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["swings"]([]).lower()
+
+
+def test_swings_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_TrendDataClient())
+    assert "no open positions" in h["swings"]([])
+
+
+def test_swings_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
+    out = h["swings"](["AAPL"])
+    assert "AAPL" in out
+    assert "swing" in out.lower() or "Swing" in out or "$" in out
+
+
+def test_swings_alias_swing() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["swing"] is h["swings"]
+
+
+def test_swings_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/swings" in h["help"]([])

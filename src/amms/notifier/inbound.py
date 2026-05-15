@@ -4703,6 +4703,55 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _swings_cmd(args: list[str]) -> str:
+        """Swing high/low detection: key pivot levels, trend, stop, target.
+
+        Usage: /swings [SYM]
+        Detects pivot highs/lows, classifies trend, suggests stop/target.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /swings AAPL)"
+
+        from amms.features.swing_points import detect_swings
+
+        lines = ["Swing Highs/Lows (pivot detection):"]
+        for sym in symbols[:6]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = detect_swings(bars, window=3)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 9+ bars)")
+                continue
+            trend_icon = {
+                "uptrend": "📈", "downtrend": "📉",
+                "sideways": "↔️ ", "unknown": "❓",
+            }.get(result.trend, "")
+            lines.append(
+                f"  {sym:<6}  ${result.current_price:.2f}  "
+                f"{trend_icon} {result.trend}"
+            )
+            if result.last_swing_high:
+                brk = "  🚀 BREAKOUT" if result.breakout_up else ""
+                lines.append(f"    Last swing high: ${result.last_swing_high.price:.2f}{brk}")
+            if result.last_swing_low:
+                bdn = "  📉 BREAKDOWN" if result.breakdown_down else ""
+                lines.append(f"    Last swing low:  ${result.last_swing_low.price:.2f}{bdn}")
+            if result.stop_below:
+                lines.append(f"    Suggested stop:  ${result.stop_below:.2f}")
+            if result.target_above:
+                lines.append(f"    Target:          ${result.target_above:.2f}")
+        return "\n".join(lines)
+
     def _aging_cmd(args: list[str]) -> str:
         """Position aging report: hold time, style, P&L, overstay flags.
 
@@ -5390,6 +5439,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/swings [SYM] — swing high/low pivots: trend, stop suggestion, breakout flag\n"
             "/aging — position aging: hold time, style, P&L, overstay flags\n"
             "/corrmatrix — portfolio correlation matrix + diversification score\n"
             "/gaps [SYM] — gap analysis: recent price gaps, fill status, gap S/R levels\n"
@@ -5567,6 +5617,8 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "swings": _swings_cmd,
+        "swing": _swings_cmd,
         "aging": _aging_cmd,
         "age": _aging_cmd,
         "corrmatrix": _corrmatrix_cmd,
