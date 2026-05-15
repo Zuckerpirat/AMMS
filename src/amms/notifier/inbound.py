@@ -4703,6 +4703,37 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _breadth_cmd(args: list[str]) -> str:
+        """Portfolio breadth: how many positions are technically healthy?
+
+        Usage: /breadth
+        Shows VWAP, RSI, SMA-20, OBV breadth per position + overall score.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        from amms.analysis.market_breadth import analyze_breadth
+
+        result = analyze_breadth(broker, data)
+        if result is None:
+            return "No positions or insufficient data for breadth analysis."
+
+        verdict_icon = {
+            "strong": "🟢", "moderate": "🟡",
+            "weak": "🟠", "deteriorating": "🔴",
+        }.get(result.verdict, "")
+
+        lines = [
+            f"── Portfolio Breadth ({result.n_positions} positions) ──",
+            f"  Above VWAP:  {result.pct_above_vwap:.0f}%%",
+            f"  RSI > 50:    {result.pct_rsi_above_50:.0f}%%",
+            f"  Above SMA20: {result.pct_above_sma20:.0f}%%",
+            f"  OBV rising:  {result.pct_obv_rising:.0f}%%",
+            f"  Overall:     {result.overall_score:.0f}%%  {verdict_icon} {result.verdict}",
+            "",
+        ] + result.detail
+        return "\n".join(lines)
+
     def _trendlines_cmd(args: list[str]) -> str:
         """Auto-detect support and resistance trend lines.
 
@@ -5121,6 +5152,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
             "/roc [SYM] — Rate of Change: 10/20/50-bar momentum + trend alignment\n"
             "/wr [SYM] — Williams %%R: overbought/oversold oscillator (0 to -100)\n"
@@ -5291,6 +5323,7 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "breadth": _breadth_cmd,
         "trendlines": _trendlines_cmd,
         "tl": _trendlines_cmd,
         "roc": _roc_cmd,

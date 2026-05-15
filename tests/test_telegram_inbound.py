@@ -3688,3 +3688,25 @@ def test_trendlines_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/trendlines" in h["help"]([])
+
+
+# ── /breadth tests ────────────────────────────────────────────────────────────
+
+def test_breadth_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["breadth"]([])
+    assert "not wired" in out.lower()
+
+
+def test_breadth_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
+    out = h["breadth"]([])
+    assert "Breadth" in out or "VWAP" in out or "RSI" in out
+
+
+def test_breadth_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/breadth" in h["help"]([])
