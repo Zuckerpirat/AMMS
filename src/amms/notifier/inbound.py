@@ -3299,6 +3299,89 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _montecarlo_cmd(args: list[str]) -> str:
+        """Monte Carlo simulation from trade history.
+
+        Usage: /montecarlo [N_TRADES]
+        Samples from realized trade P&L history, runs 1000 simulations,
+        shows probability of ruin, expected drawdown, and equity range.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        # Load realized trade returns from journal
+        try:
+            rows = conn.execute(
+                "SELECT buy_price, sell_price, qty FROM trade_pairs ORDER BY sell_ts DESC LIMIT 200"
+            ).fetchall()
+        except Exception:
+            rows = []
+
+        if len(rows) < 5:
+            return f"Need at least 5 completed trades for simulation (found {len(rows)})."
+
+        trade_returns = []
+        for row in rows:
+            try:
+                buy_p = float(row[0])
+                sell_p = float(row[1])
+                if buy_p > 0:
+                    trade_returns.append((sell_p - buy_p) / buy_p)
+            except (TypeError, ValueError, IndexError):
+                continue
+
+        if len(trade_returns) < 5:
+            return "Not enough valid trade data for simulation."
+
+        n_trades_arg = None
+        if args:
+            try:
+                n_trades_arg = int(args[0])
+            except ValueError:
+                pass
+
+        try:
+            equity = float(broker.get_account().equity)
+        except Exception:
+            equity = 100_000.0
+
+        from amms.analysis.monte_carlo import simulate
+
+        result = simulate(
+            trade_returns,
+            n_simulations=1000,
+            n_trades=n_trades_arg,
+            initial_equity=equity,
+        )
+        if result is None:
+            return "Simulation failed."
+
+        lines = [
+            f"Monte Carlo Simulation ({result.n_simulations}× {result.n_trades} trades):",
+            f"  Starting equity: ${result.initial_equity:,.2f}",
+            "",
+            "  Final equity range (1000 paths):",
+            f"    5th percentile:  ${result.p5_final:,.2f}  ({(result.p5_final / result.initial_equity - 1) * 100:+.1f}%)",
+            f"    Median (50th):   ${result.p50_final:,.2f}  ({(result.p50_final / result.initial_equity - 1) * 100:+.1f}%)",
+            f"    95th percentile: ${result.p95_final:,.2f}  ({(result.p95_final / result.initial_equity - 1) * 100:+.1f}%)",
+            "",
+            "  Drawdown risk:",
+            f"    Median max DD:  {result.median_max_drawdown_pct:.1f}%",
+            f"    95th pct max DD: {result.p95_max_drawdown_pct:.1f}%",
+            f"    P(DD > 20%):    {result.prob_20pct_dd:.1%}",
+            f"    P(ruin <50%):   {result.prob_ruin:.1%}",
+            f"    P(profitable):  {result.prob_positive:.1%}",
+        ]
+
+        if result.prob_ruin > 0.1:
+            lines.append("  🚨 High ruin probability — review position sizing!")
+        elif result.prob_20pct_dd > 0.3:
+            lines.append("  ⚠️  Significant drawdown risk — consider tighter stops.")
+        elif result.prob_positive > 0.7:
+            lines.append("  ✅ Strategy shows positive expectancy.")
+
+        return "\n".join(lines)
+
     def _kelly_cmd(args: list[str]) -> str:
         """Kelly criterion position sizing.
 
@@ -4319,6 +4402,7 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/montecarlo [N] — Monte Carlo simulation from trade history (1000 paths)\n"
             "/kelly PRICE STOP%% [WIN_RATE] — Kelly criterion + fixed-fraction sizing\n"
             "/rr ENTRY STOP TARGET [QTY] — risk/reward calculator\n"
             "/signals — last 10 strategy signals\n"
@@ -4469,4 +4553,6 @@ def build_command_handlers(
         "kelly": _kelly_cmd,
         "rr": _rr_calc,
         "riskreward": _rr_calc,
+        "montecarlo": _montecarlo_cmd,
+        "mc": _montecarlo_cmd,
     }

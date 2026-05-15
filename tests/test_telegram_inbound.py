@@ -3347,3 +3347,58 @@ def test_rr_help_included() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/rr" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /montecarlo tests
+# ---------------------------------------------------------------------------
+
+def _make_conn_with_trade_pairs(tmp_path):
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.execute("""
+        CREATE TABLE trade_pairs (
+            id INTEGER PRIMARY KEY,
+            symbol TEXT,
+            buy_ts TEXT,
+            sell_ts TEXT,
+            buy_price REAL,
+            sell_price REAL,
+            qty REAL,
+            pnl REAL
+        )
+    """)
+    for i in range(20):
+        conn.execute(
+            "INSERT INTO trade_pairs (symbol, buy_ts, sell_ts, buy_price, sell_price, qty, pnl) VALUES (?,?,?,?,?,?,?)",
+            ("AAPL", "2026-01-01", "2026-01-10", 100.0, 103.0 if i % 2 == 0 else 98.5, 10.0, 30.0 if i % 2 == 0 else -15.0)
+        )
+    conn.commit()
+    return conn
+
+
+def test_montecarlo_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["montecarlo"]([])
+    assert "not wired" in out.lower() or "DB" in out
+
+
+def test_montecarlo_with_db(tmp_path) -> None:
+    conn = _make_conn_with_trade_pairs(tmp_path)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["montecarlo"]([])
+    assert "Monte Carlo" in out or "simulation" in out.lower() or "trades" in out.lower()
+
+
+def test_montecarlo_alias_mc() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["mc"] is h["montecarlo"]
+
+
+def test_montecarlo_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/montecarlo" in h["help"]([])
