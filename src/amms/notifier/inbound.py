@@ -1107,6 +1107,74 @@ def build_command_handlers(
             return f"Error: {e}"
         return f"Alert set: #{alert.id} — notify when {sym} goes {direction} ${price:.2f}"
 
+    def _top(_args: list[str]) -> str:
+        """Show best and worst performing open positions by unrealized P&L %."""
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+        if not positions:
+            return "no open positions"
+
+        scored: list[tuple[float, object]] = []
+        for p in positions:
+            cost = float(p.qty) * float(p.avg_entry_price)
+            pct = float(p.unrealized_pl) / cost * 100 if cost else 0.0
+            scored.append((pct, p))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        lines: list[str] = [f"Performance snapshot ({len(scored)} positions):"]
+        lines.append("Best:")
+        for pct, p in scored[:3]:
+            arrow = "▲" if pct >= 0 else "▼"
+            lines.append(
+                f"  {arrow} {p.symbol}: {pct:+.2f}%  (${float(p.unrealized_pl):+.2f})"
+            )
+        if len(scored) > 3:
+            lines.append("Worst:")
+            for pct, p in scored[-3:]:
+                arrow = "▲" if pct >= 0 else "▼"
+                lines.append(
+                    f"  {arrow} {p.symbol}: {pct:+.2f}%  (${float(p.unrealized_pl):+.2f})"
+                )
+        return "\n".join(lines)
+
+    def _news(args: list[str]) -> str:
+        """Show recent news headlines for one or more symbols.
+
+        Usage: /news [SYM ...]
+        If no symbol given, uses open positions.
+        """
+        if data is None:
+            return "Market data client not wired."
+
+        if args:
+            syms = [a.upper() for a in args[:5]]
+        else:
+            try:
+                positions = broker.get_positions()
+                syms = [p.symbol for p in positions[:5]]
+            except Exception:
+                syms = []
+        if not syms:
+            return "No symbols to fetch news for. Try /news AAPL NVDA"
+
+        articles = data.get_news(syms, limit=8)
+        if not articles:
+            return f"No recent news found for {', '.join(syms)}."
+
+        lines = [f"News for {', '.join(syms)}:"]
+        for a in articles[:6]:
+            headline = a.get("headline", "").strip()
+            created = str(a.get("created_at", ""))[:10]
+            url = a.get("url", "")
+            article_syms = a.get("symbols", [])
+            tag = f"[{', '.join(article_syms[:2])}]" if article_syms else ""
+            lines.append(f"  {created} {tag} {headline}")
+            if url:
+                lines.append(f"    {url}")
+        return "\n".join(lines)
+
     def _summary(_args: list[str]) -> str:
         """On-demand AI narrative of the current portfolio state."""
         if conn is None:
@@ -1208,6 +1276,8 @@ def build_command_handlers(
             "/scan — run WSB Auto-Discovery now\n"
             "/isin SYM — look up the ISIN for a ticker (debug)\n"
             "/buylist — preview what the bot would buy/sell right now\n"
+            "/top — best and worst open positions by unrealized P&L %%\n"
+            "/news [SYM] — recent news headlines for a ticker (or open positions)\n"
             "/summary — AI-generated narrative of the current portfolio state\n"
             "/pause — stop placing new orders\n"
             "/resume — re-enable placing orders\n"
@@ -1250,4 +1320,6 @@ def build_command_handlers(
         "mode": _mode,
         "alert": _alert,
         "summary": _summary,
+        "top": _top,
+        "news": _news,
     }

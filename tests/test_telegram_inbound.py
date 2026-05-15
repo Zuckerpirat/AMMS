@@ -764,3 +764,72 @@ def test_help_includes_summary() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/summary" in h["help"]([])
+
+
+def test_top_handler_shows_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["top"]([])
+    assert "AAPL" in out
+    assert "Best:" in out
+
+
+def test_top_handler_no_positions() -> None:
+    class _EmptyBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_EmptyBroker(), pause=p)
+    assert "no open positions" in h["top"]([])
+
+
+def test_news_handler_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=None)
+    out = h["news"](["AAPL"])
+    assert "not wired" in out.lower()
+
+
+def test_news_handler_with_data_returns_headlines() -> None:
+    class _FakeData:
+        def get_news(self, symbols, *, limit=5):
+            return [
+                {
+                    "headline": "AAPL hits record high",
+                    "created_at": "2026-05-15T10:00:00Z",
+                    "url": "https://example.com/1",
+                    "symbols": ["AAPL"],
+                }
+            ]
+
+        def get_snapshots(self, symbols, *, feed="iex"):
+            return {}
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeData())
+    out = h["news"](["AAPL"])
+    assert "AAPL" in out
+    assert "record high" in out
+
+
+def test_news_handler_no_results() -> None:
+    class _EmptyData:
+        def get_news(self, symbols, *, limit=5):
+            return []
+
+        def get_snapshots(self, symbols, *, feed="iex"):
+            return {}
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_EmptyData())
+    out = h["news"](["ZZZZ"])
+    assert "No recent news" in out
+
+
+def test_help_includes_top_and_news() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/top" in help_text
+    assert "/news" in help_text

@@ -138,6 +138,32 @@ class MarketDataClient:
             }
         return out
 
+    def get_news(
+        self, symbols: list[str], *, limit: int = 5
+    ) -> list[dict]:
+        """Return recent news articles for one or more symbols.
+
+        Each dict has keys: headline, summary, url, created_at, symbols.
+        Returns up to ``limit`` articles sorted newest-first.
+        Falls back to [] on any error (news is best-effort).
+        """
+        if not symbols:
+            return []
+        try:
+            params: dict[str, Any] = {
+                "symbols": ",".join(s.upper() for s in symbols),
+                "limit": limit,
+                "sort": "desc",
+            }
+            resp = self._client.get(
+                f"{self._base_url}/v1beta1/news", params=params
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("news", [])
+        except Exception:
+            return []
+
     def get_bars(
         self,
         symbol: str,
