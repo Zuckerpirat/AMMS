@@ -3299,6 +3299,116 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _kelly_cmd(args: list[str]) -> str:
+        """Kelly criterion position sizing.
+
+        Usage: /kelly PRICE STOP_PCT [WIN_RATE] [AVG_WIN_PCT] [AVG_LOSS_PCT]
+        Example: /kelly 150 2.0 0.55 3.0 1.5
+          PRICE: current price
+          STOP_PCT: stop loss distance as % of price
+          WIN_RATE: historical win rate (default 0.5)
+          AVG_WIN_PCT: avg winning trade return % (default 3.0)
+          AVG_LOSS_PCT: avg losing trade loss % (default 1.5)
+        """
+        if len(args) < 2:
+            return "usage: /kelly PRICE STOP_PCT [WIN_RATE] [AVG_WIN_PCT] [AVG_LOSS_PCT]\nexample: /kelly 150 2.0 0.55 3.0 1.5"
+
+        try:
+            price = float(args[0])
+            stop_pct = float(args[1])
+            win_rate = float(args[2]) if len(args) > 2 else 0.50
+            avg_win = float(args[3]) if len(args) > 3 else 3.0
+            avg_loss = float(args[4]) if len(args) > 4 else 1.5
+        except ValueError:
+            return "Invalid number — usage: /kelly PRICE STOP_PCT [WIN_RATE] [AVG_WIN_PCT] [AVG_LOSS_PCT]"
+
+        try:
+            acc = broker.get_account()
+            equity = float(acc.equity)
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        from amms.risk.position_sizing import fixed_fraction, kelly_criterion
+
+        kelly = kelly_criterion(equity, price, stop_pct, win_rate=win_rate, avg_win_pct=avg_win, avg_loss_pct=avg_loss)
+        ff = fixed_fraction(equity, price, stop_pct, risk_pct=1.0)
+
+        lines = [
+            f"Position Sizing Comparison (equity ${equity:,.2f}):",
+            f"  Price: ${price:.2f}  Stop: {stop_pct:.1f}%",
+            f"  Win rate: {win_rate:.0%}  Avg win: {avg_win:.1f}%  Avg loss: {avg_loss:.1f}%",
+            "",
+            f"  Kelly (¼ Kelly):  {kelly.shares} shares  ${kelly.dollar_amount:,.2f}  "
+            f"({kelly.pct_of_equity:.1f}% equity)  risk ${kelly.risk_amount:.2f}",
+            f"  Fixed 1% risk:    {ff.shares} shares  ${ff.dollar_amount:,.2f}  "
+            f"({ff.pct_of_equity:.1f}% equity)  risk ${ff.risk_amount:.2f}",
+            f"  {kelly.notes}",
+        ]
+        if kelly.shares == 0:
+            lines.append("  ⚠️  Kelly says no edge — skip this trade.")
+        return "\n".join(lines)
+
+    def _rr_calc(args: list[str]) -> str:
+        """Calculate risk/reward ratio for a trade.
+
+        Usage: /rr ENTRY STOP TARGET [QTY]
+        Example: /rr 150.00 145.00 162.00 100
+          ENTRY: entry price
+          STOP: stop loss price
+          TARGET: profit target price
+          QTY: optional share count (default: use /sizing logic)
+        """
+        if len(args) < 3:
+            return "usage: /rr ENTRY STOP TARGET [QTY]\nexample: /rr 150 145 162 100"
+
+        try:
+            entry = float(args[0])
+            stop = float(args[1])
+            target = float(args[2])
+            qty = int(args[3]) if len(args) > 3 else None
+        except ValueError:
+            return "Invalid number — usage: /rr ENTRY STOP TARGET [QTY]"
+
+        if entry <= 0 or stop >= entry:
+            return "STOP must be below ENTRY for a long trade."
+        if target <= entry:
+            return "TARGET must be above ENTRY for a long trade."
+
+        risk_per_share = entry - stop
+        reward_per_share = target - entry
+        rr_ratio = reward_per_share / risk_per_share
+
+        risk_pct = risk_per_share / entry * 100
+        reward_pct = reward_per_share / entry * 100
+
+        lines = [
+            f"Risk/Reward Analysis:",
+            f"  Entry:  ${entry:.2f}",
+            f"  Stop:   ${stop:.2f}  (−${risk_per_share:.2f} / −{risk_pct:.1f}%)",
+            f"  Target: ${target:.2f}  (+${reward_per_share:.2f} / +{reward_pct:.1f}%)",
+            f"  R:R ratio: 1 : {rr_ratio:.2f}",
+        ]
+
+        if rr_ratio < 1.5:
+            lines.append("  ⚠️  Poor R:R (<1.5) — consider skipping.")
+        elif rr_ratio < 2.0:
+            lines.append("  ↔️  Acceptable R:R (1.5–2.0).")
+        elif rr_ratio < 3.0:
+            lines.append("  ✅ Good R:R (2.0–3.0).")
+        else:
+            lines.append("  🎯 Excellent R:R (>3.0).")
+
+        if qty:
+            risk_total = qty * risk_per_share
+            reward_total = qty * reward_per_share
+            lines.append(f"  {qty} shares → max risk ${risk_total:,.2f} / max reward ${reward_total:,.2f}")
+
+            # Break-even win rate needed
+            be_win_rate = 1 / (1 + rr_ratio)
+            lines.append(f"  Break-even win rate: {be_win_rate:.1%}")
+
+        return "\n".join(lines)
+
     def _obv_cmd(args: list[str]) -> str:
         """Show On-Balance Volume trend for positions or a ticker.
 
@@ -4209,6 +4319,8 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/kelly PRICE STOP%% [WIN_RATE] — Kelly criterion + fixed-fraction sizing\n"
+            "/rr ENTRY STOP TARGET [QTY] — risk/reward calculator\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -4281,7 +4393,6 @@ def build_command_handlers(
         "streak": _streak,
         "sharpe": _sharpe,
         "riskreport": _riskreport,
-        "rr": _riskreport,  # alias
         "upcoming": _upcoming,
         "earnings": _upcoming,  # alias
         "compare": _compare,
@@ -4355,4 +4466,7 @@ def build_command_handlers(
         "obv": _obv_cmd,
         "attribution": _attribution_cmd,
         "attr": _attribution_cmd,
+        "kelly": _kelly_cmd,
+        "rr": _rr_calc,
+        "riskreward": _rr_calc,
     }

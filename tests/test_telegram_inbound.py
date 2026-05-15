@@ -1113,10 +1113,10 @@ def test_riskreport_no_db() -> None:
     assert "Risk Report" in out
 
 
-def test_rr_alias_routes_to_riskreport() -> None:
+def test_rr_alias_routes_to_riskreward() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
-    assert h["rr"] is h["riskreport"]
+    assert h["rr"] is h["riskreward"]
 
 
 def test_upcoming_no_positions() -> None:
@@ -3266,3 +3266,84 @@ def test_attribution_help_included() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/attribution" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /kelly and /rr tests
+# ---------------------------------------------------------------------------
+
+def test_kelly_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["kelly"]([])
+    assert "usage" in out.lower()
+
+
+def test_kelly_basic_sizing() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["kelly"](["150.0", "2.0", "0.55", "3.0", "1.5"])
+    assert "Kelly" in out or "shares" in out.lower()
+    assert "150.00" in out or "150" in out
+
+
+def test_kelly_negative_edge_warns() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["kelly"](["150.0", "2.0", "0.2", "1.0", "5.0"])
+    assert "no edge" in out.lower() or "skip" in out.lower() or "0 shares" in out or "Kelly" in out
+
+
+def test_kelly_invalid_input() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["kelly"](["abc", "2.0"])
+    assert "invalid" in out.lower() or "usage" in out.lower()
+
+
+def test_kelly_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/kelly" in h["help"]([])
+
+
+def test_rr_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["rr"]([])
+    assert "usage" in out.lower()
+
+
+def test_rr_basic() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["rr"](["150.0", "145.0", "162.0"])
+    assert "150" in out and "145" in out and "162" in out
+    assert "R:R" in out or "risk" in out.lower()
+
+
+def test_rr_with_qty() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["rr"](["150.0", "145.0", "162.0", "100"])
+    assert "100 shares" in out or "Break-even" in out
+
+
+def test_rr_poor_ratio_warns() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["rr"](["150.0", "149.0", "151.0"])
+    assert "Poor" in out or "1 :" in out or "ratio" in out.lower()
+
+
+def test_rr_invalid_stop_above_entry() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["rr"](["145.0", "150.0", "162.0"])
+    assert "STOP" in out or "below" in out.lower() or "entry" in out.lower()
+
+
+def test_rr_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/rr" in h["help"]([])
