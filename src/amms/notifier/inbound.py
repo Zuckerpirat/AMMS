@@ -5306,6 +5306,68 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _stopopt_cmd(args: list[str]) -> str:
+        """ATR-based stop loss optimizer for open positions.
+
+        Usage: /stopopt [SYM]
+        Suggests conservative/standard/wide stops and a 2R target.
+        Based on ATR-14.  Warns if current price has violated the stop.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if not positions:
+            return "No open positions."
+
+        # Filter to requested symbol or all
+        if args:
+            sym_filter = args[0].upper()
+            positions = [p for p in positions if p.symbol == sym_filter]
+            if not positions:
+                return f"{sym_filter} not in open positions."
+
+        from amms.analysis.stop_optimizer import suggest_stops
+
+        lines = ["── Stop Loss Optimizer (ATR-14) ──"]
+        for pos in positions[:8]:
+            sym = pos.symbol
+            try:
+                entry = float(pos.avg_entry_price)
+            except Exception:
+                entry = 0.0
+            try:
+                bars = data.get_bars(sym, limit=25)
+            except Exception as e:
+                lines.append(f"  {sym}: data error {e!r}")
+                continue
+
+            result = suggest_stops(sym, entry, bars)
+            if result is None:
+                lines.append(f"  {sym}: insufficient data (need 15+ bars)")
+                continue
+
+            warn = "  ⚠️ STOP VIOLATED" if result.stop_violated else ""
+            lines.append(
+                f"  {sym}  entry ${result.entry_price:.2f}"
+                f"  curr ${result.current_price:.2f}"
+                f"  ATR {result.atr_pct:.1f}%%{warn}"
+            )
+            lines.append(
+                f"    Conservative: ${result.stop_conservative:.2f}"
+                f"  Standard: ${result.stop_standard:.2f}"
+                f"  Wide: ${result.stop_wide:.2f}"
+            )
+            lines.append(
+                f"    Risk (std): {result.risk_standard_pct:.1f}%%"
+                f"  2R target: ${result.target_2r:.2f}"
+            )
+
+        return "\n".join(lines)
+
     def _holdtime_cmd(args: list[str]) -> str:
         """Win rate and P&L by holding period.
 
@@ -6316,4 +6378,6 @@ def build_command_handlers(
         "conc": _concentration_cmd,
         "holdtime": _holdtime_cmd,
         "ht": _holdtime_cmd,
+        "stopopt": _stopopt_cmd,
+        "stop": _stopopt_cmd,
     }

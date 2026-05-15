@@ -1,86 +1,107 @@
-"""Stop-loss optimizer.
+"""ATR-based stop loss optimizer.
 
-Given historical bar data for a symbol, suggests a stop-loss percentage
-based on the historical Average True Range and maximum intraday swings.
-Helps calibrate tight vs loose stops without data fitting.
+For each open position, suggests stop-loss levels at:
+  - Conservative: 1x ATR below entry
+  - Standard:     1.5x ATR below entry
+  - Wide:         2x ATR below entry
 
-Strategy:
-  - Compute ATR-14 as a percentage of price (ATR%)
-  - Suggest: 1.5× ATR% as a balanced stop (catches most noise, cuts big moves)
-  - Also report: 1× ATR% (tight), 2× ATR% (wide), max 20d daily range
-  - No overfitting — based solely on volatility, not specific price targets.
+Also computes:
+  - Current risk: (entry - current_stop) / entry * 100
+  - R-multiple target: suggested take-profit at 2x initial risk
+  - Whether the current price has already violated the standard stop
 
-Lives in the analysis layer: pure computation, no trade decisions.
+Uses ATR-14 (Average True Range, 14-period).
+If the position has a known entry price, stops are anchored to entry.
 """
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
-
-from amms.data.bars import Bar
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class StopSuggestion:
     symbol: str
     current_price: float
-    atr_pct: float | None          # ATR-14 as % of price
-    stop_tight_pct: float | None   # 1× ATR%
-    stop_balanced_pct: float | None # 1.5× ATR%
-    stop_wide_pct: float | None    # 2× ATR%
-    max_daily_range_pct: float | None  # max (high-low)/close over 20d
-    recommendation: str
+    entry_price: float
+    atr: float                # 14-period ATR
+    atr_pct: float            # ATR as % of current price
+    stop_conservative: float  # 1x ATR from entry
+    stop_standard: float      # 1.5x ATR from entry
+    stop_wide: float          # 2x ATR from entry
+    target_2r: float          # take-profit at 2x standard risk
+    risk_standard_pct: float  # % risk at standard stop
+    stop_violated: bool       # current price < stop_standard
+    bars_used: int
 
 
-def suggest_stop(symbol: str, bars: list[Bar]) -> StopSuggestion:
-    """Compute stop-loss suggestions for a single symbol."""
-    if not bars:
-        return StopSuggestion(
-            symbol=symbol, current_price=0.0,
-            atr_pct=None, stop_tight_pct=None,
-            stop_balanced_pct=None, stop_wide_pct=None,
-            max_daily_range_pct=None,
-            recommendation="No bar data available.",
-        )
+def _atr(bars: list, period: int = 14) -> float | None:
+    """Compute ATR-14 from bars."""
+    if len(bars) < period + 1:
+        return None
+    window = bars[-(period + 1):]
+    trs: list[float] = []
+    for i in range(1, len(window)):
+        high = window[i].high
+        low = window[i].low
+        prev_close = window[i - 1].close
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        trs.append(tr)
+    return sum(trs) / len(trs) if trs else None
 
-    from amms.features.volatility import atr as compute_atr
 
-    price = bars[-1].close
-    atr_val = compute_atr(bars, 14)
+def suggest_stops(
+    symbol: str,
+    entry_price: float,
+    bars: list,
+    *,
+    atr_period: int = 14,
+) -> StopSuggestion | None:
+    """Compute ATR-based stop suggestions for a single position.
 
-    atr_pct = (atr_val / price * 100) if (atr_val and price > 0) else None
+    symbol: ticker
+    entry_price: position entry price
+    bars: recent bar data (list[Bar]) needs at least atr_period + 1 bars
+    atr_period: ATR lookback (default 14)
+    Returns None if insufficient data or entry_price <= 0.
+    """
+    if not bars or entry_price <= 0:
+        return None
 
-    # Daily range % (max over last 20 bars)
-    daily_ranges = []
-    for b in bars[-20:]:
-        if b.close > 0:
-            daily_ranges.append((b.high - b.low) / b.close * 100)
-    max_range = max(daily_ranges) if daily_ranges else None
+    atr_val = _atr(bars, period=atr_period)
+    if atr_val is None or atr_val <= 0:
+        return None
 
-    if atr_pct is not None:
-        tight = round(atr_pct, 2)
-        balanced = round(atr_pct * 1.5, 2)
-        wide = round(atr_pct * 2.0, 2)
-        if atr_pct < 1.0:
-            rec = f"Low volatility: tight {tight:.1f}% stop may work."
-        elif atr_pct < 2.5:
-            rec = f"Moderate volatility: balanced {balanced:.1f}% stop recommended."
-        else:
-            rec = f"High volatility: wide {wide:.1f}% stop or reduce position."
-    else:
-        tight = balanced = wide = None
-        rec = "Insufficient bar history for ATR calculation."
+    current_price = bars[-1].close
+    atr_pct = atr_val / current_price * 100 if current_price > 0 else 0.0
+
+    stop_cons = entry_price - 1.0 * atr_val
+    stop_std = entry_price - 1.5 * atr_val
+    stop_wide = entry_price - 2.0 * atr_val
+
+    # Ensure stops don't go negative
+    stop_cons = max(stop_cons, current_price * 0.01)
+    stop_std = max(stop_std, current_price * 0.01)
+    stop_wide = max(stop_wide, current_price * 0.01)
+
+    risk_std_pct = (entry_price - stop_std) / entry_price * 100
+
+    # Target at 2R (2x the standard risk from entry)
+    target_2r = entry_price + 2 * (entry_price - stop_std)
+
+    stop_violated = current_price < stop_std
 
     return StopSuggestion(
         symbol=symbol,
-        current_price=price,
-        atr_pct=atr_pct,
-        stop_tight_pct=tight,
-        stop_balanced_pct=balanced,
-        stop_wide_pct=wide,
-        max_daily_range_pct=max_range,
-        recommendation=rec,
+        current_price=round(current_price, 4),
+        entry_price=round(entry_price, 4),
+        atr=round(atr_val, 4),
+        atr_pct=round(atr_pct, 2),
+        stop_conservative=round(stop_cons, 4),
+        stop_standard=round(stop_std, 4),
+        stop_wide=round(stop_wide, 4),
+        target_2r=round(target_2r, 4),
+        risk_standard_pct=round(risk_std_pct, 2),
+        stop_violated=stop_violated,
+        bars_used=len(bars),
     )
