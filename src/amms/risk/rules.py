@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from amms.data.sectors import group_by_sector, sector_for
+
 
 @dataclass(frozen=True)
 class RiskConfig:
@@ -25,6 +27,9 @@ class RiskConfig:
     # when the price drops this much from the position's recorded high-water
     # mark. Requires the executor to track per-symbol highs. 0 = disabled.
     trailing_stop_pct: float = 0.0
+    # Maximum share of the portfolio any single GICS sector may occupy as a
+    # fraction (e.g. 0.40 = 40%). 0 (default) = disabled.
+    max_sector_pct: float = 0.0
 
     def __post_init__(self) -> None:
         if not 0 < self.max_position_pct <= 1:
@@ -55,6 +60,10 @@ class RiskConfig:
         if not 0 <= self.trailing_stop_pct < 1:
             raise ValueError(
                 f"trailing_stop_pct must be in [0, 1), got {self.trailing_stop_pct}"
+            )
+        if not 0 <= self.max_sector_pct <= 1:
+            raise ValueError(
+                f"max_sector_pct must be in [0, 1], got {self.max_sector_pct}"
             )
 
 
@@ -192,3 +201,41 @@ def check_stop_losses(
                     )
 
     return triggers
+
+
+def check_sector_cap(
+    *,
+    symbol: str,
+    positions: list,
+    total_equity: float,
+    config: RiskConfig,
+) -> RiskDecision | None:
+    """Return a blocking RiskDecision when buying ``symbol`` would push its
+    GICS sector beyond ``config.max_sector_pct`` of ``total_equity``.
+
+    Returns ``None`` when the cap is disabled or the buy is safe.
+
+    ``positions``: iterable of objects with ``.symbol`` and ``.market_value``.
+    """
+    if config.max_sector_pct <= 0 or total_equity <= 0:
+        return None
+
+    target_sector = sector_for(symbol)
+
+    sector_exposure = group_by_sector(
+        [(p.symbol, float(getattr(p, "market_value", 0) or 0)) for p in positions]
+    )
+    current = sector_exposure.get(target_sector, 0.0)
+    current_pct = current / total_equity
+
+    if current_pct >= config.max_sector_pct:
+        return RiskDecision(
+            False,
+            0,
+            (
+                f"sector cap: {target_sector} already at "
+                f"{current_pct:.1%} of equity "
+                f"(cap {config.max_sector_pct:.0%})"
+            ),
+        )
+    return None

@@ -56,6 +56,9 @@ _ALLOWED: dict[str, tuple[str, Callable[[str], Any]]] = {
     "trading_mode": (
         "Active strategy mode: conservative | swing | meme | event", str
     ),
+    "max_sector_pct": (
+        "Max share of portfolio any single sector may hold (0..1, 0=off)", float
+    ),
 }
 
 
@@ -98,6 +101,9 @@ def parse_value(key: str, raw: str) -> Any:
             raise ValueError(
                 f"trading_mode must be one of: {', '.join(sorted(allowed_modes))}"
             )
+    if key == "max_sector_pct":
+        if not 0 <= value <= 1:
+            raise ValueError("max_sector_pct must be in [0, 1]")
     return value
 
 
@@ -186,6 +192,8 @@ def apply_to_config(config: AppConfig, conn: sqlite3.Connection) -> AppConfig:
         risk_kwargs["trailing_stop_pct"] = overrides["trailing_stop"]
     if "max_buys" in overrides:
         risk_kwargs["max_buys_per_tick"] = overrides["max_buys"]
+    if "max_sector_pct" in overrides:
+        risk_kwargs["max_sector_pct"] = overrides["max_sector_pct"]
     wsb_kwargs: dict[str, Any] = {}
     if "wsb_enabled" in overrides:
         wsb_kwargs["enabled"] = overrides["wsb_enabled"]

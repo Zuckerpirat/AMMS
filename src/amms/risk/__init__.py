@@ -4,6 +4,7 @@ from amms.risk.rules import (
     RiskDecision,
     StopLossTrigger,
     check_buy,
+    check_sector_cap,
     check_stop_losses,
     position_size,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "StopLossTrigger",
     "STOP_LOSS_REASON_PREFIX",
     "check_buy",
+    "check_sector_cap",
     "check_stop_losses",
     "position_size",
 ]

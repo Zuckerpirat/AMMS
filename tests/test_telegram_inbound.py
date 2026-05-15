@@ -720,3 +720,47 @@ def test_help_lists_new_commands() -> None:
     assert "/pnl" in help_text
     assert "/mode" in help_text
     assert "/alert" in help_text
+
+
+def _make_conn_with_orders():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_overrides "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE orders (id TEXT, client_order_id TEXT, symbol TEXT, "
+        "side TEXT, qty REAL, type TEXT, status TEXT, submitted_at TEXT, "
+        "filled_at TEXT, filled_avg_price REAL)"
+    )
+    conn.execute(
+        "INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("1", "c1", "AAPL", "buy", 5, "market", "filled",
+         "2026-05-15T15:00:00+00:00", None, 180.0),
+    )
+    conn.commit()
+    return conn
+
+
+def test_summary_handler_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    conn = _make_conn_with_orders()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["summary"]([])
+    assert "Equity:" in out
+    assert "AAPL" in out
+    assert "LLM narration unavailable" in out
+
+
+def test_summary_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["summary"]([]) == "DB not wired."
+
+
+def test_help_includes_summary() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/summary" in h["help"]([])

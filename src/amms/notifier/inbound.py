@@ -1107,6 +1107,76 @@ def build_command_handlers(
             return f"Error: {e}"
         return f"Alert set: #{alert.id} — notify when {sym} goes {direction} ${price:.2f}"
 
+    def _summary(_args: list[str]) -> str:
+        """On-demand AI narrative of the current portfolio state."""
+        if conn is None:
+            return "DB not wired."
+        import os
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+
+        # Build a plain-text digest of the current state.
+        lines: list[str] = []
+        try:
+            acc = broker.get_account()
+            lines.append(f"Equity: ${acc.equity:,.2f}  Cash: ${acc.cash:,.2f}")
+        except Exception:
+            lines.append("(equity unavailable)")
+
+        try:
+            positions = broker.get_positions()
+        except Exception:
+            positions = []
+        if positions:
+            from amms.data.sectors import sector_for
+
+            lines.append(f"Open positions: {len(positions)}")
+            for p in positions:
+                sector = sector_for(p.symbol)
+                lines.append(
+                    f"  {p.symbol} ({sector}): {p.qty:g} × ${float(p.avg_entry_price):.2f}"
+                    f" | P&L ${float(p.unrealized_pl):+.2f}"
+                )
+        else:
+            lines.append("No open positions.")
+
+        # Recent trades (last 5)
+        today_orders = conn.execute(
+            "SELECT symbol, side, qty, filled_avg_price, status "
+            "FROM orders ORDER BY submitted_at DESC LIMIT 5"
+        ).fetchall()
+        trades_dicts: list[dict] = []
+        for r in today_orders:
+            d = dict(r) if hasattr(r, "keys") else {
+                "symbol": r[0], "side": r[1], "qty": r[2],
+                "filled_avg_price": r[3], "status": r[4],
+            }
+            trades_dicts.append(d)
+        if trades_dicts:
+            lines.append("Recent trades:")
+            for t in trades_dicts:
+                price_str = f" @ ${t['filled_avg_price']:.2f}" if t.get("filled_avg_price") else ""
+                lines.append(
+                    f"  {t['side'].upper()} {t['qty']:g} {t['symbol']}{price_str} [{t['status']}]"
+                )
+
+        plain = "\n".join(lines)
+
+        if not api_key:
+            return plain + "\n\n(LLM narration unavailable — set ANTHROPIC_API_KEY)"
+
+        from amms.notifier.llm_summary import augment_summary
+
+        try:
+            narrated = augment_summary(
+                plain,
+                trades_today=trades_dicts,
+                conn=conn,
+            )
+        except Exception as e:
+            return plain + f"\n\n(LLM error: {e!r})"
+        return narrated
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -1138,6 +1208,7 @@ def build_command_handlers(
             "/scan — run WSB Auto-Discovery now\n"
             "/isin SYM — look up the ISIN for a ticker (debug)\n"
             "/buylist — preview what the bot would buy/sell right now\n"
+            "/summary — AI-generated narrative of the current portfolio state\n"
             "/pause — stop placing new orders\n"
             "/resume — re-enable placing orders\n"
             "/help — this message"
@@ -1178,4 +1249,5 @@ def build_command_handlers(
         "pnl": _pnl,
         "mode": _mode,
         "alert": _alert,
+        "summary": _summary,
     }

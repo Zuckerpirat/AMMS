@@ -17,7 +17,7 @@ from amms.db import (
 )
 from amms.features import standard_features
 from amms.metrics import metrics
-from amms.risk import STOP_LOSS_REASON_PREFIX, check_buy, check_stop_losses
+from amms.risk import STOP_LOSS_REASON_PREFIX, check_buy, check_sector_cap, check_stop_losses
 from amms.strategy import Signal, Strategy
 
 logger = logging.getLogger(__name__)
@@ -152,6 +152,15 @@ def run_tick(
             if not passes_a:
                 result.blocked.append((signal.symbol, f"asset filter: {asset_reason}"))
                 continue
+        sector_block = check_sector_cap(
+            symbol=signal.symbol,
+            positions=list(positions.values()),
+            total_equity=account.equity,
+            config=config.risk,
+        )
+        if sector_block is not None:
+            result.blocked.append((signal.symbol, sector_block.reason))
+            continue
         decision = check_buy(
             equity=account.equity,
             price=signal.price,
