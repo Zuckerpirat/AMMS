@@ -3129,3 +3129,80 @@ def test_watchdog_help_included() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/watchdog" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /sar and /trend tests
+# ---------------------------------------------------------------------------
+
+def test_sar_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["sar"]([])
+
+
+def test_sar_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_MedDataClient())
+    out = h["sar"]([])
+    assert "no open positions" in out
+
+
+def test_sar_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_MedDataClient())
+    out = h["sar"](["AAPL"])
+    assert "AAPL" in out
+    assert "SAR" in out
+
+
+def test_sar_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_MedDataClient())
+    out = h["sar"]([])
+    assert "AAPL" in out
+
+
+def test_sar_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/sar" in h["help"]([])
+
+
+def test_trend_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["trend"]([])
+
+
+def test_trend_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_LongDataClient())
+    out = h["trend"]([])
+    assert "no open positions" in out
+
+
+def test_trend_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_LongDataClient())
+    out = h["trend"](["AAPL"])
+    assert "AAPL" in out
+
+
+def test_trend_for_open_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_LongDataClient())
+    out = h["trend"]([])
+    assert "AAPL" in out
+
+
+def test_trend_help_included() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/trend" in h["help"]([])

@@ -3299,6 +3299,119 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _sar_cmd(args: list[str]) -> str:
+        """Show Parabolic SAR for open positions or a ticker.
+
+        Usage: /sar [SYM]
+        SAR below price = uptrend. SAR above price = downtrend.
+        Distance % shows how far price is from the stop level.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /sar AAPL)"
+
+        from amms.features.parabolic_sar import parabolic_sar
+
+        lines = ["Parabolic SAR (AF=0.02, step=0.02, max=0.20):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=50)
+            except Exception:
+                bars = []
+            result = parabolic_sar(bars)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a")
+                continue
+            price = bars[-1].close if bars else 0.0
+            if result.trend == "up":
+                label = f"▲ uptrend  SAR ${result.sar:.2f} below price ({result.distance_pct:.1f}% buffer)"
+            else:
+                label = f"▼ downtrend  SAR ${result.sar:.2f} above price ({result.distance_pct:.1f}% below)"
+            lines.append(f"  {sym:<6}  ${price:.2f}  {label}  AF {result.acceleration:.3f}")
+        return "\n".join(lines)
+
+    def _trend_cmd(args: list[str]) -> str:
+        """Multi-indicator trend summary for a position or ticker.
+
+        Usage: /trend [SYM]
+        Shows SMA-50/200, EMA-20, RSI-14, MACD, ADX in one compact view.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions[:3]]  # limit to 3 for readability
+        else:
+            return "no open positions (pass a ticker: /trend AAPL)"
+
+        from amms.features.momentum import ema, macd, rsi, sma
+
+        lines = []
+        for sym in symbols[:3]:
+            try:
+                bars = data.get_bars(sym, limit=210)
+            except Exception:
+                bars = []
+
+            price = bars[-1].close if bars else 0.0
+            lines.append(f"── {sym} ${price:.2f} ──")
+
+            # SMA 50/200
+            sma50 = sma(bars, 50)
+            sma200 = sma(bars, 200)
+            if sma50 and sma200:
+                cross = "▲ golden cross" if sma50 > sma200 else "▼ death cross"
+                lines.append(f"  SMA50 {sma50:.2f}  SMA200 {sma200:.2f}  {cross}")
+            elif sma50:
+                above = "above" if price > sma50 else "below"
+                lines.append(f"  SMA50 {sma50:.2f}  price {above} SMA50")
+
+            # EMA 20
+            ema20 = ema(bars, 20)
+            if ema20:
+                dir_e = "▲" if price > ema20 else "▼"
+                lines.append(f"  EMA20 {ema20:.2f}  price {dir_e} EMA20")
+
+            # RSI
+            rsi_val = rsi(bars, 14)
+            if rsi_val is not None:
+                rsi_zone = "overbought" if rsi_val > 70 else ("oversold" if rsi_val < 30 else "neutral")
+                lines.append(f"  RSI14 {rsi_val:.1f}  ({rsi_zone})")
+
+            # MACD
+            macd_result = macd(bars)
+            if macd_result:
+                ml, sl, hist = macd_result
+                hist_dir = "▲" if hist > 0 else "▼"
+                lines.append(f"  MACD {ml:.3f}  signal {sl:.3f}  hist {hist_dir}{abs(hist):.3f}")
+
+            # ADX
+            try:
+                from amms.features.adx import adx as compute_adx
+                adx_result = compute_adx(bars, 14)
+                if adx_result:
+                    lines.append(f"  ADX {adx_result.adx:.1f} ({adx_result.trend_strength})  {adx_result.direction}")
+            except Exception:
+                pass
+
+        return "\n".join(lines)
+
     def _ichimoku_cmd(args: list[str]) -> str:
         """Show Ichimoku Cloud for open positions or a ticker.
 
@@ -4015,6 +4128,8 @@ def build_command_handlers(
             "/confluence [SYM] — multi-indicator confluence score (RSI+MACD+BB+ADX+Stoch)\n"
             "/ichimoku [SYM] — Ichimoku Cloud: cloud position + Tenkan/Kijun momentum\n"
             "/watchdog — daily risk watchdog: circuit, regime, P&L, technical warnings\n"
+            "/sar [SYM] — Parabolic SAR: trend direction + stop distance\n"
+            "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -4156,4 +4271,6 @@ def build_command_handlers(
         "ichi": _ichimoku_cmd,
         "watchdog": _watchdog_cmd,
         "wd": _watchdog_cmd,
+        "sar": _sar_cmd,
+        "trend": _trend_cmd,
     }
