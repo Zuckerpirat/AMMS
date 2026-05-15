@@ -983,3 +983,97 @@ def test_help_includes_budget_and_corr() -> None:
     help_text = h["help"]([])
     assert "/budget" in help_text
     assert "/corr" in help_text
+
+
+def _make_conn_with_trades_and_equity():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_overrides "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE orders (id TEXT, client_order_id TEXT, symbol TEXT, "
+        "side TEXT, qty REAL, type TEXT, status TEXT, submitted_at TEXT, "
+        "filled_at TEXT, filled_avg_price REAL)"
+    )
+    conn.execute(
+        "CREATE TABLE equity_snapshots "
+        "(ts TEXT PRIMARY KEY, equity REAL, cash REAL, buying_power REAL)"
+    )
+    # 3 round trips: 2 wins, 1 loss
+    trades = [
+        ("b1", "c1", "NVDA", "buy",  10, "market", "filled", "2026-04-01T15:00:00Z", None, 100.0),
+        ("s1", "c2", "NVDA", "sell", 10, "market", "filled", "2026-04-05T15:00:00Z", None, 115.0),
+        ("b2", "c3", "TSLA", "buy",  5, "market", "filled",  "2026-04-06T15:00:00Z", None, 200.0),
+        ("s2", "c4", "TSLA", "sell", 5, "market", "filled",  "2026-04-10T15:00:00Z", None, 190.0),
+        ("b3", "c5", "AAPL", "buy",  8, "market", "filled",  "2026-04-11T15:00:00Z", None, 150.0),
+        ("s3", "c6", "AAPL", "sell", 8, "market", "filled",  "2026-04-15T15:00:00Z", None, 165.0),
+    ]
+    conn.executemany("INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?)", trades)
+    # 10 equity snapshots for Sharpe (within the last 30 days)
+    from datetime import date, timedelta
+
+    base = date.today() - timedelta(days=10)
+    for i in range(10):
+        day = base + timedelta(days=i)
+        ts = f"{day.isoformat()}T16:00:00Z"
+        eq = 100_000 + i * 500
+        conn.execute(
+            "INSERT INTO equity_snapshots VALUES (?,?,?,?)",
+            (ts, eq, eq * 0.5, eq * 0.5),
+        )
+    conn.commit()
+    return conn
+
+
+def test_streak_handler_shows_current_streak() -> None:
+    conn = _make_conn_with_trades_and_equity()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["streak"]([])
+    assert "streak" in out.lower()
+    assert "Win rate" in out
+
+
+def test_streak_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["streak"]([]) == "DB not wired."
+
+
+def test_sharpe_handler_returns_metrics() -> None:
+    conn = _make_conn_with_trades_and_equity()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["sharpe"]([])
+    assert "Sharpe" in out
+    assert "return" in out.lower()
+
+
+def test_sharpe_insufficient_data() -> None:
+    import sqlite3 as _sqlite
+
+    conn = _sqlite.connect(":memory:", check_same_thread=False)
+    conn.row_factory = _sqlite.Row
+    conn.execute(
+        "CREATE TABLE equity_snapshots "
+        "(ts TEXT PRIMARY KEY, equity REAL, cash REAL, buying_power REAL)"
+    )
+    conn.execute(
+        "INSERT INTO equity_snapshots VALUES (?,?,?,?)",
+        ("2026-05-15T12:00:00Z", 100_000, 50_000, 50_000),
+    )
+    conn.commit()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["sharpe"]([])
+    assert "Not enough" in out
+
+
+def test_help_includes_streak_and_sharpe() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/streak" in help_text
+    assert "/sharpe" in help_text

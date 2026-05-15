@@ -1247,6 +1247,125 @@ def build_command_handlers(
                 lines.append(f"    {url}")
         return "\n".join(lines)
 
+    def _streak(_args: list[str]) -> str:
+        """Show the current win/loss streak from completed round-trip trades."""
+        if conn is None:
+            return "DB not wired."
+
+        rows = conn.execute(
+            "SELECT symbol, side, qty, filled_avg_price, submitted_at "
+            "FROM orders WHERE status = 'filled' "
+            "ORDER BY symbol, submitted_at"
+        ).fetchall()
+
+        from collections import deque
+
+        buys: dict[str, deque] = {}
+        results: list[bool] = []  # True = win, False = loss
+
+        for r in rows:
+            sym = r["symbol"]
+            side = r["side"]
+            qty = float(r["qty"])
+            price = r["filled_avg_price"]
+            if price is None:
+                continue
+            price = float(price)
+
+            if side == "buy":
+                if sym not in buys:
+                    buys[sym] = deque()
+                buys[sym].append({"qty": qty, "price": price})
+            elif side == "sell" and sym in buys and buys[sym]:
+                buy = buys[sym].popleft()
+                win = price > buy["price"]
+                results.append(win)
+
+        if not results:
+            return "No completed trades yet."
+
+        total = len(results)
+        wins = sum(results)
+        losses = total - wins
+        win_rate = wins / total * 100
+
+        # Compute current streak (from end of list)
+        streak_type = "W" if results[-1] else "L"
+        streak = 0
+        for r in reversed(results):
+            if (r and streak_type == "W") or (not r and streak_type == "L"):
+                streak += 1
+            else:
+                break
+
+        # Longest win / loss streaks
+        best_win_streak = 0
+        best_loss_streak = 0
+        cur_w = 0
+        cur_l = 0
+        for r in results:
+            if r:
+                cur_w += 1
+                cur_l = 0
+                best_win_streak = max(best_win_streak, cur_w)
+            else:
+                cur_l += 1
+                cur_w = 0
+                best_loss_streak = max(best_loss_streak, cur_l)
+
+        arrow = "🟢" if streak_type == "W" else "🔴"
+        lines = [
+            f"Trade streak ({total} completed):",
+            f"  Current streak: {arrow} {streak}× {streak_type}",
+            f"  Win rate: {wins}W / {losses}L  ({win_rate:.1f}%)",
+            f"  Best win streak:  {best_win_streak}",
+            f"  Worst loss streak: {best_loss_streak}",
+        ]
+        return "\n".join(lines)
+
+    def _sharpe(_args: list[str]) -> str:
+        """Compute rolling Sharpe ratio from the equity curve (last 30 days)."""
+        if conn is None:
+            return "DB not wired."
+
+        import math
+
+        rows = conn.execute(
+            "SELECT substr(ts, 1, 10) AS day, MAX(equity) AS equity "
+            "FROM equity_snapshots "
+            "WHERE substr(ts, 1, 10) >= date('now', '-30 day') "
+            "GROUP BY day ORDER BY day"
+        ).fetchall()
+
+        if len(rows) < 5:
+            return "Not enough equity history (need 5+ days)."
+
+        equities = [float(r[1]) for r in rows]
+        # Daily returns
+        rets = [(equities[i] - equities[i - 1]) / equities[i - 1] for i in range(1, len(equities))]
+        n = len(rets)
+        mean = sum(rets) / n
+        variance = sum((r - mean) ** 2 for r in rets) / n
+        std = math.sqrt(variance) if variance > 0 else 0.0
+
+        # Annualised Sharpe (252 trading days, assume 0 risk-free rate)
+        sharpe = (mean / std * math.sqrt(252)) if std > 0 else 0.0
+
+        total_return = (equities[-1] - equities[0]) / equities[0] * 100
+        max_eq = max(equities)
+        min_trough = min(equities[equities.index(max_eq):]) if max_eq in equities else equities[-1]
+        max_dd = (min_trough - max_eq) / max_eq * 100 if max_eq > 0 else 0.0
+
+        lines = [
+            f"Performance metrics ({n} daily returns):",
+            f"  Period return:  {total_return:+.2f}%",
+            f"  Daily avg:      {mean*100:+.4f}%",
+            f"  Daily vol:      {std*100:.4f}%",
+            f"  Sharpe (ann.):  {sharpe:.2f}",
+            f"  Max drawdown:   {max_dd:.2f}%",
+        ]
+        return "\n".join(lines)
+
     def _budget(_args: list[str]) -> str:
         """Show available buying power and estimated position slots remaining."""
         try:
@@ -1459,6 +1578,8 @@ def build_command_handlers(
             "/scan — run WSB Auto-Discovery now\n"
             "/isin SYM — look up the ISIN for a ticker (debug)\n"
             "/buylist — preview what the bot would buy/sell right now\n"
+            "/streak — current win/loss streak from completed trade history\n"
+            "/sharpe — rolling Sharpe ratio + max drawdown from equity curve\n"
             "/budget — available buying power and position slot breakdown\n"
             "/corr — pairwise return correlation between held positions\n"
             "/journal [SYM] — completed trade pairs (BUY→SELL) with realized P&L\n"
@@ -1512,4 +1633,6 @@ def build_command_handlers(
         "budget": _budget,
         "corr": _corr,
         "correlation": _corr,
+        "streak": _streak,
+        "sharpe": _sharpe,
     }
