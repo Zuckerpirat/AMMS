@@ -5110,6 +5110,49 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _liquidity_cmd(args: list[str]) -> str:
+        """Liquidity score: volume, spread, consistency, trend.
+
+        Usage: /liquidity [SYM]
+        Scores 0-100 (A-F) based on observable bar data.
+        Low-liquidity symbols may have poor execution quality.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /liquidity AAPL)"
+
+        from amms.analysis.liquidity_score import score as liq_score
+
+        lines = ["── Liquidity Scores ──"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=35)
+            except Exception as e:
+                lines.append(f"  {sym}: data error {e!r}")
+                continue
+
+            result = liq_score(bars)
+            if result is None:
+                lines.append(f"  {sym}: insufficient data")
+                continue
+
+            WARN = "  ⚠️" if result.grade in ("D", "F") else ""
+            lines.append(
+                f"  [{result.grade}] {sym:<6}  {result.total_score:.0f}/100"
+                f"  vol {result.avg_volume/1e3:.0f}k  "
+                f"sprd {result.avg_spread_pct:.1f}%%  "
+                f"{result.volume_trend}{WARN}"
+            )
+
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -6071,4 +6114,6 @@ def build_command_handlers(
         "mom": _momentum_cmd,
         "srlevels": _srlevels_cmd,
         "sr": _srlevels_cmd,
+        "liquidity": _liquidity_cmd,
+        "liq": _liquidity_cmd,
     }
