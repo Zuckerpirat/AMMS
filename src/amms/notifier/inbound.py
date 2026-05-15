@@ -3105,6 +3105,105 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _stopopt(args: list[str]) -> str:
+        """Suggest optimal stop-loss % for a ticker based on historical ATR.
+
+        Usage: /stopopt [SYM]  — held positions or specific ticker
+        Shows tight (1×ATR), balanced (1.5×ATR), and wide (2×ATR) stops.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /stopopt AAPL)"
+
+        from amms.analysis.stop_optimizer import suggest_stop
+
+        lines = ["Stop-loss suggestions (ATR-14 based):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=25)
+            except Exception:
+                bars = []
+            s = suggest_stop(sym, bars)
+            if s.atr_pct is None:
+                lines.append(f"  {sym:<6}  n/a (not enough data)")
+                continue
+            lines.append(
+                f"  {sym:<6}  price ${s.current_price:.2f}  "
+                f"ATR {s.atr_pct:.2f}%  "
+                f"tight {s.stop_tight_pct:.1f}%  "
+                f"balanced {s.stop_balanced_pct:.1f}%  "
+                f"wide {s.stop_wide_pct:.1f}%"
+            )
+            lines.append(f"         → {s.recommendation}")
+        return "\n".join(lines)
+
+    def _chart(_args: list[str]) -> str:
+        """ASCII equity curve chart from equity_snapshots (last 30 days).
+
+        Uses 8 block characters to represent the equity curve as a sparkline.
+        """
+        if conn is None:
+            return "DB not wired."
+        try:
+            rows = conn.execute(
+                "SELECT substr(ts,1,10) AS day, equity "
+                "FROM equity_snapshots "
+                "ORDER BY ts ASC"
+            ).fetchall()
+        except Exception as e:
+            return f"DB error: {e!r}"
+
+        equities = []
+        dates = []
+        for r in rows:
+            try:
+                dates.append(r["day"])
+                equities.append(float(r["equity"]))
+            except (KeyError, TypeError):
+                try:
+                    dates.append(r[0])
+                    equities.append(float(r[1]))
+                except Exception:
+                    pass
+
+        if len(equities) < 2:
+            return "Not enough equity history for chart."
+
+        equities = equities[-30:]
+        dates = dates[-30:]
+
+        min_e = min(equities)
+        max_e = max(equities)
+        rang = max_e - min_e or 1.0
+        blocks = "▁▂▃▄▅▆▇█"
+
+        chart_line = ""
+        for e in equities:
+            idx = int((e - min_e) / rang * (len(blocks) - 1))
+            chart_line += blocks[idx]
+
+        start_e = equities[0]
+        end_e = equities[-1]
+        ret = (end_e - start_e) / start_e * 100
+
+        lines = [
+            f"Equity curve ({len(equities)} snapshots):",
+            f"  {chart_line}",
+            f"  {dates[0]} → {dates[-1]}",
+            f"  ${start_e:,.0f} → ${end_e:,.0f}  ({ret:+.1f}%)",
+        ]
+        return "\n".join(lines)
+
     def _strategies(_args: list[str]) -> str:
         """List all registered trading strategies with their default parameters."""
         from amms.strategy.base import registered_strategies
@@ -3401,6 +3500,8 @@ def build_command_handlers(
             "/optimize [equal|momentum|inversevol] — recommended portfolio weights\n"
             "/vwap [SYM] — price vs VWAP deviation for positions or ticker\n"
             "/strategies — list all registered trading strategies\n"
+            "/stopopt [SYM] — suggest stop-loss % based on ATR (tight/balanced/wide)\n"
+            "/chart — ASCII equity curve sparkline from equity history\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3520,4 +3621,7 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "strategies": _strategies,
         "strats": _strategies,
+        "stopopt": _stopopt,
+        "chart": _chart,
+        "curve": _chart,
     }

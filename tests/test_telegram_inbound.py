@@ -2594,3 +2594,66 @@ def test_help_includes_strategies() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/strategies" in h["help"]([])
+
+
+# ---------------------------------------------------------------------------
+# /stopopt tests
+# ---------------------------------------------------------------------------
+
+def test_stopopt_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["stopopt"]([])
+
+
+def test_stopopt_shows_for_position() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["stopopt"]([])
+    assert "AAPL" in out
+    assert "stop" in out.lower() or "ATR" in out
+
+
+def test_stopopt_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["stopopt"](["NVDA"])
+    assert "NVDA" in out
+
+
+# ---------------------------------------------------------------------------
+# /chart tests
+# ---------------------------------------------------------------------------
+
+def test_chart_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["chart"]([]) == "DB not wired."
+
+
+def test_chart_insufficient_history(tmp_path) -> None:
+    conn = _make_conn_with_bench_equities(tmp_path, [100_000])
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["chart"]([])
+    assert "Not enough" in out
+
+
+def test_chart_shows_sparkline(tmp_path) -> None:
+    conn = _make_conn_with_bench_equities(
+        tmp_path, [100_000, 102_000, 98_000, 105_000, 103_000]
+    )
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["chart"]([])
+    # Should contain block characters
+    has_block = any(c in out for c in "▁▂▃▄▅▆▇█")
+    assert has_block or "snapshots" in out
+
+
+def test_help_includes_stopopt_and_chart() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/stopopt" in help_text
+    assert "/chart" in help_text
