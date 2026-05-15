@@ -5596,6 +5596,66 @@ def build_command_handlers(
             lines.append("  No edge — skip this trade setup.")
         return "\n".join(lines)
 
+    def _beta_cmd(args: list[str]) -> str:
+        """Portfolio beta vs SPY (market sensitivity).
+
+        Usage: /beta [BENCHMARK]  (default SPY)
+        Shows each position's beta, alpha, R², and weighted portfolio beta.
+        beta>1 = amplifies market moves, beta<1 = defensive.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if not positions:
+            return "No open positions."
+
+        benchmark = args[0].upper() if args else "SPY"
+
+        from amms.analysis.beta_calculator import compute as beta_compute
+
+        # Fetch benchmark bars
+        try:
+            bench_bars = data.get_bars(benchmark, limit=70)
+        except Exception as e:
+            return f"Could not fetch benchmark {benchmark}: {e!r}"
+
+        # Fetch position bars
+        positions_bars: dict[str, list] = {}
+        for pos in positions[:10]:
+            sym = pos.symbol
+            try:
+                positions_bars[sym] = data.get_bars(sym, limit=70)
+            except Exception:
+                pass
+
+        result = beta_compute(positions_bars, bench_bars, benchmark=benchmark)
+        if result is None:
+            return f"Not enough data to compute beta vs {benchmark}."
+
+        beta_icon = lambda b: "🔴" if b > 1.5 else ("🟡" if b > 1.1 else ("🟢" if b < 0.7 else "↔️ "))
+
+        lines = [
+            f"── Portfolio Beta vs {result.benchmark} ({result.n_positions} positions) ──",
+            f"  Portfolio β:  {result.portfolio_beta:.3f}",
+            f"  Avg R²:       {result.avg_r_squared:.3f}",
+            f"  High-β (>1.5): {result.high_beta_count}  |  Defensive (<0.7): {result.defensive_count}",
+            f"  {result.verdict}",
+            "",
+            f"  {'Symbol':<7}  {'β':>6}  {'α ann%%':>8}  {'R²':>5}  {'corr':>6}  {'wt%%':>5}",
+        ]
+        for r in result.positions:
+            icon = beta_icon(r.beta)
+            lines.append(
+                f"  {r.symbol:<7}  {icon} {r.beta:>5.3f}  {r.alpha_annualized:>+7.1f}%%"
+                f"  {r.r_squared:>5.3f}  {r.correlation:>+5.3f}  {r.weight_pct:>4.1f}%%"
+            )
+
+        return "\n".join(lines)
+
     def _watch_cmd(args: list[str]) -> str:
         """Watchlist manager: add, remove, list, scan symbols.
 
@@ -6934,4 +6994,6 @@ def build_command_handlers(
         "atrt": _targets_cmd,
         "kelly": _kelly_cmd,
         "ks": _kelly_cmd,
+        "beta": _beta_cmd,
+        "pbeta": _beta_cmd,
     }
