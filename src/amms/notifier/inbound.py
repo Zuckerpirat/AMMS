@@ -2485,6 +2485,143 @@ def build_command_handlers(
             return f"{sym} unblocked. Blocked list: {', '.join(sorted(blocked)) or '(empty)'}"
         return f"{sym} blocked from trading. Blocked list: {', '.join(sorted(blocked))}"
 
+    def _note(args: list[str]) -> str:
+        """Attach or read a freetext note for a ticker.
+
+        Usage:
+          /note SYM text...   — save a note for SYM (replaces previous note)
+          /note SYM           — read the note for SYM
+          /note list          — list all tickers with notes
+          /note SYM clear     — delete the note for SYM
+        """
+        if conn is None:
+            return "DB not wired."
+
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS ticker_notes "
+                "(symbol TEXT PRIMARY KEY, note TEXT, updated_at TEXT)"
+            )
+            conn.commit()
+        except Exception as e:
+            return f"DB error: {e!r}"
+
+        if not args:
+            return "usage: /note SYM [text]  or  /note list"
+
+        if args[0].lower() == "list":
+            rows = conn.execute(
+                "SELECT symbol, updated_at FROM ticker_notes ORDER BY symbol"
+            ).fetchall()
+            if not rows:
+                return "No notes saved. Use /note SYM text to add one."
+            lines = ["Tickers with notes:"]
+            for r in rows:
+                try:
+                    sym_r = r["symbol"]
+                    ts_r = r["updated_at"]
+                except (KeyError, TypeError):
+                    sym_r, ts_r = r[0], r[1]
+                lines.append(f"  {sym_r}  (updated {ts_r[:10] if ts_r else '?'})")
+            return "\n".join(lines)
+
+        from amms.data.dynamic_watchlist import normalize_symbol
+        try:
+            sym = normalize_symbol(args[0])
+        except ValueError as e:
+            return str(e)
+
+        if len(args) == 1:
+            # Read mode
+            row = conn.execute(
+                "SELECT note, updated_at FROM ticker_notes WHERE symbol = ?", (sym,)
+            ).fetchone()
+            if not row:
+                return f"No note for {sym}. Use /note {sym} text to add one."
+            try:
+                note_text = row["note"]
+                ts = row["updated_at"]
+            except (KeyError, TypeError):
+                note_text, ts = row[0], row[1]
+            return f"{sym} ({ts[:10] if ts else '?'}):\n{note_text}"
+
+        if args[1].lower() == "clear":
+            conn.execute("DELETE FROM ticker_notes WHERE symbol = ?", (sym,))
+            conn.commit()
+            return f"Note for {sym} deleted."
+
+        from datetime import UTC, datetime
+        note_body = " ".join(args[1:])
+        conn.execute(
+            "INSERT OR REPLACE INTO ticker_notes (symbol, note, updated_at) VALUES (?, ?, ?)",
+            (sym, note_body, datetime.now(UTC).isoformat()),
+        )
+        conn.commit()
+        return f"Note saved for {sym}: {note_body}"
+
+    def _recap(_args: list[str]) -> str:
+        """Brief daily recap: equity, trades, P&L, positions, top mover."""
+        lines = ["=== Daily Recap ==="]
+
+        # Equity
+        try:
+            acc = broker.get_account()
+            lines.append(f"Equity: ${float(acc.equity):,.2f}  |  Cash: ${float(acc.cash):,.2f}")
+        except Exception:
+            lines.append("Equity: (error fetching account)")
+
+        # Positions
+        try:
+            positions = broker.get_positions()
+            n = len(positions)
+        except Exception:
+            positions = []
+            n = 0
+
+        if positions:
+            total_pl = sum(float(p.unrealized_pl) for p in positions)
+            lines.append(f"Open positions: {n}  |  Total unrealized P&L: ${total_pl:+,.2f}")
+            # Top mover
+            try:
+                top = max(
+                    positions,
+                    key=lambda p: abs(float(p.unrealized_pl) / max(float(p.market_value), 1)),
+                )
+                top_pct = float(top.unrealized_pl) / max(float(top.market_value), 1) * 100
+                lines.append(f"Biggest mover: {top.symbol} {top_pct:+.1f}%")
+            except Exception:
+                pass
+        else:
+            lines.append("No open positions.")
+
+        # Today's trades from DB
+        if conn is not None:
+            try:
+                today_str = date.today().isoformat()
+                rows = conn.execute(
+                    "SELECT side, COUNT(*) AS cnt FROM orders "
+                    "WHERE status='filled' AND substr(filled_at,1,10)=? "
+                    "GROUP BY side",
+                    (today_str,),
+                ).fetchall()
+                if rows:
+                    parts = []
+                    for r in rows:
+                        try:
+                            side, cnt = r["side"], r["cnt"]
+                        except (KeyError, TypeError):
+                            side, cnt = r[0], r[1]
+                        parts.append(f"{cnt}× {side}")
+                    lines.append(f"Today's fills: {', '.join(parts)}")
+                else:
+                    lines.append("Today's fills: none")
+            except Exception:
+                pass
+
+        # Pause status
+        lines.append(f"Bot status: {'⏸ PAUSED' if pause.paused else '▶ running'}")
+        return "\n".join(lines)
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -2525,6 +2662,9 @@ def build_command_handlers(
             "/optout SYM — block ticker from being traded (still on watchlist)\n"
             "/optout SYM remove — unblock ticker\n"
             "/optout list — show blocked tickers\n"
+            "/note SYM [text] — save or read a freetext note for a ticker\n"
+            "/note list — list all tickers with notes\n"
+            "/recap — brief daily summary (equity, trades, top mover, status)\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2621,4 +2761,6 @@ def build_command_handlers(
         "mdd": _mdd,
         "optout": _optout,
         "block": _optout,
+        "note": _note,
+        "recap": _recap,
     }

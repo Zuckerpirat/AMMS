@@ -1914,3 +1914,112 @@ def test_help_includes_mdd_and_optout() -> None:
     help_text = h["help"]([])
     assert "/mdd" in help_text
     assert "/optout" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /note tests
+# ---------------------------------------------------------------------------
+
+def _make_empty_conn(tmp_path):
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE IF NOT EXISTS runtime_overrides (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    return conn
+
+
+def test_note_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["note"](["AAPL", "some text"]) == "DB not wired."
+
+
+def test_note_save_and_read(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["note"](["AAPL", "Strong momentum play"])
+    assert "saved" in out.lower()
+    out2 = h["note"](["AAPL"])
+    assert "Strong momentum play" in out2
+
+
+def test_note_list(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    h["note"](["AAPL", "test1"])
+    h["note"](["TSLA", "test2"])
+    out = h["note"](["list"])
+    assert "AAPL" in out
+    assert "TSLA" in out
+
+
+def test_note_empty_list(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["note"](["list"])
+    assert "No notes" in out
+
+
+def test_note_clear(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    h["note"](["AAPL", "something"])
+    out = h["note"](["AAPL", "clear"])
+    assert "deleted" in out.lower()
+    out2 = h["note"](["AAPL"])
+    assert "No note" in out2
+
+
+def test_note_no_args(tmp_path) -> None:
+    conn = _make_empty_conn(tmp_path)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["note"]([])
+    assert "usage" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# /recap tests
+# ---------------------------------------------------------------------------
+
+def test_recap_shows_equity() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["recap"]([])
+    assert "Equity" in out
+    assert "100,000" in out
+
+
+def test_recap_shows_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["recap"]([])
+    assert "Open positions" in out
+    assert "AAPL" in out or "mover" in out.lower()
+
+
+def test_recap_shows_pause_status() -> None:
+    p = PauseFlag()
+    p.set_paused(True)
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["recap"]([])
+    assert "PAUSED" in out
+
+
+def test_recap_shows_running_when_not_paused() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["recap"]([])
+    assert "running" in out
+
+
+def test_help_includes_note_and_recap() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/note" in help_text
+    assert "/recap" in help_text
