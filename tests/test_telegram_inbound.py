@@ -1117,3 +1117,79 @@ def test_rr_alias_routes_to_riskreport() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["rr"] is h["riskreport"]
+
+
+def test_upcoming_no_positions() -> None:
+    class _EmptyBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_EmptyBroker(), pause=p)
+    out = h["upcoming"]([])
+    assert "No open positions" in out
+
+
+def test_upcoming_with_positions_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    from amms.data import earnings as earnings_mod
+
+    def _fake_fetch(symbols, *, days_ahead=14):
+        from amms.data.earnings import EarningsEvent
+
+        return [EarningsEvent(
+            symbol="AAPL", date="2026-05-20",
+            time="after-market", eps_estimate="1.50"
+        )]
+
+    monkeypatch.setattr(earnings_mod, "fetch_upcoming", _fake_fetch)
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["upcoming"]([])
+    assert "AAPL" in out
+    assert "2026-05-20" in out
+    assert "EPS est" in out
+
+
+def test_compare_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=None)
+    out = h["compare"](["AAPL", "NVDA"])
+    assert "not wired" in out.lower()
+
+
+def test_compare_usage_when_too_few_args() -> None:
+    class _FakeData:
+        def get_snapshots(self, syms, *, feed="iex"):
+            return {}
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeData())
+    out = h["compare"](["AAPL"])
+    assert "usage" in out.lower()
+
+
+def test_compare_shows_both_symbols() -> None:
+    class _FakeData:
+        def get_snapshots(self, syms, *, feed="iex"):
+            return {
+                "AAPL": {"price": 180.0, "change_pct": 1.5, "change_pct_week": 3.0},
+                "NVDA": {"price": 900.0, "change_pct": -0.5, "change_pct_week": 5.0},
+            }
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeData())
+    out = h["compare"](["AAPL", "NVDA"])
+    assert "AAPL" in out
+    assert "NVDA" in out
+    assert "180" in out
+    assert "900" in out
+    assert "Sector" in out
+
+
+def test_help_includes_upcoming_and_compare() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/upcoming" in help_text
+    assert "/compare" in help_text

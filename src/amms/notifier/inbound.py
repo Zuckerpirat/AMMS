@@ -1482,6 +1482,88 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
+    def _upcoming(_args: list[str]) -> str:
+        """Show upcoming earnings dates for held positions (next 14 days)."""
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+        if not positions:
+            return "No open positions to check earnings for."
+
+        syms = [p.symbol for p in positions]
+        try:
+            from amms.data.earnings import fetch_upcoming
+
+            events = fetch_upcoming(syms, days_ahead=14)
+        except Exception as e:
+            return f"Earnings lookup failed: {e!r}"
+
+        if not events:
+            return f"No earnings in the next 14 days for: {', '.join(syms)}"
+
+        lines = ["Upcoming earnings (next 14 days):"]
+        for ev in sorted(events, key=lambda e: e.date):
+            time_tag = f" ({ev.time})" if ev.time else ""
+            eps_tag = f"  EPS est: {ev.eps_estimate}" if ev.eps_estimate != "N/A" else ""
+            lines.append(f"  {ev.symbol}: {ev.date}{time_tag}{eps_tag}")
+        return "\n".join(lines)
+
+    def _compare(args: list[str]) -> str:
+        """Compare two tickers side by side.
+
+        Usage: /compare AAPL MSFT
+        Shows: sector, price, daily change, weekly change, ATR.
+        """
+        if data is None:
+            return "Market data client not wired."
+        if len(args) < 2:
+            return "usage: /compare SYM1 SYM2  (e.g. /compare AAPL NVDA)"
+
+        syms = [a.upper() for a in args[:2]]
+        try:
+            snaps = data.get_snapshots(syms)
+        except Exception as e:
+            return f"data error: {e!r}"
+
+        from amms.data.sectors import sector_for
+
+        lines = [f"Comparison: {syms[0]} vs {syms[1]}"]
+        headers = ["Metric", syms[0], syms[1]]
+        rows: list[tuple[str, str, str]] = []
+
+        def _fmt(snap: dict, key: str, fmt: str = ".2f") -> str:
+            val = snap.get(key)
+            if val is None:
+                return "N/A"
+            try:
+                return format(float(val), fmt)
+            except (TypeError, ValueError):
+                return str(val)
+
+        snap0 = snaps.get(syms[0], {})
+        snap1 = snaps.get(syms[1], {})
+
+        rows.append(("Sector", sector_for(syms[0]), sector_for(syms[1])))
+        rows.append(("Price", f"${_fmt(snap0, 'price')}", f"${_fmt(snap1, 'price')}"))
+        rows.append((
+            "Day change",
+            f"{_fmt(snap0, 'change_pct', '+.2f')}%",
+            f"{_fmt(snap1, 'change_pct', '+.2f')}%",
+        ))
+        rows.append((
+            "Week change",
+            f"{_fmt(snap0, 'change_pct_week', '+.2f')}%",
+            f"{_fmt(snap1, 'change_pct_week', '+.2f')}%",
+        ))
+
+        col_w = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+        lines.append("  ".join(h.ljust(col_w[i]) for i, h in enumerate(headers)))
+        lines.append("  ".join("-" * w for w in col_w))
+        for row in rows:
+            lines.append("  ".join(str(row[i]).ljust(col_w[i]) for i in range(3)))
+        return "\n".join(lines)
+
     def _budget(_args: list[str]) -> str:
         """Show available buying power and estimated position slots remaining."""
         try:
@@ -1694,6 +1776,8 @@ def build_command_handlers(
             "/scan — run WSB Auto-Discovery now\n"
             "/isin SYM — look up the ISIN for a ticker (debug)\n"
             "/buylist — preview what the bot would buy/sell right now\n"
+            "/upcoming — upcoming earnings dates for held positions (14d)\n"
+            "/compare SYM1 SYM2 — side-by-side ticker comparison (price, change, sector)\n"
             "/riskreport — full risk diagnostic (drawdown, sector conc., correlation)\n"
             "/streak — current win/loss streak from completed trade history\n"
             "/sharpe — rolling Sharpe ratio + max drawdown from equity curve\n"
@@ -1754,4 +1838,7 @@ def build_command_handlers(
         "sharpe": _sharpe,
         "riskreport": _riskreport,
         "rr": _riskreport,  # alias
+        "upcoming": _upcoming,
+        "earnings": _upcoming,  # alias
+        "compare": _compare,
     }
