@@ -5306,6 +5306,58 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _breakout_cmd(args: list[str]) -> str:
+        """Breakout and squeeze detection for open positions.
+
+        Usage: /breakout [SYM]
+        Detects range compression (squeeze) and volume-confirmed breakouts.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /breakout AAPL)"
+
+        from amms.analysis.breakout_detector import detect as bo_detect
+
+        SIGNAL_ICON = {
+            "breakout_up": "▲▲",
+            "breakout_down": "▼▼",
+            "squeeze": "⚡",
+            "none": "—",
+        }
+
+        lines = ["── Breakout / Squeeze Detection ──"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=30)
+            except Exception as e:
+                lines.append(f"  {sym}: data error {e!r}")
+                continue
+
+            result = bo_detect(bars)
+            if result is None:
+                lines.append(f"  {sym}: insufficient data")
+                continue
+
+            icon = SIGNAL_ICON.get(result.signal, "?")
+            conf_str = f"{result.confidence:.0f}%%" if result.confidence > 0 else ""
+            lvl_str = (f"  level ${result.breakout_level:.2f}"
+                       if result.breakout_level else "")
+            lines.append(
+                f"  {icon} {sym:<6}  [{result.signal}]  {conf_str}"
+                f"  vol×{result.volume_ratio:.1f}"
+                f"  compress {result.range_compression:.2f}"
+                f"{lvl_str}"
+            )
+
+        return "\n".join(lines)
+
     def _trendq_cmd(args: list[str]) -> str:
         """Trend quality/consistency score for open positions.
 
@@ -6555,4 +6607,6 @@ def build_command_handlers(
         "gap_risk": _overnight_cmd,
         "trendq": _trendq_cmd,
         "tc": _trendq_cmd,
+        "breakout": _breakout_cmd,
+        "bo": _breakout_cmd,
     }
