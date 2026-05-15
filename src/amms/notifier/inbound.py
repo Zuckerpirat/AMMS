@@ -2056,6 +2056,90 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _heatmap(_args: list[str]) -> str:
+        """Text heat-map: positions ranked by intraday % change with bar chart."""
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+        if not positions:
+            return "no open positions"
+
+        items: list[tuple[str, float, float]] = []
+        for p in positions:
+            try:
+                entry = float(p.avg_entry_price)
+                mv = float(p.market_value)
+                qty = float(p.qty)
+                if qty > 0 and entry > 0:
+                    current_price = mv / qty
+                    pct = (current_price - entry) / entry * 100
+                    items.append((p.symbol, pct, mv))
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
+
+        if not items:
+            return "No position data available."
+
+        items.sort(key=lambda x: x[1], reverse=True)
+
+        max_abs = max(abs(pct) for _, pct, _ in items) or 1.0
+        bar_width = 20
+        lines = ["Position heat-map (vs entry price):"]
+        for sym, pct, mv in items:
+            bar_len = int(abs(pct) / max_abs * bar_width)
+            bar = ("█" * bar_len).ljust(bar_width)
+            sign = "+" if pct >= 0 else "-"
+            arrow = "▲" if pct >= 0 else "▼"
+            lines.append(
+                f"  {arrow} {sym:<6} {sign}{abs(pct):5.2f}%  [{bar}]  ${mv:>10,.0f}"
+            )
+        return "\n".join(lines)
+
+    def _limit(args: list[str]) -> str:
+        """Show or set the maximum number of buy orders per day.
+
+        Usage:
+          /limit          — show current daily buy limit
+          /limit N        — set daily max buys to N
+          /limit off      — remove override (use config default)
+        """
+        if conn is None:
+            return "DB not wired."
+
+        if not args:
+            # Show current
+            try:
+                from amms.runtime_overrides import get_overrides
+                overrides = get_overrides(conn)
+                current = overrides.get("max_buys", "(config default)")
+            except Exception:
+                current = "(unknown)"
+            return f"Daily buy limit: {current}\nUse /limit N to change, /limit off to remove override."
+
+        val = args[0].lower()
+        if val == "off":
+            from amms.runtime_overrides import unset_override
+            try:
+                unset_override(conn, "max_buys")
+            except Exception as e:
+                return f"error removing override: {e!r}"
+            return "Daily buy limit override removed (using config default)."
+
+        try:
+            n = int(val)
+            if n < 0:
+                raise ValueError
+        except ValueError:
+            return "usage: /limit N  (positive integer) or /limit off"
+
+        from amms.runtime_overrides import set_override
+        try:
+            set_override(conn, "max_buys", str(n))
+        except Exception as e:
+            return f"error: {e!r}"
+        return f"Daily buy limit set to {n} orders/day."
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -2084,6 +2168,8 @@ def build_command_handlers(
             "/remove SYM — remove ticker from dynamic watchlist\n"
             "/setlist SYM [SYM ...] — bulk-replace the dynamic watchlist\n"
             "/calendar — NYSE market hours + upcoming holidays\n"
+            "/heatmap — positions ranked by % gain/loss with ASCII bars\n"
+            "/limit [N|off] — show or set max daily buy orders\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2168,4 +2254,6 @@ def build_command_handlers(
         "export": _export,
         "setlist": _setlist,
         "calendar": _calendar,
+        "heatmap": _heatmap,
+        "limit": _limit,
     }

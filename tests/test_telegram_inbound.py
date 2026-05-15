@@ -1452,3 +1452,95 @@ def test_help_includes_setlist_and_calendar() -> None:
     help_text = h["help"]([])
     assert "/setlist" in help_text
     assert "/calendar" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /heatmap tests
+# ---------------------------------------------------------------------------
+
+def test_heatmap_shows_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["heatmap"]([])
+    assert "AAPL" in out
+    assert "heat-map" in out.lower()
+
+
+def test_heatmap_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p)
+    out = h["heatmap"]([])
+    assert "no open positions" in out
+
+
+def test_heatmap_shows_bar() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["heatmap"]([])
+    # Must contain at least one block character or arrow
+    assert "█" in out or "▲" in out or "▼" in out
+
+
+# ---------------------------------------------------------------------------
+# /limit tests
+# ---------------------------------------------------------------------------
+
+def test_limit_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["limit"]([]) == "DB not wired."
+
+
+def test_limit_show_default(tmp_path) -> None:
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    from amms.runtime_overrides import ensure_table
+    ensure_table(conn)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["limit"]([])
+    assert "config default" in out
+
+
+def test_limit_set_value(tmp_path) -> None:
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    from amms.runtime_overrides import ensure_table
+    ensure_table(conn)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["limit"](["3"])
+    assert "3" in out
+    # Verify it shows now
+    out2 = h["limit"]([])
+    assert "3" in out2
+
+
+def test_limit_off_removes_override(tmp_path) -> None:
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    from amms.runtime_overrides import ensure_table
+    ensure_table(conn)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    h["limit"](["5"])
+    out = h["limit"](["off"])
+    assert "removed" in out or "default" in out
+
+
+def test_limit_invalid_input(tmp_path) -> None:
+    conn = sqlite3.connect(tmp_path / "amms.db")
+    from amms.runtime_overrides import ensure_table
+    ensure_table(conn)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["limit"](["abc"])
+    assert "usage" in out.lower()
+
+
+def test_help_includes_heatmap_and_limit() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/heatmap" in help_text
+    assert "/limit" in help_text
