@@ -3299,6 +3299,50 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _journalstats_cmd(_args: list[str]) -> str:
+        """Extended trade journal statistics.
+
+        Shows win rate, expectancy, profit factor, Sharpe, streaks, and more
+        from all completed trade pairs.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        from amms.analysis.journal_stats import compute
+
+        stats = compute(conn)
+        if stats is None:
+            return "No completed trades found."
+
+        pf_str = f"{stats.profit_factor:.2f}" if stats.profit_factor != float("inf") else "∞"
+        sharpe_str = f"{stats.sharpe:.2f}" if stats.sharpe is not None else "n/a"
+        hold_str = f"{stats.avg_hold_days:.1f}d" if stats.avg_hold_days is not None else "n/a"
+
+        lines = [
+            f"Trade Journal Statistics ({stats.n_trades} trades):",
+            f"  Total P&L:       ${stats.total_pnl:+,.2f}",
+            f"  Win rate:        {stats.win_rate:.1%}",
+            f"  Avg win:         ${stats.avg_win:+,.2f}",
+            f"  Avg loss:        -${stats.avg_loss:,.2f}",
+            f"  Profit factor:   {pf_str}",
+            f"  Expectancy:      ${stats.expectancy:+,.2f} / trade",
+            f"  Sharpe:          {sharpe_str}",
+            f"  Largest win:     ${stats.largest_win:,.2f}",
+            f"  Largest loss:    -${stats.largest_loss:,.2f}",
+            f"  Max win streak:  {stats.max_win_streak}",
+            f"  Max loss streak: {stats.max_loss_streak}",
+            f"  Avg hold time:   {hold_str}",
+        ]
+
+        if stats.profit_factor > 2.0:
+            lines.append("  ✅ Excellent profit factor (>2.0)")
+        elif stats.profit_factor > 1.5:
+            lines.append("  ↔️  Good profit factor (1.5–2.0)")
+        elif stats.profit_factor < 1.0:
+            lines.append("  🔴 Profit factor < 1.0 — strategy losing money")
+
+        return "\n".join(lines)
+
     def _stress_cmd(args: list[str]) -> str:
         """Portfolio stress test: how would current positions do in a crash?
 
@@ -4587,6 +4631,7 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/journalstats — extended trade stats: expectancy, Sharpe, streaks, hold\n"
             "/stress [SCENARIO] — portfolio stress test (2008/covid/dotcom/custom)\n"
             "/strategy — regime-based strategy recommendation\n"
             "/scan2 [min_score] — multi-indicator scanner: BB+RSI+Stoch+MACD setups\n"
@@ -4745,6 +4790,8 @@ def build_command_handlers(
         "mc": _montecarlo_cmd,
         "scan2": _scan2_cmd,
         "signals": _scan2_cmd,
+        "journalstats": _journalstats_cmd,
+        "js": _journalstats_cmd,
         "stress": _stress_cmd,
         "stresstest": _stress_cmd,
         "strategy": _strategy_selector_cmd,
