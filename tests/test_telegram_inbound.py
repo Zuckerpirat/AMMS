@@ -1619,3 +1619,98 @@ def test_help_includes_drawdown_and_alloc() -> None:
     help_text = h["help"]([])
     assert "/drawdown" in help_text
     assert "/alloc" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /vol tests
+# ---------------------------------------------------------------------------
+
+class _FakeDataClient:
+    """Returns minimal bar data for volatility tests."""
+    def get_bars(self, symbol, *, limit=30):
+        from amms.data.bars import Bar
+        # 32 bars with tiny variation to produce non-None vol
+        bars = []
+        for i in range(32):
+            price = 150.0 + i * 0.1
+            bars.append(Bar(
+                symbol=symbol,
+                timestamp=f"2026-01-{1 + i % 28:02d}T10:00:00Z",
+                open=price,
+                high=price + 1.0,
+                low=price - 1.0,
+                close=price,
+                volume=1_000,
+            ))
+        return bars
+
+
+def test_vol_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["vol"]([])
+
+
+def test_vol_no_positions_no_arg() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_FakeDataClient())
+    out = h["vol"]([])
+    assert "no open positions" in out
+
+
+def test_vol_for_held_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["vol"]([])
+    assert "AAPL" in out
+    assert "ATR" in out
+
+
+def test_vol_explicit_ticker() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["vol"](["NVDA"])
+    assert "NVDA" in out
+    assert "vol" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# /reload tests
+# ---------------------------------------------------------------------------
+
+def test_reload_not_wired() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["reload"]([])
+
+
+def test_reload_calls_callback() -> None:
+    called = []
+    def _fake_reload():
+        called.append(True)
+        return "Config reloaded OK."
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, reload_config=_fake_reload)
+    out = h["reload"]([])
+    assert "reload" in out.lower()
+    assert called
+
+
+def test_reload_propagates_error_message() -> None:
+    def _broken_reload():
+        raise RuntimeError("yaml parse error")
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, reload_config=_broken_reload)
+    out = h["reload"]([])
+    assert "reload failed" in out
+
+
+def test_help_includes_vol_and_reload() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    help_text = h["help"]([])
+    assert "/vol" in help_text
+    assert "/reload" in help_text

@@ -154,6 +154,7 @@ def build_command_handlers(
     data=None,
     get_macro_regime: Callable[[], object] | None = None,
     run_backtest: Callable[[int], object] | None = None,
+    reload_config: "Callable[[], str] | None" = None,
 ) -> dict[str, CommandHandler]:
     """Construct the default command handler table.
 
@@ -2237,6 +2238,53 @@ def build_command_handlers(
             return f"error: {e!r}"
         return f"Daily buy limit set to {n} orders/day."
 
+    def _vol(args: list[str]) -> str:
+        """Show 20-day realized volatility and ATR(14) for held positions or a given ticker.
+
+        Usage: /vol [SYM]
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if args:
+            symbols = [args[0].upper()]
+        elif positions:
+            symbols = [p.symbol for p in positions]
+        else:
+            return "no open positions (pass a ticker: /vol AAPL)"
+
+        from amms.features.volatility import atr as compute_atr, realized_vol
+
+        lines = ["Volatility metrics (20d realized vol, ATR-14):"]
+        for sym in symbols[:8]:  # cap at 8 to keep reply short
+            try:
+                bars = data.get_bars(sym, limit=30)
+            except Exception:
+                bars = []
+            rv = realized_vol(bars, 20)
+            a = compute_atr(bars, 14)
+            rv_str = f"{rv * 100:.1f}%" if rv is not None else "n/a"
+            atr_str = f"${a:.2f}" if a is not None else "n/a"
+            lines.append(f"  {sym:<6}  vol {rv_str:<8}  ATR {atr_str}")
+        return "\n".join(lines)
+
+    def _reload(_args: list[str]) -> str:
+        """Trigger a config reload from disk without restarting the bot.
+
+        The scheduler must wire in a reload_config callback for this to work.
+        """
+        if reload_config is None:
+            return "reload not wired (scheduler doesn't support hot-reload)."
+        try:
+            result = reload_config()
+            return result if isinstance(result, str) else "Config reloaded."
+        except Exception as e:
+            return f"reload failed: {e!r}"
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -2269,6 +2317,8 @@ def build_command_handlers(
             "/limit [N|off] — show or set max daily buy orders\n"
             "/drawdown — detailed drawdown analytics (current, worst, recovery)\n"
             "/alloc — portfolio sector allocation vs equal-weight target\n"
+            "/vol [SYM] — realized volatility + ATR for open positions or a ticker\n"
+            "/reload — hot-reload config.yaml without restarting the bot\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -2357,4 +2407,6 @@ def build_command_handlers(
         "limit": _limit,
         "drawdown": _drawdown,
         "alloc": _alloc,
+        "vol": _vol,
+        "reload": _reload,
     }
