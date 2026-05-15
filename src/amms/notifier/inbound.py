@@ -5050,6 +5050,66 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _srlevels_cmd(args: list[str]) -> str:
+        """Support and resistance levels from clustered pivot points.
+
+        Usage: /srlevels [SYM]
+        Identifies horizontal S/R zones with touch count and strength score.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        sym = args[0].upper() if args else (positions[0].symbol if positions else None)
+        if sym is None:
+            return "no open positions (pass a ticker: /srlevels AAPL)"
+
+        try:
+            bars = data.get_bars(sym, limit=70)
+        except Exception as e:
+            return f"data error for {sym}: {e!r}"
+
+        from amms.analysis.support_resistance import detect as sr_detect
+
+        result = sr_detect(bars)
+        if result is None:
+            return f"Insufficient data for {sym}."
+        if not result.levels:
+            return f"{sym}: no clear S/R levels detected."
+
+        KIND_ICON = {"support": "S", "resistance": "R", "at_price": "≈"}
+
+        lines = [
+            f"── S/R Levels: {sym}  (current ${result.current_price:.2f}) ──",
+        ]
+
+        if result.nearest_resistance:
+            r = result.nearest_resistance
+            lines.append(
+                f"  Nearest resistance: ${r.price:.2f}  "
+                f"({r.distance_pct:+.1f}%%)  touches {r.touches}"
+            )
+        if result.nearest_support:
+            s = result.nearest_support
+            lines.append(
+                f"  Nearest support:    ${s.price:.2f}  "
+                f"({s.distance_pct:+.1f}%%)  touches {s.touches}"
+            )
+
+        lines.append("")
+        lines.append("  All levels:")
+        for lvl in reversed(result.levels):  # highest price first
+            icon = KIND_ICON.get(lvl.kind, "?")
+            lines.append(
+                f"  [{icon}] ${lvl.price:.2f}  str {lvl.strength:.0f}  "
+                f"({lvl.distance_pct:+.1f}%%)  {lvl.touches}x"
+            )
+
+        return "\n".join(lines)
+
     def _swings_cmd(args: list[str]) -> str:
         """Swing high/low detection: key pivot levels, trend, stop, target.
 
@@ -6009,4 +6069,6 @@ def build_command_handlers(
         "volrank": _volpct_cmd,
         "momentum": _momentum_cmd,
         "mom": _momentum_cmd,
+        "srlevels": _srlevels_cmd,
+        "sr": _srlevels_cmd,
     }
