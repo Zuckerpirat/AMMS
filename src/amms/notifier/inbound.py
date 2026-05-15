@@ -3299,6 +3299,133 @@ def build_command_handlers(
             lines.append(f"  {sym:<6}  ${price:.2f}  z={z:+.2f}  {zone}")
         return "\n".join(lines)
 
+    def _stress_cmd(args: list[str]) -> str:
+        """Portfolio stress test: how would current positions do in a crash?
+
+        Usage: /stress [SCENARIO]
+        Scenarios: 2008_crisis, 2020_covid, dotcom_crash, flash_crash_2010,
+                   rising_rates, mild_correction, severe_bear, custom:-20
+        Default: 2008_crisis
+        """
+        from amms.analysis.stress_test import SCENARIOS, stress_test
+
+        scenario = "2008_crisis"
+        custom_shock = None
+
+        if args:
+            arg = args[0].lower()
+            if arg.startswith("custom:"):
+                try:
+                    pct = float(arg.split(":")[1])
+                    custom_shock = pct / 100
+                    scenario = "custom"
+                except (IndexError, ValueError):
+                    return "Custom shock format: custom:-20 (for -20%)"
+            elif arg in SCENARIOS:
+                scenario = arg
+            else:
+                valid = ", ".join(SCENARIOS.keys())
+                return f"Unknown scenario. Valid: {valid}, custom:-N"
+
+        result = stress_test(broker, scenario, custom_shock_pct=custom_shock)
+        if result is None:
+            return "Could not run stress test (no positions or broker error)."
+
+        if result.verdict == "critical":
+            icon = "🚨"
+        elif result.verdict == "severe":
+            icon = "🔴"
+        elif result.verdict == "moderate":
+            icon = "⚠️ "
+        else:
+            icon = "✅"
+
+        lines = [
+            f"{icon} Stress Test: {result.scenario.replace('_', ' ').title()}",
+            f"   Shock: {result.shock_pct:+.0f}%",
+            f"   Portfolio MV now: ${result.initial_total_mv:,.2f}",
+            f"   Portfolio MV after: ${result.stressed_total_mv:,.2f}",
+            f"   Estimated loss: ${result.total_loss:,.2f} ({result.total_loss_pct:+.1f}%)",
+            f"   Risk level: {result.verdict.replace('_', ' ')}",
+            "",
+            "   Per position:",
+        ]
+        for pos in sorted(result.positions, key=lambda x: x.loss):
+            lines.append(
+                f"     {pos.symbol:<6}  ${pos.current_value:>10,.2f} → "
+                f"${pos.stressed_value:>10,.2f}  ({pos.loss_pct:+.1f}%  loss ${abs(pos.loss):,.2f})"
+            )
+
+        return "\n".join(lines)
+
+    def _strategy_selector_cmd(_args: list[str]) -> str:
+        """Recommend the best strategy for current market conditions.
+
+        Uses market regime, ADX, SPY RSI, and sector rotation to suggest
+        which registered strategy to run.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        from amms.analysis.strategy_selector import recommend
+
+        # Gather inputs
+        regime = "unknown"
+        vixy = None
+        spy_rsi = None
+        adx_val = None
+        top_sector = None
+
+        try:
+            from amms.analysis.regime import detect_regime
+            r = detect_regime(data)
+            regime = r.label
+            vixy = r.vixy_1d_pct
+        except Exception:
+            pass
+
+        try:
+            from amms.features.momentum import rsi
+            spy_bars = data.get_bars("SPY", limit=20)
+            spy_rsi = rsi(spy_bars, 14)
+        except Exception:
+            pass
+
+        try:
+            from amms.features.adx import adx
+            spy_bars = data.get_bars("SPY", limit=50)
+            adx_r = adx(spy_bars, 14)
+            if adx_r:
+                adx_val = adx_r.adx
+        except Exception:
+            pass
+
+        try:
+            from amms.analysis.sector_rotation import detect_rotation
+            sectors = detect_rotation(data, n=20)
+            in_sectors = [s.etf for s in sectors if s.trend == "in"]
+            top_sector = in_sectors[0] if in_sectors else None
+        except Exception:
+            pass
+
+        rec = recommend(regime, vix_proxy=vixy, adx=adx_val, spy_rsi=spy_rsi, top_sector=top_sector)
+
+        lines = [
+            "Strategy Recommendation:",
+            f"  Regime: {rec.regime}  (risk ×{rec.risk_multiplier:.2f})",
+            f"  ✅ Primary:   {rec.primary}",
+        ]
+        if rec.secondary:
+            lines.append(f"  ↔️  Secondary: {rec.secondary}")
+        if rec.avoid:
+            lines.append(f"  ❌ Avoid:     {', '.join(rec.avoid)}")
+        lines.append("")
+        lines.append("  Reasoning:")
+        for r_line in rec.reasoning:
+            lines.append(f"    • {r_line}")
+
+        return "\n".join(lines)
+
     def _scan2_cmd(args: list[str]) -> str:
         """Multi-indicator signal scanner for the watchlist.
 
@@ -4460,6 +4587,8 @@ def build_command_handlers(
             "/trend [SYM] — multi-indicator trend summary (SMA/EMA/RSI/MACD/ADX)\n"
             "/obv [SYM] — On-Balance Volume: buying/selling pressure + divergence\n"
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
+            "/stress [SCENARIO] — portfolio stress test (2008/covid/dotcom/custom)\n"
+            "/strategy — regime-based strategy recommendation\n"
             "/scan2 [min_score] — multi-indicator scanner: BB+RSI+Stoch+MACD setups\n"
             "/montecarlo [N] — Monte Carlo simulation from trade history (1000 paths)\n"
             "/kelly PRICE STOP%% [WIN_RATE] — Kelly criterion + fixed-fraction sizing\n"
@@ -4616,4 +4745,8 @@ def build_command_handlers(
         "mc": _montecarlo_cmd,
         "scan2": _scan2_cmd,
         "signals": _scan2_cmd,
+        "stress": _stress_cmd,
+        "stresstest": _stress_cmd,
+        "strategy": _strategy_selector_cmd,
+        "stratselect": _strategy_selector_cmd,
     }
