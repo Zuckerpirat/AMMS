@@ -4703,6 +4703,52 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
+    def _roc_cmd(args: list[str]) -> str:
+        """Rate of Change at 10/20/50 bars for a ticker or open positions.
+
+        Usage: /roc [SYM]
+        Shows short/medium/long-term momentum and overall trend direction.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /roc AAPL)"
+
+        from amms.features.roc import multi_roc
+
+        lines = ["Rate of Change (10/20/50-bar momentum):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            result = multi_roc(bars)
+            parts = []
+            if result.short:
+                parts.append(f"10d {result.short.value:+.1f}%%")
+            if result.medium:
+                parts.append(f"20d {result.medium.value:+.1f}%%")
+            if result.long:
+                parts.append(f"50d {result.long.value:+.1f}%%")
+            if not parts:
+                lines.append(f"  {sym:<6}  n/a (need 11+ bars)")
+                continue
+            trend_icon = {
+                "accelerating_up": "🚀",
+                "accelerating_down": "📉",
+                "mixed": "↕️ ",
+                "decelerating": "⚠️ ",
+                "flat": "↔️ ",
+            }.get(result.overall, "")
+            lines.append(f"  {sym:<6}  {' | '.join(parts)}  {trend_icon} {result.overall}")
+        return "\n".join(lines)
+
     def _wr_cmd(args: list[str]) -> str:
         """Williams %%R oscillator for a ticker or open positions.
 
@@ -5027,6 +5073,7 @@ def build_command_handlers(
             "/attribution — P&L attribution: which positions drive portfolio returns\n"
             "/vwap [SYM] — VWAP with ±1σ/±2σ bands and price deviation\n"
             "/volprofile [SYM] — Volume Profile: Point of Control + 70%% Value Area\n"
+            "/roc [SYM] — Rate of Change: 10/20/50-bar momentum + trend alignment\n"
             "/wr [SYM] — Williams %%R: overbought/oversold oscillator (0 to -100)\n"
             "/cci [SYM] — Commodity Channel Index: overbought/oversold (+100/-100)\n"
             "/pairs SYM1 SYM2 — pairs trading: ratio Z-score, correlation, mean-reversion signal\n"
@@ -5195,6 +5242,7 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
+        "roc": _roc_cmd,
         "wr": _wr_cmd,
         "williamsr": _wr_cmd,
         "cci": _cci_cmd,

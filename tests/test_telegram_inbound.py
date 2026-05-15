@@ -3605,3 +3605,34 @@ def test_cci_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/cci" in h["help"]([])
+
+
+# ── /roc tests ────────────────────────────────────────────────────────────────
+
+def test_roc_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["roc"]([]).lower()
+
+
+def test_roc_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p, data=_OscDataClient())
+    assert "no open positions" in h["roc"]([])
+
+
+def test_roc_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_OscDataClient())
+    out = h["roc"](["AAPL"])
+    assert "AAPL" in out
+    assert "Rate of Change" in out or "d " in out
+
+
+def test_roc_in_help() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/roc" in h["help"]([])
