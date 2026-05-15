@@ -59,6 +59,30 @@ MAX_CONSECUTIVE_TICK_ERRORS = 5
 
 SENTIMENT_REFRESH_SECONDS = 3600  # hourly
 
+# Mode → RiskConfig field adjustments.
+# Conservative: smaller positions, tighter stops.
+# Meme: larger positions but still bounded; warn user separately.
+# Event: same as swing but with drawdown alert halved.
+_MODE_RISK_OVERRIDES: dict[str, dict] = {
+    "conservative": {"max_position_pct": 0.01, "stop_loss_pct": 0.03},
+    "swing": {},  # default — no adjustment
+    "meme": {"max_position_pct": 0.015},
+    "event": {"stop_loss_pct": 0.04},
+}
+
+
+def _apply_mode_adjustments(config: AppConfig, mode: str) -> AppConfig:
+    """Apply trading-mode-specific risk nudges on top of the effective config."""
+    from dataclasses import replace as _replace
+
+    adjustments = _MODE_RISK_OVERRIDES.get(mode, {})
+    if not adjustments:
+        return config
+    try:
+        return _replace(config, risk=_replace(config.risk, **adjustments))
+    except (TypeError, ValueError):
+        return config
+
 
 def _maybe_refresh_sentiment(
     state: LoopState, watchlist: set[str], now_seconds: float
@@ -304,6 +328,14 @@ def run_loop(
                 effective_config = _apply_cfg(effective_config, conn)
                 effective_strategy = _apply_strategy_overrides(strategy, conn)
 
+                # Trading mode adjustments: map mode → risk parameter nudges.
+                # These run after all other overrides so they're always applied.
+                from amms.runtime_overrides import get_overrides as _get_overrides
+
+                _ovr_pre = _get_overrides(conn) if conn else {}
+                _mode = _ovr_pre.get("trading_mode", "swing")
+                effective_config = _apply_mode_adjustments(effective_config, _mode)
+
                 # Macro regime check: when VIXY signals stress, pause buys
                 # for this tick so the bot doesn't add long exposure into a
                 # vol spike. Stop-loss + sells still flow through normally.
@@ -313,8 +345,6 @@ def run_loop(
                     DEFAULT_WEEK_PCT_STRESS,
                     compute_regime as _compute_regime,
                 )
-                from amms.runtime_overrides import get_overrides as _get_overrides
-
                 _ovr = _get_overrides(conn)
                 macro_enabled = _ovr.get("macro_enabled", True)
                 if macro_enabled:
