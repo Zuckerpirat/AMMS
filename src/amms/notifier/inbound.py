@@ -3105,6 +3105,51 @@ def build_command_handlers(
             )
         return "\n".join(lines)
 
+    def _risk2r(_args: list[str]) -> str:
+        """Show current open P&L for each position in terms of risk units (R).
+
+        R = amount risked per trade (stop-loss distance × qty).
+        +1R means the trade has made back its initial risk. +2R = 2× risk as profit.
+        """
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+        if not positions:
+            return "no open positions"
+
+        stop_pct = 0.03  # default
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                overrides = get_overrides(conn)
+                sl = overrides.get("stop_loss", 0.0)
+                if sl and float(sl) > 0:
+                    stop_pct = float(sl)
+            except Exception:
+                pass
+
+        lines = [f"Open P&L in R-units (stop {stop_pct:.1%}):"]
+        for p in positions:
+            try:
+                entry = float(p.avg_entry_price)
+                unreal_pl = float(p.unrealized_pl)
+                qty = float(p.qty)
+                if qty <= 0 or entry <= 0:
+                    continue
+                risk_per_share = entry * stop_pct
+                risk_total = risk_per_share * qty
+                r_value = unreal_pl / risk_total if risk_total > 0 else 0.0
+                sign = "+" if r_value >= 0 else ""
+                emoji = "📈" if r_value >= 2 else ("✅" if r_value >= 1 else ("⚠️" if r_value < 0 else "↔️"))
+                lines.append(
+                    f"  {p.symbol:<6}  {sign}{r_value:.2f}R  "
+                    f"(P&L ${unreal_pl:+,.2f}  risk ${risk_total:,.2f})  {emoji}"
+                )
+            except (TypeError, ValueError, ZeroDivisionError):
+                lines.append(f"  {p.symbol}: data error")
+        return "\n".join(lines)
+
     def _stopopt(args: list[str]) -> str:
         """Suggest optimal stop-loss % for a ticker based on historical ATR.
 
@@ -3502,6 +3547,7 @@ def build_command_handlers(
             "/strategies — list all registered trading strategies\n"
             "/stopopt [SYM] — suggest stop-loss % based on ATR (tight/balanced/wide)\n"
             "/chart — ASCII equity curve sparkline from equity history\n"
+            "/risk2r — show open P&L per position in R-units (multiples of initial risk)\n"
             "/signals — last 10 strategy signals\n"
             "/lastorders — last 10 orders\n"
             "/scan — run WSB Auto-Discovery now\n"
@@ -3624,4 +3670,6 @@ def build_command_handlers(
         "stopopt": _stopopt,
         "chart": _chart,
         "curve": _chart,
+        "risk2r": _risk2r,
+        "r": _risk2r,
     }

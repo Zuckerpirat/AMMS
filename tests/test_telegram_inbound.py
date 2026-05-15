@@ -2657,3 +2657,37 @@ def test_help_includes_stopopt_and_chart() -> None:
     help_text = h["help"]([])
     assert "/stopopt" in help_text
     assert "/chart" in help_text
+
+
+# ---------------------------------------------------------------------------
+# /risk2r tests
+# ---------------------------------------------------------------------------
+
+def test_risk2r_no_positions() -> None:
+    class _NoBroker(_FakeBroker):
+        def get_positions(self):
+            return []
+    p = PauseFlag()
+    h = build_command_handlers(broker=_NoBroker(), pause=p)
+    assert "no open positions" in h["risk2r"]([])
+
+
+def test_risk2r_shows_r_value() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["risk2r"]([])
+    assert "AAPL" in out
+    assert "R" in out
+
+
+def test_risk2r_shows_pnl() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["risk2r"]([])
+    assert "P&L" in out
+
+
+def test_help_includes_risk2r() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/risk2r" in h["help"]([])
