@@ -1855,6 +1855,46 @@ def build_command_handlers(
             return plain + f"\n\n(LLM error: {e!r})"
         return narrated
 
+    def _export(_args: list[str]) -> str:
+        """Export trade history as CSV text.
+
+        Usage: /export [N]  — last N filled orders (default 20)
+        The output is plain CSV that can be copy-pasted into a spreadsheet.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 20
+        if _args:
+            try:
+                limit = int(_args[0])
+            except ValueError:
+                return "usage: /export [N]  (number of orders)"
+
+        rows = conn.execute(
+            "SELECT symbol, side, qty, filled_avg_price, status, submitted_at, filled_at "
+            "FROM orders WHERE status = 'filled' "
+            "ORDER BY submitted_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+        if not rows:
+            return "No filled orders."
+
+        header = "symbol,side,qty,price,notional,submitted_at,filled_at"
+        lines = [header]
+        for r in rows:
+            qty = float(r["qty"])
+            price = float(r["filled_avg_price"] or 0)
+            notional = qty * price
+            lines.append(
+                f"{r['symbol']},{r['side']},{qty:g},{price:.2f},"
+                f"{notional:.2f},"
+                f"{r['submitted_at'] or ''},"
+                f"{r['filled_at'] or ''}"
+            )
+        return "```\n" + "\n".join(lines) + "\n```"
+
     def _ping(_args: list[str]) -> str:
         from datetime import UTC, datetime
 
@@ -1973,6 +2013,7 @@ def build_command_handlers(
             "/journal [SYM] — completed trade pairs (BUY→SELL) with realized P&L\n"
             "/top — best and worst open positions by unrealized P&L %%\n"
             "/news [SYM] — recent news headlines for a ticker (or open positions)\n"
+            "/export [N] — export last N filled orders as CSV text\n"
             "/fees [BPS] — estimate simulated transaction cost (default 5 bps)\n"
             "/summary — AI-generated narrative of the current portfolio state\n"
             "/ping — health check (shows timestamp and equity)\n"
@@ -2036,4 +2077,5 @@ def build_command_handlers(
         "ping": _ping,
         "version": _version,
         "fees": _fees,
+        "export": _export,
     }

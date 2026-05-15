@@ -401,6 +401,18 @@ def run_loop(
                             f"${dd.peak_equity:,.2f} (threshold {-threshold:+.1f}%)"
                         )
                         state.drawdown_alert_dates.add(today_iso)
+                    # Hard stop: auto-pause when drawdown exceeds 2× alert threshold
+                    hard_stop_pct = threshold * 2
+                    if (
+                        _dd_should_alert(dd, threshold_pct=hard_stop_pct)
+                        and not pause.paused
+                    ):
+                        pause.set_paused(True)
+                        notifier.send(
+                            f"🛑 auto-paused: drawdown {dd.drawdown_pct:+.2f}% "
+                            f"exceeds hard-stop threshold {-hard_stop_pct:.1f}%. "
+                            f"Use /resume after reviewing."
+                        )
                 except Exception:
                     logger.exception("drawdown alert check failed")
 

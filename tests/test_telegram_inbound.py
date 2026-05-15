@@ -1319,3 +1319,41 @@ def test_help_includes_ping_version_fees() -> None:
     assert "/ping" in help_text
     assert "/version" in help_text
     assert "/fees" in help_text
+
+
+def test_export_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["export"]([]) == "DB not wired."
+
+
+def test_export_shows_csv_header() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["export"]([])
+    assert "symbol,side,qty" in out
+    assert "NVDA" in out
+
+
+def test_export_custom_limit() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["export"](["1"])
+    # Should show only 1 row (most recent) plus header
+    assert "symbol,side,qty" in out
+
+
+def test_export_invalid_limit() -> None:
+    conn = _make_conn_with_roundtrip()
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["export"](["abc"])
+    assert "usage" in out.lower()
+
+
+def test_help_includes_export() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "/export" in h["help"]([])
