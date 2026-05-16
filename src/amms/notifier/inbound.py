@@ -7036,6 +7036,53 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _chaikinvol_cmd(args: list[str]) -> str:
+        """Chaikin Volatility: EMA-smoothed HL-range rate of change.
+
+        Usage: /chaikinvol SYMBOL [BARS]  (default 100 bars)
+        Shows CV%, expansion/contraction flags, and percentile rank.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(60, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /chaikinvol SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.chaikin_volatility import analyze as cv_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = cv_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 55+)."
+
+        dir_arrow = "↑" if result.expanding else "↓"
+        spike_str = "  ⚡ Spike — breakout alert!" if result.spike else ""
+
+        lines = [f"── Chaikin Volatility: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:    {result.signal.upper()}")
+        lines.append(f"  Score:     {result.score:+.1f}/100")
+        lines += [""]
+        lines.append(f"  CV:        {result.cv:+.2f}%  {dir_arrow}{spike_str}")
+        lines.append(f"  Pctile:    {result.cv_percentile:.0f}% (avg={result.avg_cv:+.2f}%, σ={result.cv_std:.2f})")
+        lines.append(f"  EMA(HL):   {result.ema_hl:.5f}  (prev {result.ema_hl_prev:.5f})")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _crsi_cmd(args: list[str]) -> str:
         """Connors RSI: 3-component mean-reversion oscillator.
 
@@ -12272,4 +12319,6 @@ def build_command_handlers(
         "adaptiversi": _arsi_cmd,
         "crsi": _crsi_cmd,
         "connors": _crsi_cmd,
+        "chaikinvol": _chaikinvol_cmd,
+        "cvol": _chaikinvol_cmd,
     }
