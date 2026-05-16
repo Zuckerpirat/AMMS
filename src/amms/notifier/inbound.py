@@ -7036,6 +7036,60 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _kama_cmd(args: list[str]) -> str:
+        """Kaufman Adaptive Moving Average: efficiency ratio-based adaptive trend.
+
+        Usage: /kama SYMBOL [BARS]  (default 80 bars)
+        Shows KAMA value, efficiency ratio, regime, and price distance.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(40, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /kama SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.kama import analyze as kama_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = kama_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 35+)."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        er_bar = "░" * int(result.efficiency_ratio * 10) + "▓" + "░" * (10 - int(result.efficiency_ratio * 10))
+        kama_dir = "↑" if result.kama_rising else "↓"
+
+        lines = [f"── KAMA: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  KAMA:      {result.kama:.2f}  {kama_dir}  (slope {result.kama_slope_pct:+.3f}%)")
+        lines.append(f"  Price:     {result.current_price:.2f}  ({result.price_distance_pct:+.2f}% from KAMA)")
+        lines += [""]
+        lines.append(f"  Efficiency: {result.efficiency_ratio:.3f}  [{er_bar}]  ({result.er_regime})")
+        lines.append(f"  SC:         {result.smoothing_constant:.6f}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _cmo_cmd(args: list[str]) -> str:
         """Chande Momentum Oscillator: raw up/down momentum ratio (-100 to +100).
 
@@ -11909,4 +11963,6 @@ def build_command_handlers(
         "coppockcurve": _coppock_cmd,
         "cmo": _cmo_cmd,
         "chande": _cmo_cmd,
+        "kama": _kama_cmd,
+        "kaufman": _kama_cmd,
     }
