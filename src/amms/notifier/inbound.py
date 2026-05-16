@@ -7036,6 +7036,59 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _uo_cmd(args: list[str]) -> str:
+        """Ultimate Oscillator: multi-timeframe buying pressure (7/14/28).
+
+        Usage: /uo SYMBOL [BARS]  (default 80 bars)
+        Shows UO value, component averages, and divergence flags.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(55, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /uo SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.ultimate_oscillator import analyze as uo_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = uo_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 55+)."
+
+        filled = int(result.uo / 10)
+        bar = "█" * filled + "░" * (10 - filled)
+        ob_tag = " ◀ OVERBOUGHT" if result.overbought else (" ◀ OVERSOLD" if result.oversold else "")
+
+        lines = [f"── Ultimate Oscillator: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100")
+        lines += [""]
+        lines.append(f"  UO:      {result.uo:.1f}/100  [{bar}]{ob_tag}")
+        lines.append(f"  Avg(7):  {result.avg7:.3f}  Avg(14): {result.avg14:.3f}  Avg(28): {result.avg28:.3f}")
+        slope_str = "↑ rising" if result.slope_up else "↓ falling"
+        lines.append(f"  Slope:   {slope_str}")
+        if result.bull_divergence:
+            lines.append("  ▲ Bullish divergence (price lower low, UO higher low)")
+        if result.bear_divergence:
+            lines.append("  ▼ Bearish divergence (price higher high, UO lower high)")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _stochrsi_cmd(args: list[str]) -> str:
         """Stochastic RSI: Stochastic applied to RSI for faster signals.
 
@@ -12424,4 +12477,6 @@ def build_command_handlers(
         "normalizedatr": _natr_cmd,
         "stochrsi": _stochrsi_cmd,
         "srsi": _stochrsi_cmd,
+        "uo": _uo_cmd,
+        "ultimateosc": _uo_cmd,
     }
