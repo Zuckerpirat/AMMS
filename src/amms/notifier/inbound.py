@@ -6699,6 +6699,48 @@ def build_command_handlers(
 
         return "\n".join(lines).rstrip()
 
+    def _exitquality_cmd(args: list[str]) -> str:
+        """Trade exit quality: were you exiting at optimal times?
+
+        Usage: /exitq [LIMIT]  (default 500 trades)
+        Classifies each trade exit as optimal / too_early / late_exit / normal.
+        Flags patterns like cutting winners early or letting losers run.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.exit_quality import compute as eq_compute
+
+        result = eq_compute(conn, limit=limit)
+        if result is None:
+            return "Need 5+ trades with both wins and losses."
+
+        q_icon = "✅" if result.avg_exit_quality >= 0.6 else ("⚠️" if result.avg_exit_quality >= 0.4 else "🔴")
+        lines = [
+            f"── Exit Quality ({result.n_trades} trades) ──",
+            f"  Avg quality:  {q_icon} {result.avg_exit_quality:.2f}/1.0",
+            f"  Consistency:  {result.exit_consistency:.2f}",
+            "",
+            f"  {'Classification':14}  {'Count':>5}  {'%':>6}",
+            f"  {'Optimal':14}  {result.n_winners + result.n_losers - int(result.too_early_pct/100*result.n_trades) - int(result.late_exit_pct/100*result.n_trades):>5}  {result.optimal_pct:>5.0f}%",
+            f"  {'Too early':14}  {int(result.too_early_pct/100*result.n_trades):>5}  {result.too_early_pct:>5.0f}%",
+            f"  {'Late exit':14}  {int(result.late_exit_pct/100*result.n_trades):>5}  {result.late_exit_pct:>5.0f}%",
+            f"  {'Normal':14}  {int(result.normal_pct/100*result.n_trades):>5}  {result.normal_pct:>5.0f}%",
+            "",
+            f"  Avg winner: +{result.avg_winner_pct:.2f}%  |  Avg loser: {result.avg_loser_pct:.2f}%",
+            f"  Best exit: {result.best_exit_pnl:+.2f}%  |  Worst: {result.worst_exit_pnl:+.2f}%",
+            "",
+            result.verdict,
+        ]
+        return "\n".join(lines)
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -9345,4 +9387,6 @@ def build_command_handlers(
         "es": _cvar_cmd,
         "gapfill": _gapfill_cmd,
         "fillgap": _gapfill_cmd,
+        "exitq": _exitquality_cmd,
+        "exitquality": _exitquality_cmd,
     }
