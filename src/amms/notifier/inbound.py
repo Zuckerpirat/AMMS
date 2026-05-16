@@ -6846,6 +6846,61 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _adi_cmd(args: list[str]) -> str:
+        """Accumulation/Distribution Index: volume-weighted cumulative flow.
+
+        Usage: /adi SYMBOL [BARS]  (default 80 bars)
+        Shows ADI trend, price/ADI divergences, and EMA signal line.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(30, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /adi SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.accum_dist import analyze as adi_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = adi_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 25+)."
+
+        div_tag = ""
+        if result.divergence == "bullish":
+            div_tag = "  ▲ BULLISH DIVERGENCE"
+        elif result.divergence == "bearish":
+            div_tag = "  ▼ BEARISH DIVERGENCE"
+
+        ema_tag = "above EMA" if result.adi_above_ema else "below EMA"
+
+        lines = [f"── A/D Index: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  ADI:     {result.adi:,.0f}  ({result.adi_trend}){div_tag}")
+        lines.append(f"  EMA:     {result.adi_ema:,.0f}  ({ema_tag})")
+        lines.append(f"  ADI ROC: {result.adi_roc:+.1f}%  |  Price ROC: {result.price_roc:+.1f}%")
+        lines.append(f"  Price trend: {result.price_trend}  |  ADI trend: {result.adi_trend}")
+        lines.append(f"  Avg MFM: {result.avg_mfm:+.3f}")
+
+        if result.divergence != "none":
+            lines.append(f"  Divergence strength: {result.divergence_strength:.2f}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _vsa_cmd(args: list[str]) -> str:
         """Volume Spread Analysis: bar-range/volume relationship for supply/demand.
 
@@ -10760,4 +10815,6 @@ def build_command_handlers(
         "swinglevels": _swingpts_cmd,
         "vsa": _vsa_cmd,
         "volumespread": _vsa_cmd,
+        "adi": _adi_cmd,
+        "accumdist": _adi_cmd,
     }
