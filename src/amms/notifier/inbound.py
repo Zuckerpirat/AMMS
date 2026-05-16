@@ -5656,6 +5656,51 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _holdreturn_cmd(args: list[str]) -> str:
+        """Hold duration vs return analysis: which hold lengths work best?
+
+        Usage: /holdreturn [LIMIT]  (default 200 trades)
+        Splits trades into quartiles by hold duration and shows avg return %,
+        win rate, and correlation between hold time and P&L.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 200
+        if args:
+            try:
+                limit = max(20, min(int(args[0]), 1000))
+            except ValueError:
+                pass
+
+        from amms.analysis.duration_return import compute as dr_compute
+
+        result = dr_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 10+ trades with timestamps)."
+
+        corr_str = f"{result.correlation:.3f}" if result.correlation is not None else "n/a"
+        corr_icon = "📈" if result.correlation_label == "positive" else (
+            "📉" if result.correlation_label == "negative" else "↔️ "
+        )
+
+        lines = [
+            f"── Hold Duration vs Return ({result.n_trades} trades) ──",
+            f"  Correlation:    {corr_icon} {corr_str} ({result.correlation_label})",
+            f"  Optimal range:  {result.optimal_bucket}",
+            "",
+            f"  {'Bucket':<18}  {'N':>4}  {'AvgDays':>7}  {'AvgRet%%':>8}  {'WR%%':>6}",
+        ]
+        for b in result.buckets:
+            ret_icon = "🟢" if b.avg_pnl_pct >= 0 else "🔴"
+            star = " ★" if b.label == result.optimal_bucket else ""
+            lines.append(
+                f"  {b.label:<18}  {b.n_trades:>4}  {b.avg_hold_days:>6.1f}d"
+                f"  {ret_icon} {b.avg_pnl_pct:>+6.2f}%%  {b.win_rate:>5.1f}%%{star}"
+            )
+        lines += ["", f"  {result.verdict}"]
+        return "\n".join(lines)
+
     def _screen_cmd(args: list[str]) -> str:
         """Screen open positions against RSI / ROC / SMA / volume criteria.
 
@@ -7705,4 +7750,6 @@ def build_command_handlers(
         "jmonth": _jsum_cmd,
         "screen": _screen_cmd,
         "screener": _screen_cmd,
+        "holdreturn": _holdreturn_cmd,
+        "dreturn": _holdreturn_cmd,
     }
