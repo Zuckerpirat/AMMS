@@ -6846,6 +6846,56 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _rollsharpe_cmd(args: list[str]) -> str:
+        """Rolling Sharpe Ratio Analyser: risk-adjusted return trend.
+
+        Usage: /rollsharpe SYMBOL [BARS]  (default 120 bars)
+        Shows rolling Sharpe, Sortino, Calmar, vol, and trend direction.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(40, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /rollsharpe SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.rolling_sharpe import analyze as rs_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = rs_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 35+)."
+
+        trend_arrow = {"improving": "▲", "worsening": "▼", "stable": "─"}.get(result.sharpe_trend, "─")
+        sharpe_bar_len = int(min(max((result.current_sharpe + 2) / 4, 0), 1) * 10)
+        sharpe_bar = "█" * sharpe_bar_len + "░" * (10 - sharpe_bar_len)
+
+        lines = [f"── Rolling Sharpe: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Sharpe:   {result.current_sharpe:+.2f}  [{sharpe_bar}]  {result.sharpe_percentile:.0f}th pct")
+        lines.append(f"  Sortino:  {result.current_sortino:+.2f}")
+        lines.append(f"  Vol:      {result.current_vol:.1f}%  |  Return: {result.current_mean_return:+.1f}%")
+        lines.append(f"  Trend:    {trend_arrow} {result.sharpe_trend.upper()}")
+        lines.append(f"  Range:    [{result.min_sharpe:+.2f}, {result.max_sharpe:+.2f}]  Avg: {result.avg_sharpe:+.2f}")
+        lines.append(f"  Max DD:   {result.max_drawdown_pct:.1f}%")
+        if result.calmar is not None:
+            lines.append(f"  Calmar:   {result.calmar:.2f}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _gapclass_cmd(args: list[str]) -> str:
         """Gap Classifier: identifies and classifies price gaps.
 
@@ -10881,4 +10931,6 @@ def build_command_handlers(
         "accumdist": _adi_cmd,
         "gapclass": _gapclass_cmd,
         "gaptypes": _gapclass_cmd,
+        "rollsharpe": _rollsharpe_cmd,
+        "rsharpe": _rollsharpe_cmd,
     }
