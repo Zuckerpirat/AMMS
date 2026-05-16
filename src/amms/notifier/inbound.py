@@ -7036,6 +7036,316 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    # ── Central Decision Engine ────────────────────────────────────────────
+
+    def _decide_cmd(args: list[str]) -> str:
+        """Central Decision Engine: runs 16 analysis modules and gives a final verdict.
+
+        Usage: /decide SYMBOL [BARS]  (default 200 bars)
+        Aggregates trend, momentum, oscillator, and volume signals into
+        one composite score with confidence and reasoning.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 200
+        for a in args:
+            if a.isdigit():
+                bar_count = max(120, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /decide SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.engine.decision import analyze as decide_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = decide_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough data for {symbol} (need 120+ bars)."
+
+        # Action badge
+        action_icons = {
+            "strong_buy":  "🟢 STRONG BUY",
+            "buy":         "🟩 BUY",
+            "hold":        "⬜ HOLD",
+            "sell":        "🟥 SELL",
+            "strong_sell": "🔴 STRONG SELL",
+        }
+        action_str = action_icons.get(result.action, result.action.upper())
+
+        score_filled = int(abs(result.composite_score) / 10)
+        score_dir = "▲" if result.composite_score >= 0 else "▼"
+        score_bar = (score_dir * score_filled) + "░" * (10 - score_filled)
+
+        conf_pct = f"{result.confidence:.0%}"
+
+        lines = [
+            f"══ Decision Engine: {result.symbol} ({result.bars_used} bars) ══",
+            "",
+            f"  {action_str}",
+            f"  Score:      {result.composite_score:+.0f}/100  [{score_bar}]",
+            f"  Confidence: {conf_pct}  ({result.modules_run} modules)",
+            "",
+            "  Category breakdown:",
+        ]
+
+        cat_order = ["trend", "momentum", "oscillator", "volume"]
+        for cat in cat_order:
+            cs = result.categories.get(cat)
+            if not cs:
+                continue
+            arrow = "↑" if cs.score > 10 else ("↓" if cs.score < -10 else "→")
+            lines.append(
+                f"    {cat.capitalize():<12} {cs.score:+.0f}  {arrow}  "
+                f"({cs.module_count} modules)"
+            )
+
+        lines += ["", "  Reasoning:"]
+        for r in result.reasoning:
+            lines.append(f"    • {r}")
+
+        if result.risk_blocked:
+            lines += ["", f"  ⚠ RISK GATE: {result.risk_reason}"]
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
+    # ── Paper Trading ──────────────────────────────────────────────────────
+
+    # Singleton trader — loaded once per process, shared across commands
+    _paper_trader_instance: list = []   # mutable container for singleton
+
+    def _get_paper_trader():
+        from amms.execution.paper_trader import PaperTrader
+        if not _paper_trader_instance:
+            _paper_trader_instance.append(PaperTrader.load())
+        return _paper_trader_instance[0]
+
+    def _portfolio_cmd(args: list[str]) -> str:
+        """Paper portfolio overview.
+
+        Usage: /portfolio
+        Shows cash, positions, total value, and P&L.
+        """
+        trader = _get_paper_trader()
+
+        # Try to get current prices for open positions
+        prices = {}
+        if data is not None:
+            for sym in list(trader.positions.keys()):
+                try:
+                    bars = data.get_bars(sym, limit=2)
+                    if bars:
+                        prices[sym] = float(bars[-1].close)
+                except Exception:
+                    pass
+
+        snap = trader.snapshot(prices)
+
+        ret_arrow = "▲" if snap.total_return_pct >= 0 else "▼"
+        lines = [
+            "══ Paper Portfolio ══",
+            "",
+            f"  Cash:          ${snap.cash:>12,.2f}",
+            f"  Market value:  ${snap.total_market_value:>12,.2f}",
+            f"  Total value:   ${snap.portfolio_value:>12,.2f}",
+            f"  Return:        {ret_arrow} {snap.total_return_pct:+.2f}%  "
+            f"(vs ${snap.starting_cash:,.0f} start)",
+            f"  Realized P&L:  ${snap.total_realized_pnl:>+12,.2f}",
+            f"  Unrealized:    ${snap.total_unrealized_pnl:>+12,.2f}",
+            f"  Trades done:   {snap.trade_count}",
+        ]
+
+        if snap.positions:
+            lines += ["", "  Open positions:"]
+            for sym, pd in sorted(snap.positions.items()):
+                pnl_arrow = "▲" if pd["unrealized_pnl"] >= 0 else "▼"
+                lines.append(
+                    f"    {sym:<8} {pd['qty']:>8.4f} @ ${pd['avg_cost']:.2f}  "
+                    f"MV=${pd['market_value']:,.2f}  "
+                    f"P&L {pnl_arrow}{pd['unrealized_pnl']:+,.2f} ({pd['pnl_pct']:+.1f}%)"
+                )
+        else:
+            lines += ["", "  No open positions."]
+
+        return "\n".join(lines)
+
+    def _paper_cmd(args: list[str]) -> str:
+        """Alias for /portfolio."""
+        return _portfolio_cmd(args)
+
+    def _ptrades_cmd(args: list[str]) -> str:
+        """Show recent paper trades.
+
+        Usage: /ptrades [N]  (default 10)
+        """
+        trader = _get_paper_trader()
+        n = 10
+        for a in args:
+            if a.isdigit():
+                n = max(1, min(int(a), 50))
+
+        trades = trader.recent_trades(n)
+        if not trades:
+            return "No paper trades yet."
+
+        lines = [f"── Recent Paper Trades (last {len(trades)}) ──", ""]
+        for t in reversed(trades):
+            side_icon = "▲ BUY " if t.side == "buy" else "▼ SELL"
+            ts = t.timestamp[:19].replace("T", " ")
+            lines.append(
+                f"  #{t.id:>4}  {ts}  {side_icon}  {t.symbol:<8} "
+                f"{t.qty:.4f} @ ${t.price:.2f}  = ${t.total:,.2f}"
+            )
+            if t.reason:
+                lines.append(f"         Reason: {t.reason}")
+        return "\n".join(lines)
+
+    def _paperbuy_cmd(args: list[str]) -> str:
+        """Execute a paper buy order.
+
+        Usage: /paperbuy SYMBOL QTY [PRICE]
+        If PRICE is omitted, uses the latest bar close.
+        """
+        if len(args) < 2:
+            return "Usage: /paperbuy SYMBOL QTY [PRICE]"
+
+        symbol = args[0].upper()
+        try:
+            qty = float(args[1])
+        except ValueError:
+            return "QTY must be a number."
+
+        price = None
+        if len(args) >= 3:
+            try:
+                price = float(args[2])
+            except ValueError:
+                return "PRICE must be a number."
+
+        if price is None:
+            if data is None:
+                return "Data client not wired — provide a price manually."
+            try:
+                bars = data.get_bars(symbol, limit=2)
+                if not bars:
+                    return f"No bar data for {symbol}."
+                price = float(bars[-1].close)
+            except Exception:
+                return f"Could not fetch price for {symbol}."
+
+        trader = _get_paper_trader()
+        trade = trader.buy(symbol, qty, price, reason="Manual /paperbuy")
+        if trade is None:
+            snap = trader.snapshot()
+            return (
+                f"Order rejected — insufficient cash.\n"
+                f"Need ${qty * price:,.2f}, have ${snap.cash:,.2f}."
+            )
+        trader.save()
+
+        return (
+            f"PAPER BUY executed:\n"
+            f"  {symbol}  {qty:.4f} @ ${price:.2f}  = ${trade.total:,.2f}\n"
+            f"  Trade #{trade.id}  |  Cash remaining: ${trader.snapshot().cash:,.2f}"
+        )
+
+    def _papersell_cmd(args: list[str]) -> str:
+        """Execute a paper sell order.
+
+        Usage: /papersell SYMBOL QTY [PRICE]
+        If PRICE is omitted, uses the latest bar close.
+        """
+        if len(args) < 2:
+            return "Usage: /papersell SYMBOL QTY [PRICE]"
+
+        symbol = args[0].upper()
+        try:
+            qty = float(args[1])
+        except ValueError:
+            return "QTY must be a number."
+
+        price = None
+        if len(args) >= 3:
+            try:
+                price = float(args[2])
+            except ValueError:
+                return "PRICE must be a number."
+
+        if price is None:
+            if data is None:
+                return "Data client not wired — provide a price manually."
+            try:
+                bars = data.get_bars(symbol, limit=2)
+                if not bars:
+                    return f"No bar data for {symbol}."
+                price = float(bars[-1].close)
+            except Exception:
+                return f"Could not fetch price for {symbol}."
+
+        trader = _get_paper_trader()
+        trade = trader.sell(symbol, qty, price, reason="Manual /papersell")
+        if trade is None:
+            pos = trader.position(symbol)
+            held = pos.qty if pos else 0
+            return f"Order rejected — insufficient position. Have {held:.4f} {symbol}."
+        trader.save()
+
+        return (
+            f"PAPER SELL executed:\n"
+            f"  {symbol}  {qty:.4f} @ ${price:.2f}  proceeds ${trade.total:,.2f}\n"
+            f"  Trade #{trade.id}  |  Cash now: ${trader.snapshot().cash:,.2f}"
+        )
+
+    def _paperclose_cmd(args: list[str]) -> str:
+        """Close entire paper position in a symbol.
+
+        Usage: /paperclose SYMBOL [PRICE]
+        """
+        if not args:
+            return "Usage: /paperclose SYMBOL [PRICE]"
+
+        symbol = args[0].upper()
+        price = None
+        if len(args) >= 2:
+            try:
+                price = float(args[1])
+            except ValueError:
+                return "PRICE must be a number."
+
+        if price is None:
+            if data is None:
+                return "Data client not wired — provide a price manually."
+            try:
+                bars = data.get_bars(symbol, limit=2)
+                if not bars:
+                    return f"No bar data for {symbol}."
+                price = float(bars[-1].close)
+            except Exception:
+                return f"Could not fetch price for {symbol}."
+
+        trader = _get_paper_trader()
+        trade = trader.close_position(symbol, price, reason="Manual /paperclose")
+        if trade is None:
+            return f"No open position in {symbol}."
+        trader.save()
+
+        return (
+            f"PAPER CLOSE executed:\n"
+            f"  {symbol}  {trade.qty:.4f} @ ${price:.2f}  proceeds ${trade.total:,.2f}\n"
+            f"  Trade #{trade.id}  |  Cash now: ${trader.snapshot().cash:,.2f}"
+        )
+
     def _uo_cmd(args: list[str]) -> str:
         """Ultimate Oscillator: multi-timeframe buying pressure (7/14/28).
 
@@ -12479,4 +12789,12 @@ def build_command_handlers(
         "srsi": _stochrsi_cmd,
         "uo": _uo_cmd,
         "ultimateosc": _uo_cmd,
+        "decide": _decide_cmd,
+        "decision": _decide_cmd,
+        "paper": _paper_cmd,
+        "portfolio": _portfolio_cmd,
+        "ptrades": _ptrades_cmd,
+        "paperbuy": _paperbuy_cmd,
+        "papersell": _papersell_cmd,
+        "paperclose": _paperclose_cmd,
     }
