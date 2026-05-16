@@ -5756,6 +5756,56 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _mtf_cmd(args: list[str]) -> str:
+        """Multi-timeframe trend analysis: short/medium/long alignment.
+
+        Usage: /mtf [SYM]  (default: all open positions)
+        Derives short, medium, and long-term trends from the same bar series
+        and shows whether all timeframes are aligned.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /mtf AAPL)"
+
+        from amms.analysis.multi_timeframe import analyze as mtf_analyze
+
+        dir_icon = {"up": "↑", "down": "↓", "flat": "↔"}
+        lines = []
+        for sym in symbols[:4]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = mtf_analyze(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 20+ bars)")
+                continue
+
+            align_icon = "✅" if result.aligned else "⚠️"
+            lines += [
+                f"── {sym} Multi-Timeframe ──",
+                f"  Price: {result.current_price:.2f}  |  {result.bars_available} bars",
+                f"  Alignment: {align_icon} {result.alignment_score:.0f}%  [{result.dominant_direction.upper()}]",
+                "",
+            ]
+            for t in result.tiers:
+                di = dir_icon.get(t.direction, "")
+                lines.append(
+                    f"  {t.label:<8}  {di} {t.direction:<5}  "
+                    f"EMA={t.ema:.2f}  price {t.price_vs_ema}  "
+                    f"slope={t.slope_pct:+.3f}%/bar"
+                )
+            lines += [f"  {result.verdict}", ""]
+
+        return "\n".join(lines).rstrip()
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -8367,4 +8417,6 @@ def build_command_handlers(
         "secwr": _sectorwr_cmd,
         "autocorr": _autocorr_cmd,
         "hothand": _autocorr_cmd,
+        "mtf": _mtf_cmd,
+        "multitf": _mtf_cmd,
     }
