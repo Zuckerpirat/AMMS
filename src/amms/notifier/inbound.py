@@ -5656,6 +5656,42 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _sectordetail_cmd(_args: list[str]) -> str:
+        """Detailed sector exposure vs S&P 500 benchmark weights.
+
+        Usage: /sectordetail
+        Shows sector weights, active weight vs benchmark, HHI, and risk flags.
+        Active weight > 0 = overweight vs S&P, < 0 = underweight.
+        """
+        from amms.analysis.sector_exposure import analyze as se_analyze
+
+        result = se_analyze(broker)
+        if result is None:
+            return "No open positions."
+
+        lines = [
+            f"── Sector Exposure ({result.n_positions} positions, "
+            f"{result.n_sectors} sectors) ──",
+            f"  Sector HHI:  {result.portfolio_hhi:.3f}",
+            f"  {result.verdict}",
+            "",
+            f"  {'Sector':<26}  {'Wt%%':>6}  {'Bnchmk':>7}  {'Active':>7}  {'N':>3}",
+        ]
+        for s in result.sectors:
+            active_icon = "↑" if s.active_weight_pct > 5 else ("↓" if s.active_weight_pct < -5 else " ")
+            lines.append(
+                f"  {s.sector:<26}  {s.weight_pct:>5.1f}%%"
+                f"  {s.benchmark_weight_pct:>6.1f}%%"
+                f"  {s.active_weight_pct:>+6.1f}%% {active_icon}"
+                f"  {s.n_positions:>3}"
+            )
+        if result.risk_flags:
+            lines.append("")
+            for flag in result.risk_flags:
+                lines.append(f"  ⚠️  {flag}")
+
+        return "\n".join(lines)
+
     def _imom_cmd(args: list[str]) -> str:
         """Intraday momentum: VWAP position, A/D ratio, session range.
 
@@ -7309,4 +7345,6 @@ def build_command_handlers(
         "underwater": _dduration_cmd,
         "imom": _imom_cmd,
         "intraday": _imom_cmd,
+        "sectordetail": _sectordetail_cmd,
+        "sxp": _sectordetail_cmd,
     }
