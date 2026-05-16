@@ -6846,6 +6846,64 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _supertrend_cmd(args: list[str]) -> str:
+        """Supertrend Indicator: ATR-based trend-following with flip detection.
+
+        Usage: /supertrend SYMBOL [BARS]  (default 100 bars)
+        Single bull/bear signal with dynamic support/resistance level.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(20, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /supertrend SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.supertrend import analyze as st_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = st_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 15+)."
+
+        dir_arrow = "▲" if result.direction == "bull" else "▼"
+        dir_label = "BULLISH" if result.direction == "bull" else "BEARISH"
+
+        lines = [f"── Supertrend: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Direction:  {dir_arrow} {dir_label}")
+        lines.append(f"  Price:      {result.current_price:.2f}")
+        lines.append(f"  ST Level:   {result.supertrend_level:.2f}  ({result.distance_pct:+.1f}%)")
+        lines.append(f"  ATR:        {result.atr:.2f}")
+        lines.append(f"  Trend age:  {result.trend_age} bars")
+        lines.append(f"  Flips (history): {result.flip_count}")
+
+        if result.history:
+            lines.append("")
+            lines.append("  Recent flips:")
+            flips = [s for s in result.history if s.flipped]
+            if flips:
+                for s in flips[-3:]:
+                    lines.append(f"    bar {s.bar_idx}: → {s.direction.upper()} @ {s.price:.2f}")
+            else:
+                lines.append("    None in lookback window")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _keltner_cmd(args: list[str]) -> str:
         """Keltner Channel Analyser: EMA + ATR bands for trend & breakout.
 
@@ -10361,4 +10419,6 @@ def build_command_handlers(
         "candlepattern": _candle_cmd,
         "keltner": _keltner_cmd,
         "kc": _keltner_cmd,
+        "supertrend": _supertrend_cmd,
+        "st": _supertrend_cmd,
     }
