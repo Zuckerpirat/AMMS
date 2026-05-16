@@ -6431,6 +6431,60 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _tcluster_cmd(args: list[str]) -> str:
+        """Trade clustering: time patterns, burst trading, symbol concentration.
+
+        Usage: /tcluster [LIMIT]  (default 500 trades)
+        Detects whether you trade in bursts, always at the same hour,
+        over-concentrate in one stock, or anchor to round price levels.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.trade_clustering import compute as tc_compute
+
+        result = tc_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 5+ closed trades)."
+
+        lines = [f"── Trade Clustering ({result.n_trades} trades) ──", ""]
+
+        if result.top_hours:
+            lines.append("  Time Distribution (top hours):")
+            for h in result.top_hours:
+                bar = "█" * min(20, int(h.n_trades / result.n_trades * 40))
+                lines.append(f"    {h.hour:02d}:00  {bar} {h.n_trades}× | "
+                             f"WR {h.win_rate:.0f}% | avg {h.avg_pnl_pct:+.2f}%")
+            lines.append(f"  Hour concentration: {result.hour_concentration:.2f}  "
+                         f"(>0.5 = clustered)")
+            lines.append("")
+
+        if result.burst_windows:
+            lines.append(f"  Burst windows: {len(result.burst_windows)}  "
+                         f"({result.n_burst_trades} trades, {result.burst_pct:.0f}% of total)")
+            lines.append(f"  Burst avg PnL: {result.burst_avg_pnl:+.2f}%  vs  "
+                         f"normal: {result.non_burst_avg_pnl:+.2f}%")
+            lines.append("")
+
+        if result.top_symbols:
+            lines.append("  Symbol concentration (top 5):")
+            for sym, cnt in result.top_symbols:
+                pct = cnt / result.n_trades * 100
+                lines.append(f"    {sym:<8}  {cnt}× ({pct:.0f}%)")
+            lines.append(f"  Symbol HHI: {result.symbol_concentration:.2f}  (>0.25 = concentrated)")
+            lines.append("")
+
+        lines.append(f"  Round-number entries: {result.round_number_pct:.0f}%")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -9067,4 +9121,6 @@ def build_command_handlers(
         "ptconsensus": _ptconsensus_cmd,
         "regsize": _regime_sizer_cmd,
         "regkelly": _regime_sizer_cmd,
+        "tcluster": _tcluster_cmd,
+        "tradecluster": _tcluster_cmd,
     }
