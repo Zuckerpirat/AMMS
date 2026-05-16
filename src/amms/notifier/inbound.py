@@ -6846,6 +6846,56 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _linreg_cmd(args: list[str]) -> str:
+        """Linear Regression Channel: trend slope, R², and deviation bands.
+
+        Usage: /linreg SYMBOL [BARS]  (default 120 bars)
+        Shows regression slope (%/yr), R² fit quality, and ±1σ/±2σ channel.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(55, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /linreg SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.linreg_channel import analyze as lr_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = lr_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 50+)."
+
+        trend_arrow = {"up": "▲", "down": "▼", "flat": "─"}.get(result.trend_direction, "─")
+        r2_bar = "█" * int(result.r_squared * 10) + "░" * (10 - int(result.r_squared * 10))
+
+        lines = [f"── LinReg Channel: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Slope:  {trend_arrow} {result.slope_pct_annual:+.1f}%/yr  ({result.slope:+.4f}/bar)")
+        lines.append(f"  R²:     {result.r_squared:.3f}  [{r2_bar}]  {result.r_squared_label}")
+        lines.append(f"  Price:  {result.current_price:.2f}  (z={result.residual_z:+.2f}σ, {result.position_label})")
+        lines.append(f"  Line:   {result.regression_line:.2f}")
+        lines.append("")
+        lines.append("  Channel bands:")
+        for b in reversed(result.bands):
+            marker = " ◄" if abs(result.current_price - b.price) < abs(result.residual) * 0.5 else ""
+            lines.append(f"    {b.sigma:+.0f}σ  {b.price:.2f}{marker}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _rollsharpe_cmd(args: list[str]) -> str:
         """Rolling Sharpe Ratio Analyser: risk-adjusted return trend.
 
@@ -10933,4 +10983,6 @@ def build_command_handlers(
         "gaptypes": _gapclass_cmd,
         "rollsharpe": _rollsharpe_cmd,
         "rsharpe": _rollsharpe_cmd,
+        "linreg": _linreg_cmd,
+        "regchannel": _linreg_cmd,
     }
