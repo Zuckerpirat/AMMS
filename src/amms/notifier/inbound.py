@@ -7233,8 +7233,13 @@ def build_command_handlers(
     def _get_auto_trader():
         from amms.execution.auto_trader import AutoTrader, AutoTraderConfig
         if not _auto_trader_instance:
+            # CRITICAL: pass risk_guard so the killswitch and drawdown veto
+            # actually gate every auto-trade decision.
             _auto_trader_instance.append(
-                AutoTrader(_get_broker(), data, AutoTraderConfig())
+                AutoTrader(
+                    _get_broker(), data, AutoTraderConfig(),
+                    risk_guard=_get_risk_guard(),
+                )
             )
         return _auto_trader_instance[0]
 

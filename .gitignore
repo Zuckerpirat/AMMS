@@ -17,6 +17,8 @@ dist/
 htmlcov/
 .DS_Store
 
-# Runtime state — paper trading + auto-trader cooldowns
+# Runtime state — paper trading + auto-trader cooldowns + risk + scheduler
 paper_portfolio.json
 auto_trader_state.json
+risk_guard_state.json
+scheduler_journal.log

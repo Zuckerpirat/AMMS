@@ -51,7 +51,18 @@ class AlpacaPaperBroker:
 
     @classmethod
     def from_settings(cls, settings) -> "AlpacaPaperBroker":
-        """Construct from a loaded `Settings` object."""
+        """Construct from a loaded `Settings` object.
+
+        Defense-in-depth: if the configured ALPACA_BASE_URL looks like a
+        live endpoint, refuse to proceed unless the live-trading guard
+        explicitly acknowledges it. This is layer 2 of the safety stack —
+        layer 1 is the `PAPER_HOST_MARKER` check inside `AlpacaClient`.
+        """
+        from amms.execution.live_guard import assert_live_allowed, is_live_mode_url
+        if is_live_mode_url(settings.alpaca_base_url):
+            # Will raise LiveTradingNotAllowed unless every env var is set.
+            assert_live_allowed()
+
         client = AlpacaClient(
             api_key=settings.alpaca_api_key,
             api_secret=settings.alpaca_api_secret,

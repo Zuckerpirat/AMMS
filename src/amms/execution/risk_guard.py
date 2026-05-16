@@ -22,7 +22,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ class RiskState:
     killswitch_armed: bool = False
     killswitch_reason: str = ""
     killswitch_armed_at: str = ""           # ISO timestamp
+    killswitch_auto: bool = False           # True if triggered by drawdown/daily-loss (auto-disarm eligible)
     peak_equity: float = 0.0                # all-time portfolio value high
     session_start_equity: float = 0.0       # equity at last session-start mark
     session_start_at: str = ""              # ISO timestamp of session-start mark
@@ -84,13 +85,49 @@ class RiskGuard:
 
     # ── Killswitch ────────────────────────────────────────────────────────
 
-    def arm_killswitch(self, reason: str = "manual") -> None:
-        """Block all trades until disarm() is called."""
+    def arm_killswitch(self, reason: str = "manual", auto: bool = False) -> None:
+        """Block all trades until disarm() is called.
+
+        If `auto=True`, the killswitch may be auto-disarmed after
+        `cooldown_after_kill_minutes`. Manual arms (auto=False) require
+        explicit user disarm.
+        """
         self.state.killswitch_armed = True
         self.state.killswitch_reason = reason
         self.state.killswitch_armed_at = datetime.now(timezone.utc).isoformat()
+        self.state.killswitch_auto = auto
         self.save()
-        logger.warning("🛑 KILLSWITCH ARMED: %s", reason)
+        tag = "AUTO" if auto else "MANUAL"
+        logger.warning("🛑 KILLSWITCH ARMED [%s]: %s", tag, reason)
+
+    def _maybe_auto_disarm(self) -> bool:
+        """Auto-disarm if killswitch was auto-triggered and cooldown has passed.
+
+        Returns True if disarmed. Manual arms are never auto-disarmed.
+        """
+        if not self.state.killswitch_armed:
+            return False
+        if not self.state.killswitch_auto:
+            return False
+        if not self.state.killswitch_armed_at:
+            return False
+        try:
+            armed_at = datetime.fromisoformat(self.state.killswitch_armed_at)
+            if armed_at.tzinfo is None:
+                armed_at = armed_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return False
+
+        elapsed = datetime.now(timezone.utc) - armed_at
+        cooldown = timedelta(minutes=self.config.cooldown_after_kill_minutes)
+        if elapsed >= cooldown:
+            logger.warning(
+                "✓ Auto-disarming killswitch after %s cooldown (was: %s)",
+                cooldown, self.state.killswitch_reason,
+            )
+            self.disarm_killswitch()
+            return True
+        return False
 
     def disarm_killswitch(self) -> None:
         if not self.state.killswitch_armed:
@@ -98,6 +135,7 @@ class RiskGuard:
         self.state.killswitch_armed = False
         self.state.killswitch_reason = ""
         self.state.killswitch_armed_at = ""
+        self.state.killswitch_auto = False
         self.save()
         logger.warning("✓ Killswitch disarmed")
 
@@ -127,9 +165,13 @@ class RiskGuard:
         """Return a veto reason if action should be blocked, else None.
 
         `side` is "buy" or "sell". Sells bypass the exposure cap.
+        Auto-disarm of auto-armed killswitch is attempted first.
         """
         if not self.config.enabled:
             return None
+
+        # Auto-disarm check (only auto-armed killswitches age out)
+        self._maybe_auto_disarm()
 
         if self.state.killswitch_armed:
             return f"killswitch: {self.state.killswitch_reason}"
@@ -137,23 +179,32 @@ class RiskGuard:
         snap = self.trader.snapshot()
         equity = snap.portfolio_value
 
-        # Peak tracking (auto-updated lazily)
+        # Peak tracking — only persist on meaningful change (avoid I/O storm).
+        # We accept staleness up to 0.1% of equity between writes.
         if equity > self.state.peak_equity:
+            persist_threshold = max(self.state.peak_equity * 1.001, self.state.peak_equity + 1.0)
             self.state.peak_equity = equity
-            self.save()
+            if equity >= persist_threshold:
+                self.save()
 
         # 1. Drawdown from all-time peak
         if self.state.peak_equity > 0:
             dd = (self.state.peak_equity - equity) / self.state.peak_equity
             if dd >= self.config.max_drawdown_pct:
-                self.arm_killswitch(reason=f"drawdown {dd:.1%} from peak ${self.state.peak_equity:,.2f}")
+                self.arm_killswitch(
+                    reason=f"drawdown {dd:.1%} from peak ${self.state.peak_equity:,.2f}",
+                    auto=True,
+                )
                 return f"max drawdown reached ({dd:.1%})"
 
         # 2. Daily loss
         if self.state.session_start_equity > 0:
             daily = (self.state.session_start_equity - equity) / self.state.session_start_equity
             if daily >= self.config.max_daily_loss_pct:
-                self.arm_killswitch(reason=f"daily loss {daily:.1%} from ${self.state.session_start_equity:,.2f}")
+                self.arm_killswitch(
+                    reason=f"daily loss {daily:.1%} from ${self.state.session_start_equity:,.2f}",
+                    auto=True,
+                )
                 return f"daily loss limit ({daily:.1%})"
 
         # 3. Gross exposure cap (buys only)

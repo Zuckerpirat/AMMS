@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -56,12 +57,15 @@ class AutoTrader:
     """Runs decisions for a list of symbols, executes paper trades."""
 
     def __init__(self, paper_trader, data_client, config: AutoTraderConfig | None = None,
-                 state_path: Path = _COOLDOWN_FILE):
+                 state_path: Path = _COOLDOWN_FILE, risk_guard=None):
         self.trader = paper_trader
         self.data = data_client
         self.config = config or AutoTraderConfig()
         self.state_path = state_path
+        self.risk_guard = risk_guard           # optional RiskGuard instance
         self._cooldowns: dict[str, str] = self._load_state()  # symbol → ISO timestamp
+        # Prevent concurrent processing of the same symbol (manual + scheduler)
+        self._process_lock = threading.Lock()
 
     # ── State persistence ──────────────────────────────────────────────────
 
@@ -112,13 +116,29 @@ class AutoTrader:
         return round(max_dollar / price, 4)
 
     def process_symbol(self, symbol: str) -> AutoTradeDecision:
-        """Run the full decision + execution pipeline for one symbol."""
+        """Run the full decision + execution pipeline for one symbol.
+
+        Thread-safe: only one process_symbol() call executes at a time
+        per AutoTrader instance, preventing race conditions when both
+        the scheduler and a manual /autorun trigger the same symbol.
+        """
         symbol = symbol.upper()
 
-        # 1. Cooldown check
-        if self._in_cooldown(symbol):
-            return AutoTradeDecision(symbol, "skipped", 0.0, 0.0, 0.0, 0.0,
-                                     reason="cooldown active")
+        with self._process_lock:
+            return self._process_symbol_locked(symbol)
+
+    def _process_symbol_locked(self, symbol: str) -> AutoTradeDecision:
+        # 0. Risk Guard hard veto BEFORE any work — killswitch must block
+        #    everything immediately, including reading bars from data API.
+        if self.risk_guard is not None and self.risk_guard.state.killswitch_armed:
+            return AutoTradeDecision(
+                symbol, "skipped", 0.0, 0.0, 0.0, 0.0,
+                reason=f"killswitch armed: {self.risk_guard.state.killswitch_reason}",
+            )
+
+        # 1. Cooldown — DO NOT early-return; cooldown only blocks BUYs.
+        #    Sells (risk reduction) must always be possible.
+        cooldown_active = self._in_cooldown(symbol)
 
         # 2. Fetch bars
         bars = self._fetch_bars(symbol)
@@ -126,10 +146,15 @@ class AutoTrader:
             return AutoTradeDecision(symbol, "skipped", 0.0, 0.0, 0.0, 0.0,
                                      reason="insufficient bar data")
 
-        # 3. Run Decision Engine
+        # 3. Run Decision Engine with risk veto wired in
         from amms.engine.decision import analyze as decide_analyze
-        decision = decide_analyze(bars, symbol=symbol,
-                                  min_confidence=self.config.min_confidence)
+        risk_veto = self.risk_guard.make_veto() if self.risk_guard is not None else None
+        decision = decide_analyze(
+            bars,
+            symbol=symbol,
+            min_confidence=self.config.min_confidence,
+            risk_veto=risk_veto,
+        )
         if decision is None:
             return AutoTradeDecision(symbol, "skipped", 0.0, 0.0, 0.0, 0.0,
                                      reason="decision engine returned None")
@@ -157,8 +182,15 @@ class AutoTrader:
                                      0.0, price,
                                      reason=f"action {decision.action} not strong_*")
 
-        # 5. Act
+        # 5. Act — cooldown gates BUYs only; sells always proceed.
         if decision.action in {"buy", "strong_buy"}:
+            if cooldown_active:
+                return AutoTradeDecision(
+                    symbol, "skipped",
+                    decision.composite_score, decision.confidence,
+                    0.0, price,
+                    reason="cooldown active (buy blocked, sells still allowed)",
+                )
             return self._do_buy(symbol, decision, price, cur_pos, snap)
 
         if decision.action in {"sell", "strong_sell"}:

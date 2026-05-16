@@ -6,6 +6,13 @@ trade history, and portfolio value over time.
 Thread-safe via an internal lock. State is persisted to a JSON file
 so portfolio survives bot restarts.
 
+NOTE — PRE-LIVE TODO:
+    All monetary values here are `float`. Acceptable for paper trading
+    but for live trading the entire module must migrate to `Decimal` to
+    avoid accumulated rounding errors that cause real broker rejects
+    ("insufficient funds" by <0.01¢). This migration touches: cash,
+    qty, price, commission, all P&L fields, and the JSON state format.
+
 Usage:
     trader = PaperTrader.load()          # load or create fresh
     trader.buy("AAPL", qty=10, price=150.0, reason="Decision Engine BUY")
@@ -219,7 +226,8 @@ class PaperTrader:
 
             commission = qty * price * self.commission_rate
             proceeds = qty * price - commission
-            realized = (price - pos.avg_cost) * qty
+            # Realized P&L must include commission so cash and P&L reconcile.
+            realized = (price - pos.avg_cost) * qty - commission
 
             self.cash += proceeds
             self._total_realized_pnl += realized
