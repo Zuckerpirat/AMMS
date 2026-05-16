@@ -6846,6 +6846,63 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _psar_cmd(args: list[str]) -> str:
+        """Parabolic SAR Analyser: stop-and-reverse trend system.
+
+        Usage: /psar SYMBOL [BARS]  (default 100 bars)
+        Shows SAR level, direction, acceleration factor, and flip history.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(10, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /psar SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.parabolic_sar import analyze as psar_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = psar_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 5+)."
+
+        dir_arrow = "▲" if result.direction == "bull" else "▼"
+        dir_label = "BULLISH" if result.direction == "bull" else "BEARISH"
+
+        lines = [f"── Parabolic SAR: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Direction: {dir_arrow} {dir_label}")
+        lines.append(f"  Price:     {result.current_price:.2f}")
+        lines.append(f"  SAR:       {result.sar:.2f}  ({result.distance_pct:.1f}% away)")
+        lines.append(f"  AF:        {result.current_af:.3f}  (max: {result.af_max})")
+        lines.append(f"  EP:        {result.current_ep:.2f}")
+        lines.append(f"  Age:       {result.trend_age} bars  |  Flips: {result.flip_count}")
+        lines.append(f"  Bull:      {result.bull_pct:.0f}%  |  Avg duration: {result.avg_trend_duration:.1f} bars")
+
+        if result.history:
+            recent_flips = [s for s in result.history if s.flipped]
+            if recent_flips:
+                lines.append("")
+                lines.append("  Recent flips:")
+                for s in recent_flips[-3:]:
+                    lines.append(f"    bar {s.bar_idx}: → {s.direction.upper()} @ {s.price:.2f}  SAR={s.sar:.2f}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _cmf_cmd(args: list[str]) -> str:
         """Chaikin Money Flow: volume-weighted buying/selling pressure.
 
@@ -10531,4 +10588,6 @@ def build_command_handlers(
         "dc": _donchian_cmd,
         "cmf": _cmf_cmd,
         "chaikin": _cmf_cmd,
+        "psar": _psar_cmd,
+        "parabolicsar": _psar_cmd,
     }
