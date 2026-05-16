@@ -6796,6 +6796,55 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _holdtime_cmd(args: list[str]) -> str:
+        """Position Hold Time Analyser: median hold, best bucket, hold-PnL correlation.
+
+        Usage: /holdtime [LIMIT]  (default 500 trades)
+        Breaks down hold times into scalp/intraday/swing/multi-day buckets.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(5, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.hold_time import compute as ht_compute
+
+        result = ht_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history or duration data (need 5+ trades with timestamps)."
+
+        lines = [f"── Hold Time Analysis ({result.n_trades} trades, {result.n_with_duration} with duration) ──", ""]
+
+        lines.append(f"  Median hold:  {result.median_hold_min:.0f} min  ({result.median_hold_min / 60:.1f} h)")
+        lines.append(f"  Mean hold:    {result.mean_hold_min:.0f} min")
+        lines.append(f"  Range:        {result.min_hold_min:.0f}–{result.max_hold_min:.0f} min")
+        lines.append(f"  Hold/PnL corr: {result.hold_pnl_correlation:+.3f}")
+        lines.append("")
+
+        lines.append("  Bucket breakdown:")
+        for b in result.buckets:
+            if b.n_trades == 0:
+                continue
+            best = " ★" if b == result.best_bucket else ""
+            worst = " ☆" if b == result.worst_bucket else ""
+            lines.append(f"    {b.label:<12} {b.n_trades:>4}×  WR {b.win_rate:>4.0f}%  avg {b.avg_pnl_pct:>+6.2f}%  ~{b.avg_hold_min:.0f}min{best}{worst}")
+        lines.append("")
+
+        if result.by_symbol:
+            lines.append("  Top symbols by trade count:")
+            for s in result.by_symbol:
+                lines.append(f"    {s.symbol:<8}  {s.n_trades:>3}×  avg {s.avg_hold_min:.0f}min  {s.avg_pnl_pct:>+5.2f}%")
+            lines.append("")
+
+        lines.append(f"  Hold trend: {result.hold_trend}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _streak_cmd(args: list[str]) -> str:
         """Streak Analyser: win/loss streaks, hot-hand effect, conditional probabilities.
 
@@ -9613,4 +9662,6 @@ def build_command_handlers(
         "ddanalysis": _ddcurve_cmd,
         "streakadv": _streak_cmd,
         "streakanalysis": _streak_cmd,
+        "holdtime": _holdtime_cmd,
+        "holdanalysis": _holdtime_cmd,
     }
