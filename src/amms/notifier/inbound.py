@@ -6796,6 +6796,56 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _sigstrength_cmd(args: list[str]) -> str:
+        """Technical Signal Strength Aggregator: 6-factor bull/bear score.
+
+        Usage: /sigstr SYMBOL [BARS]  (default 120 bars)
+        Combines trend, momentum, RSI, BB, volume, EMA slope into 0-100 score.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(60, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /sigstr SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.signal_strength import analyze as ss_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = ss_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 55+)."
+
+        bar_visual = "█" * int(result.score // 10) + "░" * (10 - int(result.score // 10))
+
+        lines = [f"── Signal Strength: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Score:  {result.score:.0f}/100  {bar_visual}  [{result.grade.upper()}]")
+        lines.append(f"  Vote:   {result.total_vote:+d} / {result.max_possible}")
+        lines.append(f"  Price:  {result.current_price:.2f}")
+        lines.append("")
+
+        lines.append("  Components:")
+        for c in result.components:
+            vote_str = f"{'+' if c.vote >= 0 else ''}{c.vote}"
+            lines.append(f"    {c.name:<14} {vote_str:>3}  {c.description}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _regtrans_cmd(args: list[str]) -> str:
         """Regime Transition Detector: bull/neutral/bear state changes.
 
@@ -10141,4 +10191,6 @@ def build_command_handlers(
         "ewmavol": _volfcast_cmd,
         "regtrans": _regtrans_cmd,
         "regimetrans": _regtrans_cmd,
+        "sigstr": _sigstrength_cmd,
+        "signalstrength": _sigstrength_cmd,
     }
