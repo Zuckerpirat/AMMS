@@ -5756,6 +5756,47 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _symperf_cmd(args: list[str]) -> str:
+        """Closed-trade performance ranked by symbol.
+
+        Usage: /symperf [LIMIT]  (default 500 trades)
+        Ranks all traded symbols by total PnL, win rate, and profit factor.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        min_trades = 2
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.symbol_performance import compute as sp_compute
+
+        result = sp_compute(conn, limit=limit, min_trades=min_trades)
+        if result is None:
+            return "Not enough trade history (need 5+ trades)."
+
+        lines = [
+            f"── Symbol Performance ({result.n_symbols} symbols, {result.n_trades} trades) ──",
+            f"  Total PnL: {result.total_pnl:+.2f}",
+            "",
+            f"  {'#':<3} {'Symbol':<8} {'Trades':>6} {'WR':>6} {'Avg':>8} {'Total':>10} {'PF':>6}",
+            f"  {'-'*3} {'-'*8} {'-'*6} {'-'*6} {'-'*8} {'-'*10} {'-'*6}",
+        ]
+        for s in result.symbols:
+            pf_str = f"{s.profit_factor:.2f}" if s.profit_factor is not None else "  n/a"
+            mark = " ← best" if s.symbol == result.best_symbol else (" ← worst" if s.symbol == result.worst_symbol else "")
+            lines.append(
+                f"  {s.rank:<3} {s.symbol:<8} {s.n_trades:>6} "
+                f"{s.win_rate:>5.0f}% {s.avg_pnl:>+8.2f} {s.total_pnl:>+10.2f} {pf_str:>6}{mark}"
+            )
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _pcal_cmd(args: list[str]) -> str:
         """Profit calendar: daily PnL summary grouped by month.
 
@@ -7904,4 +7945,6 @@ def build_command_handlers(
         "tradetiming": _trade_timing_cmd,
         "pcal": _pcal_cmd,
         "profitcal": _pcal_cmd,
+        "symperf": _symperf_cmd,
+        "symbolperf": _symperf_cmd,
     }
