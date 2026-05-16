@@ -7036,6 +7036,79 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _cloud_cmd(args: list[str]) -> str:
+        """Extended Ichimoku Cloud: 6-signal scoring with cloud context.
+
+        Usage: /cloud SYMBOL [BARS]  (default 120 bars)
+        Shows all five lines, cloud position, TK cross, and signal score.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(80, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /cloud SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.ichimoku import analyze as ichi_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = ichi_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 78+)."
+
+        bull_bar = "▲" * result.bullish_signals + "░" * (6 - result.bullish_signals)
+        bear_bar = "▼" * result.bearish_signals + "░" * (6 - result.bearish_signals)
+
+        if result.price_above_cloud:
+            cloud_pos = "ABOVE cloud"
+        elif result.price_below_cloud:
+            cloud_pos = "BELOW cloud"
+        else:
+            cloud_pos = "INSIDE cloud"
+
+        cloud_type = "bullish (SpA>SpB)" if result.cloud_bullish else "bearish (SpB>SpA)"
+
+        lines = [f"── Ichimoku Cloud: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Bull:    {result.bullish_signals}/6  [{bull_bar}]")
+        lines.append(f"  Bear:    {result.bearish_signals}/6  [{bear_bar}]")
+        lines += [""]
+        lines.append(f"  Price:      {result.current_price:.2f}  ({cloud_pos})")
+        lines.append(f"  Cloud:      {cloud_type}")
+        if result.cloud_top is not None:
+            lines.append(f"  Cloud top:  {result.cloud_top:.2f}")
+            lines.append(f"  Cloud bot:  {result.cloud_bottom:.2f}")
+        lines += [""]
+        if result.tenkan is not None:
+            lines.append(f"  Tenkan (9):  {result.tenkan:.2f}")
+        if result.kijun is not None:
+            lines.append(f"  Kijun (26):  {result.kijun:.2f}")
+        if result.senkou_a is not None:
+            lines.append(f"  Senkou A:    {result.senkou_a:.2f}")
+        if result.senkou_b is not None:
+            lines.append(f"  Senkou B:    {result.senkou_b:.2f}")
+        lines.append(f"  Chikou:      {result.chikou:.2f}")
+        if result.tk_cross_bullish:
+            lines.append("  TK cross: BULLISH")
+        if result.tk_cross_bearish:
+            lines.append("  TK cross: BEARISH")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _linreg_cmd(args: list[str]) -> str:
         """Linear Regression Channel: trend slope, R², and deviation bands.
 
@@ -11181,4 +11254,6 @@ def build_command_handlers(
         "internals": _mktinternals_cmd,
         "ofi": _ofi_cmd,
         "orderflow": _ofi_cmd,
+        "cloud": _cloud_cmd,
+        "icloud": _cloud_cmd,
     }
