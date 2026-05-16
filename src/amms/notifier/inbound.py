@@ -6073,6 +6073,55 @@ def build_command_handlers(
 
         return "\n".join(lines).rstrip()
 
+    def _heikin_ashi_cmd(args: list[str]) -> str:
+        """Heikin-Ashi trend analysis: smoothed candles, uptrend/downtrend strength.
+
+        Usage: /ha [SYM]  (default: all open positions)
+        Converts standard candles to Heikin-Ashi and identifies trend direction,
+        consecutive run length, and no-wick (high-conviction) candle count.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /ha AAPL)"
+
+        from amms.analysis.heikin_ashi import analyze as ha_analyze
+
+        trend_icon = {"up": "↑", "down": "↓", "reversal": "⚡", "consolidating": "↔"}
+        lines = []
+        for sym in symbols[:5]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = ha_analyze(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 5+ bars)")
+                continue
+
+            ti = trend_icon.get(result.trend, "")
+            run_str = (
+                f"{result.consecutive_bull} bull" if result.consecutive_bull
+                else f"{result.consecutive_bear} bear"
+            )
+            strong_note = f"  ({result.strong_candles} no-wick)" if result.strong_candles else ""
+            lines += [
+                f"── {sym} Heikin-Ashi ({result.bars_used} bars) ──",
+                f"  Trend:    {ti} {result.trend.upper()}  (strength {result.trend_strength:.0f}/100)",
+                f"  Run:      {run_str} consecutive{strong_note}",
+                f"  HA open:  {result.current_ha_open:.2f}  |  HA close: {result.current_ha_close:.2f}",
+                f"  {result.verdict}",
+                "",
+            ]
+
+        return "\n".join(lines).rstrip()
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -8696,4 +8745,7 @@ def build_command_handlers(
         "imbalance": _fvg_cmd,
         "ribbon": _ribbon_cmd,
         "maribbon": _ribbon_cmd,
+        "ha": _heikin_ashi_cmd,
+        "heikin": _heikin_ashi_cmd,
+        "heikinashi": _heikin_ashi_cmd,
     }
