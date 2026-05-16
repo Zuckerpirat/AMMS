@@ -6796,13 +6796,78 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _breadthproxy_cmd(args: list[str]) -> str:
+        """Market Breadth Proxy: % of symbols above SMA-50, RSI, ROC-20.
+
+        Usage: /breadth SYM1 SYM2 ... [BARS]  (default 100 bars)
+        Scores market-wide participation: broad_bull/neutral/mixed/broad_bear.
+        """
+        if data is None:
+            return "Data source not wired."
+
+        symbols = [a.upper() for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(60, min(int(a), 500))
+
+        if not symbols:
+            return "Usage: /breadth SYM1 SYM2 ...  — provide at least 2 symbols."
+
+        from amms.analysis.breadth_proxy import analyze as bp_analyze
+
+        bars_by_sym: dict[str, list] = {}
+        for sym in symbols:
+            try:
+                b = data.get_bars(sym, limit=bar_count)
+                if b:
+                    bars_by_sym[sym] = b
+            except Exception:
+                pass
+
+        result = bp_analyze(bars_by_sym)
+        if result is None:
+            return "Not enough data (need 2+ symbols with 25+ bars each)."
+
+        label_icons = {"broad_bull": "🟢", "neutral": "🟡", "mixed": "🟠", "broad_bear": "🔴"}
+        icon = label_icons.get(result.breadth_label, " ")
+
+        lines = [f"── Market Breadth ({result.n_evaluated}/{result.n_symbols} evaluated) ──", ""]
+        lines.append(f"  Score: {result.breadth_score:.0f}/100  {icon} {result.breadth_label.upper()}")
+        lines.append(f"  Above SMA-50:     {result.pct_above_sma50:.0f}%  ({result.advance_count}/{result.n_evaluated})")
+        lines.append(f"  Positive ROC-20:  {result.pct_positive_roc20:.0f}%")
+        lines.append(f"  RSI > 50:         {result.pct_rsi_above_50:.0f}%")
+        lines.append(f"  Near highs:       {result.pct_near_highs:.0f}%")
+        lines.append(f"  Near lows:        {result.pct_near_lows:.0f}%")
+        if result.breadth_thrust:
+            lines.append(f"  ⚡ BREADTH THRUST: {result.thrust_direction.upper()}")
+        lines.append("")
+
+        lines.append("  Symbol detail:")
+        for s in sorted(result.symbols, key=lambda x: -x.roc_20):
+            flags = []
+            if s.above_sma50:
+                flags.append("SMA+")
+            if s.roc20_positive:
+                flags.append("ROC+")
+            if s.rsi_above_50:
+                flags.append("RSI+")
+            if s.near_52w_high:
+                flags.append("HIGH")
+            if s.near_52w_low:
+                flags.append("low")
+            lines.append(f"    {s.symbol:<8}  {s.current_price:>8.2f}  ROC {s.roc_20:>+6.1f}%  {' '.join(flags)}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _bbsqueeze_cmd(args: list[str]) -> str:
         """Bollinger Band Squeeze Detector: compressed volatility before breakout.
 
         Usage: /bbsq SYMBOL [BARS]  (default 150 bars)
         Detects when BB width drops to local minimum (squeeze) and shows bias direction.
         """
-        if data_source is None:
+        if data is None:
             return "Data source not wired."
 
         parts = [a for a in args if not a.isdigit()]
@@ -6819,7 +6884,7 @@ def build_command_handlers(
         from amms.analysis.bb_squeeze import analyze as bb_analyze
 
         try:
-            bars = data_source.get_bars(symbol, limit=bar_count)
+            bars = data.get_bars(symbol, limit=bar_count)
         except Exception:
             return f"Could not fetch bars for {symbol}."
 
@@ -6850,7 +6915,7 @@ def build_command_handlers(
         Usage: /mtfmom SYMBOL [BARS]  (default 150 bars)
         Shows momentum direction on 4 timeframes and overall regime.
         """
-        if data_source is None:
+        if data is None:
             return "Data source not wired."
 
         parts = [a for a in args if not a.isdigit()]
@@ -6867,7 +6932,7 @@ def build_command_handlers(
         from amms.analysis.mtf_momentum import analyze as mtf_analyze
 
         try:
-            bars = data_source.get_bars(symbol, limit=bar_count)
+            bars = data.get_bars(symbol, limit=bar_count)
         except Exception:
             return f"Could not fetch bars for {symbol}."
 
@@ -7148,7 +7213,7 @@ def build_command_handlers(
                 SMA-50 proximity (15%), ATR volatility (15%), EMA trend (15%).
         Grade: A≥80, B≥65, C≥50, D≥35, F<35.
         """
-        if data_source is None:
+        if data is None:
             return "Data source not wired."
 
         symbols = [a.upper() for a in args if not a.isdigit()]
@@ -7165,7 +7230,7 @@ def build_command_handlers(
         bars_by_symbol: dict[str, list] = {}
         for sym in symbols:
             try:
-                bars = data_source.get_bars(sym, limit=bar_count)
+                bars = data.get_bars(sym, limit=bar_count)
                 if bars:
                     bars_by_symbol[sym] = bars
             except Exception:
@@ -9861,4 +9926,6 @@ def build_command_handlers(
         "mtf": _mtfmom_cmd,
         "bbsq": _bbsqueeze_cmd,
         "bbsqueeze": _bbsqueeze_cmd,
+        "breadthproxy": _breadthproxy_cmd,
+        "mktbreadth": _breadthproxy_cmd,
     }
