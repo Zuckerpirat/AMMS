@@ -7036,6 +7036,67 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _trix_cmd(args: list[str]) -> str:
+        """TRIX and Know Sure Thing (KST): triple-EMA and weighted ROC momentum.
+
+        Usage: /trix SYMBOL [BARS]  (default 150 bars)
+        Shows TRIX line, KST, signal crosses, and composite score.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 150
+        for a in args:
+            if a.isdigit():
+                bar_count = max(110, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /trix SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.trix_kst import analyze as tk_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = tk_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 110+)."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        lines = [f"── TRIX / KST: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100  [{score_bar}]")
+        lines += ["", "  TRIX (triple EMA momentum):"]
+        lines.append(f"    Value:    {result.trix:+.5f}%")
+        lines.append(f"    Signal:   {result.trix_signal:+.5f}%")
+        lines.append(f"    Hist:     {result.trix_histogram:+.5f}%  ({'positive' if result.trix_bullish else 'negative'})")
+        if result.trix_cross_up:
+            lines.append("    ▲ Bullish cross")
+        if result.trix_cross_down:
+            lines.append("    ▼ Bearish cross")
+        lines += ["", "  KST (weighted ROC):"]
+        lines.append(f"    Value:    {result.kst:+.2f}")
+        lines.append(f"    Signal:   {result.kst_signal:+.2f}")
+        lines.append(f"    Hist:     {result.kst_histogram:+.2f}  ({'positive' if result.kst_bullish else 'negative'})")
+        if result.kst_cross_up:
+            lines.append("    ▲ Bullish cross")
+        if result.kst_cross_down:
+            lines.append("    ▼ Bearish cross")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _elder_cmd(args: list[str]) -> str:
         """Elder Ray Index: Bull Power and Bear Power relative to EMA.
 
@@ -11368,4 +11429,6 @@ def build_command_handlers(
         "aroon": _willr_cmd,
         "elder": _elder_cmd,
         "elderray": _elder_cmd,
+        "trix": _trix_cmd,
+        "kst": _trix_cmd,
     }
