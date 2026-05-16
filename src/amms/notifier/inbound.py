@@ -6641,6 +6641,64 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
+    def _gapfill_cmd(args: list[str]) -> str:
+        """Gap Fill Probability: historical gap analysis for open positions.
+
+        Usage: /gapfill [SYM]  (default: all open positions)
+        Analyses historical overnight gaps and estimates fill rate, fill time,
+        and size-conditional probabilities. Flags any current open gap.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /gapfill AAPL)"
+
+        from amms.analysis.gap_fill import analyze as gf_analyze
+
+        lines = []
+        for sym in symbols[:5]:
+            try:
+                bars = data.get_bars(sym, limit=120)
+            except Exception:
+                bars = []
+            result = gf_analyze(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 20+ bars)")
+                continue
+
+            if len(result.gaps) == 0:
+                lines.append(f"  {sym:<6}  no gaps detected ({result.bars_analysed} bars, threshold {result.gap_threshold_pct}%)")
+                continue
+
+            lines += [
+                f"── {sym} Gap Fill ({result.bars_analysed} bars) ──",
+                f"  Gaps:    {len(result.gaps)} total  "
+                f"(↑{result.n_up_gaps} up / ↓{result.n_down_gaps} down)",
+                f"  Fill:    {result.fill_rate:.0f}%  "
+                f"(↑{result.up_fill_rate:.0f}% / ↓{result.down_fill_rate:.0f}%)",
+                f"  Avg fill time: {result.avg_bars_to_fill:.1f} bars",
+            ]
+            if result.small_fill_rate or result.large_fill_rate:
+                lines.append(
+                    f"  Size:    small {result.small_fill_rate:.0f}% / "
+                    f"large {result.large_fill_rate:.0f}%"
+                )
+            if result.current_gap:
+                g = result.current_gap
+                lines.append(
+                    f"  ⚡ CURRENT GAP: {g.kind} {g.gap_pct:+.2f}%  "
+                    f"→ fill prob {result.current_gap_fill_prob:.0f}%"
+                )
+            lines += [f"  {result.verdict}", ""]
+
+        return "\n".join(lines).rstrip()
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -9285,4 +9343,6 @@ def build_command_handlers(
         "corrbreakdown": _corrbreakdown_cmd,
         "cvar": _cvar_cmd,
         "es": _cvar_cmd,
+        "gapfill": _gapfill_cmd,
+        "fillgap": _gapfill_cmd,
     }
