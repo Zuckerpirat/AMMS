@@ -6796,6 +6796,59 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _regtrans_cmd(args: list[str]) -> str:
+        """Regime Transition Detector: bull/neutral/bear state changes.
+
+        Usage: /regtrans SYMBOL [BARS]  (default 150 bars)
+        Multi-factor vote: SMA-50/200, ROC-20, RSI, ATR.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 150
+        for a in args:
+            if a.isdigit():
+                bar_count = max(60, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /regtrans SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.regime_transition import analyze as rt_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = rt_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 55+)."
+
+        lines = [f"── Regime Transition: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Current regime:   {result.current_regime.upper()}  (vote {result.current_vote:+d}/4)")
+        lines.append(f"  Previous regime:  {result.previous_regime}")
+        if result.transition_detected:
+            lines.append(f"  TRANSITION: {result.transition_direction}")
+        else:
+            lines.append(f"  No transition  ({result.transition_direction})")
+        if result.transition_bars_ago is not None:
+            lines.append(f"  Last change:  {result.transition_bars_ago} bars ago")
+        lines.append("")
+        lines.append(f"  Price: {result.current_price:.2f}  RSI: {result.rsi:.0f}  ROC-20: {result.roc20:+.1f}%")
+        if result.sma50:
+            lines.append(f"  SMA-50:  {result.sma50:.2f}  ({'+' if result.current_price > result.sma50 else '-'}above)")
+        if result.sma200:
+            lines.append(f"  SMA-200: {result.sma200:.2f}")
+        lines.append(f"  ATR: {result.atr_pct:.2f}%  (pct {result.atr_percentile:.0f}%)")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _volfcast_cmd(args: list[str]) -> str:
         """EWMA Volatility Forecast: expected daily vol and 1-day 95% VaR.
 
@@ -10086,4 +10139,6 @@ def build_command_handlers(
         "trendexhaust": _exhaust_cmd,
         "volfcast": _volfcast_cmd,
         "ewmavol": _volfcast_cmd,
+        "regtrans": _regtrans_cmd,
+        "regimetrans": _regtrans_cmd,
     }
