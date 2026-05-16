@@ -6846,6 +6846,63 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _candle_cmd(args: list[str]) -> str:
+        """Candlestick Pattern Recognizer: detects hammer, engulfing, stars, etc.
+
+        Usage: /candle SYMBOL [BARS]  (default 60 bars scanned)
+        Identifies single-, two-, and three-bar reversal and continuation patterns.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 60
+        for a in args:
+            if a.isdigit():
+                bar_count = max(5, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /candle SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.candlestick_patterns import analyze as candle_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = candle_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 3+)."
+
+        bias_arrow = {"bullish": "▲", "bearish": "▼", "neutral": "─"}.get(result.dominant_bias, "─")
+        score_bar = "█" * int(abs(result.bias_score) * 10) + "░" * (10 - int(abs(result.bias_score) * 10))
+
+        lines = [f"── Candlestick Patterns: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Dominant Bias:  {bias_arrow} {result.dominant_bias.upper()}  [{score_bar}]  score {result.bias_score:+.2f}")
+        lines.append(f"  Patterns found: {len(result.patterns)}  (bull: {result.bullish_count}, bear: {result.bearish_count})")
+        lines.append("")
+
+        if result.recent_patterns:
+            lines.append("  Recent patterns (last 5 bars):")
+            for p in result.recent_patterns[-5:]:
+                arrow = "▲" if p.bias == "bullish" else ("▼" if p.bias == "bearish" else "─")
+                lines.append(f"    {arrow} {p.name:<26} [{p.strength}]  {p.description}")
+        else:
+            lines.append("  No patterns in last 5 bars.")
+
+        if result.last_signal:
+            lines.append("")
+            lines.append(f"  Last signal: {result.last_signal.name} @ bar {result.last_signal.bar_idx}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _mrband_cmd(args: list[str]) -> str:
         """Mean Reversion Band Analyser: z-score distance from rolling mean.
 
@@ -10246,4 +10303,6 @@ def build_command_handlers(
         "signalstrength": _sigstrength_cmd,
         "mrband": _mrband_cmd,
         "meanrevband": _mrband_cmd,
+        "candle": _candle_cmd,
+        "candlepattern": _candle_cmd,
     }
