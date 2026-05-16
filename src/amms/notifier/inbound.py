@@ -6796,6 +6796,67 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _streak_cmd(args: list[str]) -> str:
+        """Streak Analyser: win/loss streaks, hot-hand effect, conditional probabilities.
+
+        Usage: /streak [LIMIT]  (default 500 trades)
+        Shows longest streaks, current streak, and whether wins cluster.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.streak_analyser import compute as streak_compute
+
+        result = streak_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 10+ closed trades)."
+
+        lines = [f"── Streak Analysis ({result.n_trades} trades) ──", ""]
+
+        lines.append(f"  Baseline win rate: {result.baseline_win_rate * 100:.1f}%")
+        lines.append("")
+
+        if result.longest_win_streak:
+            lw = result.longest_win_streak
+            lines.append(f"  Longest WIN streak:  {lw.length}× ({lw.total_pnl:+.1f}% total)")
+        if result.longest_loss_streak:
+            ll = result.longest_loss_streak
+            lines.append(f"  Longest LOSS streak: {ll.length}× ({ll.total_pnl:+.1f}% total)")
+        lines.append(f"  Avg win streak len:  {result.avg_win_streak_len:.1f}")
+        lines.append(f"  Avg loss streak len: {result.avg_loss_streak_len:.1f}")
+        lines.append("")
+
+        if result.p_win_after_win is not None:
+            lines.append(f"  P(win | prev win):   {result.p_win_after_win * 100:.1f}%  "
+                         f"(baseline {result.baseline_win_rate * 100:.1f}%)")
+        if result.hot_hand_effect is not None:
+            direction = "hot-hand" if result.hot_hand_effect > 0 else "mean-reversion"
+            lines.append(f"  Hot-hand effect:     {result.hot_hand_effect:+.3f} ({direction})")
+        if result.p_loss_after_loss is not None:
+            lines.append(f"  P(loss | prev loss): {result.p_loss_after_loss * 100:.1f}%")
+        if result.cold_hand_effect is not None:
+            lines.append(f"  Cold-hand effect:    {result.cold_hand_effect:+.3f}")
+        lines.append("")
+
+        if result.current_streak:
+            cs = result.current_streak
+            lines.append(f"  Current streak: {cs.length}× {cs.kind.upper()} ({cs.total_pnl:+.1f}%)")
+
+        if result.avg_pnl_after_win_streak is not None:
+            lines.append(f"  Avg PnL after win streak ends:  {result.avg_pnl_after_win_streak:+.2f}%")
+        if result.avg_pnl_after_loss_streak is not None:
+            lines.append(f"  Avg PnL after loss streak ends: {result.avg_pnl_after_loss_streak:+.2f}%")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _ddcurve_cmd(args: list[str]) -> str:
         """Drawdown Curve Analyser: equity curve, episodes, ulcer index.
 
@@ -9550,4 +9611,6 @@ def build_command_handlers(
         "watchscore": _wscore_cmd,
         "ddcurve": _ddcurve_cmd,
         "ddanalysis": _ddcurve_cmd,
+        "streakadv": _streak_cmd,
+        "streakanalysis": _streak_cmd,
     }
