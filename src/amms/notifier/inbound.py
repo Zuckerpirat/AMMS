@@ -6278,6 +6278,68 @@ def build_command_handlers(
 
         return "\n".join(lines).rstrip()
 
+    def _ptconsensus_cmd(args: list[str]) -> str:
+        """Price Target Consensus: clusters Fib/ATR/Pivot/Measured targets.
+
+        Usage: /ptc [SYM]  (default: all open positions)
+        Derives upside and downside targets from multiple technical methods,
+        clusters nearby targets into consensus zones, and shows the strongest zone.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /ptc AAPL)"
+
+        from amms.analysis.price_target_consensus import analyze as ptc_analyze
+
+        lines = []
+        for sym in symbols[:4]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = ptc_analyze(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 20+ bars)")
+                continue
+
+            lines += [f"── {sym} Price Targets ({result.bars_used}b) ──"]
+            lines.append(f"  Current: {result.current_price:.2f}")
+
+            if result.best_upside_zone:
+                z = result.best_upside_zone
+                sources_str = " / ".join(t.source for t in z.targets[:3])
+                lines += [
+                    f"  ↑ Upside zone:   {z.low:.2f} – {z.high:.2f}  "
+                    f"(center {z.center:.2f}, +{z.pct_from_current:.1f}%)",
+                    f"    Sources: {sources_str}  [{z.n_sources} methods, "
+                    f"consensus {result.upside_consensus_pct:.0f}%]",
+                ]
+            else:
+                lines.append("  ↑ No clear upside consensus")
+
+            if result.best_downside_zone:
+                z = result.best_downside_zone
+                sources_str = " / ".join(t.source for t in z.targets[:3])
+                lines += [
+                    f"  ↓ Downside zone: {z.low:.2f} – {z.high:.2f}  "
+                    f"(center {z.center:.2f}, {z.pct_from_current:.1f}%)",
+                    f"    Sources: {sources_str}  [{z.n_sources} methods, "
+                    f"consensus {result.downside_consensus_pct:.0f}%]",
+                ]
+            else:
+                lines.append("  ↓ No clear downside consensus")
+
+            lines += [f"  {result.verdict}", ""]
+
+        return "\n".join(lines).rstrip()
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -8910,4 +8972,6 @@ def build_command_handlers(
         "orderflow": _ofi_cmd,
         "volskew": _volskew_cmd,
         "vskew": _volskew_cmd,
+        "ptc": _ptconsensus_cmd,
+        "ptconsensus": _ptconsensus_cmd,
     }
