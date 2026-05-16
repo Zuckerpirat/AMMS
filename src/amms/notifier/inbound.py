@@ -5756,6 +5756,51 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _wrstab_cmd(args: list[str]) -> str:
+        """Win rate stability: how consistent is the win rate over time?
+
+        Usage: /wrstab [WINDOW]  (default 20 trades per window)
+        Splits trade history into rolling windows and measures win rate
+        variability. High CV = luck-dependent; low CV = consistent edge.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        window_size = 20
+        if args:
+            try:
+                window_size = max(10, min(int(args[0]), 50))
+            except ValueError:
+                pass
+
+        from amms.analysis.win_rate_stability import compute as wrs_compute
+
+        result = wrs_compute(conn, window_size=window_size)
+        if result is None:
+            return f"Not enough trade history (need {window_size * 2}+ trades)."
+
+        grade_icon = {
+            "Excellent": "🏆", "Good": "✅", "Moderate": "⚠️", "Unstable": "🔴"
+        }.get(result.stability_grade, "")
+
+        lines = [
+            f"── Win Rate Stability ({result.n_trades} trades, {len(result.windows)} windows of {window_size}) ──",
+            f"  Overall WR:  {result.overall_win_rate:.1f}%",
+            f"  Stability:   {grade_icon} {result.stability_grade}  (CV={result.win_rate_cv:.1f}%)",
+            f"  Range:       {result.win_rate_min:.0f}% – {result.win_rate_max:.0f}%  (±{result.win_rate_std:.1f}pp)",
+            f"  95% CI:      [{result.ci_lower:.1f}%, {result.ci_upper:.1f}%]",
+            f"  Current:     {result.current_window_wr:.0f}%  (z={result.z_score:+.1f})",
+            "",
+            "  Rolling windows:",
+        ]
+        for w in result.windows:
+            bar = "█" * int(w.win_rate / 10)
+            mark = " ← current" if w.window_number == result.windows[-1].window_number else ""
+            lines.append(f"    W{w.window_number:>2}  {w.win_rate:>5.0f}%  {bar}{mark}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _paydist_cmd(args: list[str]) -> str:
         """Payoff distribution: return histogram showing win/loss spread.
 
@@ -8231,4 +8276,6 @@ def build_command_handlers(
         "ruinrisk": _ruin_cmd,
         "paydist": _paydist_cmd,
         "retdist": _paydist_cmd,
+        "wrstab": _wrstab_cmd,
+        "wrstability": _wrstab_cmd,
     }
