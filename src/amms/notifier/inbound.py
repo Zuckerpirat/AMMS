@@ -7036,6 +7036,53 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _natr_cmd(args: list[str]) -> str:
+        """Normalized ATR: ATR as % of price for cross-symbol vol comparison.
+
+        Usage: /natr SYMBOL [BARS]  (default 100 bars)
+        Shows NATR%, regime, compression flag, and historical percentile.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(60, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /natr SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.natr import analyze as natr_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = natr_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 40+)."
+
+        slope_arrow = "↑" if result.slope_up else "↓"
+        compress_str = "  (compression: fast<slow)" if result.compression else ""
+
+        lines = [f"── Normalized ATR: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:   {result.signal.upper()}")
+        lines.append(f"  Regime:   {result.regime.upper()}")
+        lines += [""]
+        lines.append(f"  NATR:     {result.natr:.2f}%  {slope_arrow}  (ATR={result.atr:.4f})")
+        lines.append(f"  Fast({7}):  {result.natr_fast:.2f}%  Slow({28}): {result.natr_slow:.2f}%{compress_str}")
+        lines.append(f"  Pctile:   {result.natr_percentile:.0f}%  (avg={result.avg_natr:.2f}%, σ={result.natr_std:.2f}%)")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _chaikinvol_cmd(args: list[str]) -> str:
         """Chaikin Volatility: EMA-smoothed HL-range rate of change.
 
@@ -12321,4 +12368,6 @@ def build_command_handlers(
         "connors": _crsi_cmd,
         "chaikinvol": _chaikinvol_cmd,
         "cvol": _chaikinvol_cmd,
+        "natr": _natr_cmd,
+        "normalizedatr": _natr_cmd,
     }
