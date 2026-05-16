@@ -7036,6 +7036,63 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _stc_cmd(args: list[str]) -> str:
+        """Schaff Trend Cycle: MACD + double Stochastic oscillator (0-100).
+
+        Usage: /stc SYMBOL [BARS]  (default 120 bars)
+        Shows STC value, overbought/oversold, buy/sell triggers.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(90, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /stc SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.schaff_trend import analyze as stc_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = stc_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 85+)."
+
+        # Visual bar for STC (0-100)
+        filled = int(result.stc / 10)
+        bar = "█" * filled + "░" * (10 - filled)
+        ob_tag = " ◀ OVERBOUGHT" if result.overbought else (" ◀ OVERSOLD" if result.oversold else "")
+
+        lines = [f"── Schaff Trend Cycle: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100")
+        lines += [""]
+        lines.append(f"  STC:     {result.stc:.1f}/100  [{bar}]{ob_tag}")
+        lines.append(f"  MACD:    {result.macd:+.4f}")
+        lines.append(f"  Slope:   {'↑ rising' if result.slope_up else '↓ falling'}")
+        if result.buy_trigger:
+            lines.append("  ▲ Buy trigger: STC crossed above 25")
+        if result.sell_trigger:
+            lines.append("  ▼ Sell trigger: STC crossed below 75")
+        lines += [""]
+        if result.history:
+            hist_str = "  ".join(f"{v:.0f}" for v in result.history[-8:])
+            lines.append(f"  History (last 8): {hist_str}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _rvi_cmd(args: list[str]) -> str:
         """Relative Vigor Index: close-to-open vigor vs bar range.
 
@@ -12095,4 +12152,6 @@ def build_command_handlers(
         "alligator": _fractal_cmd,
         "rvi": _rvi_cmd,
         "vigor": _rvi_cmd,
+        "stc": _stc_cmd,
+        "schaff": _stc_cmd,
     }
