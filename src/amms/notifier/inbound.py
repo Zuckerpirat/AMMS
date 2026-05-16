@@ -6585,6 +6585,62 @@ def build_command_handlers(
         lines.append(result.verdict)
         return "\n".join(lines)
 
+    def _cvar_cmd(args: list[str]) -> str:
+        """Expected Shortfall / CVaR: average loss in the worst X% of scenarios.
+
+        Usage: /cvar [SYM]
+          (no args): CVaR from historical closed trade PnL distribution
+          (SYM): CVaR from bar return distribution for that ticker
+        Shows VaR and CVaR at 90%, 95%, 99% confidence levels.
+        """
+        if conn is None and data is None:
+            return "DB and data client not wired."
+
+        from amms.analysis.cvar import from_bars, from_trades
+
+        if args:
+            # Bar-based CVaR
+            sym = args[0].upper()
+            if data is None:
+                return "Data client not wired."
+            try:
+                bars = data.get_bars(sym, limit=120)
+            except Exception as e:
+                return f"data error: {e!r}"
+            result = from_bars(bars, symbol=sym)
+            if result is None:
+                return f"Need 30+ bars for {sym}."
+        else:
+            # Trade-based CVaR
+            if conn is None:
+                return "DB not wired."
+            result = from_trades(conn)
+            if result is None:
+                return "Need 10+ closed trades with losses."
+
+        risk_icon = {"extreme": "🚨", "high": "⚠️", "moderate": "🟡", "low": "✅"}.get(result.tail_risk_label, "")
+        lines = [
+            f"── CVaR / Expected Shortfall ({result.source}) ──",
+            f"  Tail risk:  {risk_icon} {result.tail_risk_label.upper()}",
+            f"  Tail/avg:   {result.tail_risk_score:.2f}×",
+            "",
+            f"  {'Conf':>6}  {'VaR':>8}  {'CVaR':>8}  {'N tail':>7}",
+        ]
+        for lv in result.levels:
+            lines.append(
+                f"  {lv.confidence*100:.0f}%    "
+                f"{lv.var:>7.2f}%  {lv.cvar:>7.2f}%  {lv.n_tail_obs:>6}"
+            )
+        lines += [
+            "",
+            f"  Max single loss:  {result.max_loss:.2f}%",
+            f"  Avg loss:         {result.avg_loss:.2f}%",
+            f"  N observations:   {result.n_observations}  ({result.n_losses} losses)",
+            "",
+            result.verdict,
+        ]
+        return "\n".join(lines)
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -9227,4 +9283,6 @@ def build_command_handlers(
         "disposition": _lossaversion_cmd,
         "corrb": _corrbreakdown_cmd,
         "corrbreakdown": _corrbreakdown_cmd,
+        "cvar": _cvar_cmd,
+        "es": _cvar_cmd,
     }
