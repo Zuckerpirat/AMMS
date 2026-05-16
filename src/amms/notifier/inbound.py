@@ -7036,6 +7036,196 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    # ── Broker Switch / Risk Guard / Scheduler / Live Guard ──────────────
+
+    _broker_choice: list[str] = ["local"]   # "local" or "alpaca"
+    _risk_guard_instance: list = []
+    _scheduler_instance: list = []
+
+    def _get_broker():
+        """Return active broker — local paper trader or Alpaca paper broker."""
+        choice = _broker_choice[0]
+        if choice == "alpaca":
+            if not hasattr(_get_broker, "_alpaca"):
+                try:
+                    from amms.config import load_settings
+                    from amms.execution.alpaca_broker import AlpacaPaperBroker
+                    settings = load_settings()
+                    _get_broker._alpaca = AlpacaPaperBroker.from_settings(settings)
+                except Exception as exc:
+                    _broker_choice[0] = "local"
+                    raise RuntimeError(f"Alpaca init failed: {exc}")
+            return _get_broker._alpaca
+        return _get_paper_trader()
+
+    def _get_risk_guard():
+        from amms.execution.risk_guard import RiskGuard
+        if not _risk_guard_instance:
+            _risk_guard_instance.append(RiskGuard(_get_broker()))
+        return _risk_guard_instance[0]
+
+    def _usebroker_cmd(args: list[str]) -> str:
+        """Switch the active broker.
+
+        Usage: /usebroker [local|alpaca]
+        Without arg: show current.
+        """
+        if not args:
+            return f"Current broker: {_broker_choice[0]}"
+        choice = args[0].lower()
+        if choice not in {"local", "alpaca"}:
+            return "Choices: local | alpaca"
+
+        if choice == "alpaca":
+            try:
+                from amms.config import load_settings
+                from amms.execution.alpaca_broker import AlpacaPaperBroker
+                settings = load_settings()
+                if hasattr(_get_broker, "_alpaca"):
+                    delattr(_get_broker, "_alpaca")
+                _get_broker._alpaca = AlpacaPaperBroker.from_settings(settings)
+            except Exception as exc:
+                return f"Alpaca init failed: {exc}"
+
+        _broker_choice[0] = choice
+        # Reset cached auto-trader / risk guard so they pick up the new broker
+        _auto_trader_instance.clear()
+        _risk_guard_instance.clear()
+        return f"Broker switched to: {choice}"
+
+    def _killswitch_cmd(args: list[str]) -> str:
+        """Arm or disarm the killswitch.
+
+        Usage: /killswitch on REASON  → arm (blocks all trading)
+               /killswitch off        → disarm
+               /killswitch            → show status
+        """
+        guard = _get_risk_guard()
+
+        if not args:
+            s = guard.status()
+            armed = "🛑 ARMED" if s["killswitch"] else "✓ disarmed"
+            extra = f" — {s['kill_reason']} ({s['kill_at']})" if s["killswitch"] else ""
+            return f"Killswitch: {armed}{extra}"
+
+        cmd = args[0].lower()
+        if cmd in {"on", "arm"}:
+            reason = " ".join(args[1:]) or "manual"
+            guard.arm_killswitch(reason=reason)
+            return f"🛑 KILLSWITCH ARMED: {reason}"
+        if cmd in {"off", "disarm"}:
+            guard.disarm_killswitch()
+            return "✓ Killswitch disarmed"
+        return "Usage: /killswitch [on|off] [reason]"
+
+    def _riskstatus_cmd(args: list[str]) -> str:
+        """Show risk guard status: drawdown, daily loss, exposure, killswitch."""
+        guard = _get_risk_guard()
+        s = guard.status()
+        kill_str = "🛑 ARMED" if s["killswitch"] else "✓ disarmed"
+        lines = [
+            "══ Risk Guard ══",
+            "",
+            f"  Enabled:        {'yes' if s['enabled'] else 'no'}",
+            f"  Killswitch:     {kill_str}",
+        ]
+        if s["killswitch"]:
+            lines.append(f"  Kill reason:    {s['kill_reason']}")
+
+        lims = s["limits"]
+        lines += [
+            "",
+            f"  Equity:         ${s['equity']:,.2f}",
+            f"  Peak equity:    ${s['peak_equity']:,.2f}",
+            f"  Drawdown:       {s['drawdown_pct']:+.2f}%   (limit {lims['max_dd_pct']:.1f}%)",
+            f"  Daily P&L:      {s['daily_loss_pct']:+.2f}%   (limit {lims['max_daily_pct']:.1f}%)",
+            f"  Gross exposure: {s['gross_exposure_pct']:.1f}% (limit {lims['max_exposure_pct']:.1f}%)",
+        ]
+        return "\n".join(lines)
+
+    def _schedstart_cmd(args: list[str]) -> str:
+        """Start the background scheduler.
+
+        Usage: /schedstart [SECONDS] SYMBOL1 SYMBOL2 ...
+        """
+        from amms.execution.scheduler import TraderScheduler
+
+        if not args:
+            return "Usage: /schedstart [SECONDS] SYMBOL1 SYMBOL2 ..."
+
+        tick = 300
+        syms: list[str] = []
+        for a in args:
+            if a.isdigit() and not syms:
+                tick = max(10, min(int(a), 3600))
+            else:
+                syms.append(a.upper())
+
+        if not syms:
+            return "Need at least one SYMBOL."
+
+        if _scheduler_instance:
+            old = _scheduler_instance[0]
+            if old.is_running():
+                return f"Scheduler already running — stop with /schedstop first."
+
+        sched = TraderScheduler(_get_auto_trader(), syms, tick_seconds=tick)
+        _scheduler_instance.clear()
+        _scheduler_instance.append(sched)
+        sched.start()
+        return f"✓ Scheduler started — {len(syms)} symbols, tick every {tick}s"
+
+    def _schedstop_cmd(args: list[str]) -> str:
+        """Stop the background scheduler."""
+        if not _scheduler_instance:
+            return "Scheduler not started."
+        sched = _scheduler_instance[0]
+        if not sched.is_running():
+            return "Scheduler already stopped."
+        sched.stop()
+        return "✓ Scheduler stopped"
+
+    def _schedstatus_cmd(args: list[str]) -> str:
+        """Show scheduler status."""
+        if not _scheduler_instance:
+            return "Scheduler not started."
+        s = _scheduler_instance[0].status()
+        state = "🟢 RUNNING" if s.running else "⬜ stopped"
+        lines = [
+            "══ Scheduler ══",
+            "",
+            f"  State:       {state}",
+            f"  Tick every:  {s.tick_seconds}s",
+            f"  Ticks done:  {s.tick_count}",
+            f"  Started:     {s.started_at or '—'}",
+            f"  Last tick:   {s.last_tick_at or '—'}",
+            f"  Last result: {s.last_tick_summary or '—'}",
+            f"  Symbols:     {', '.join(s.symbols)}",
+        ]
+        return "\n".join(lines)
+
+    def _live_status_cmd(args: list[str]) -> str:
+        """Show live-trading guard status."""
+        from amms.execution.live_guard import check_live_allowed
+        lim = check_live_allowed()
+        if lim.enabled:
+            return (
+                "🚨 LIVE TRADING ACKNOWLEDGED 🚨\n"
+                f"  Per-order cap: ${lim.max_order_usd:,.2f}\n"
+                f"  Per-day cap:   ${lim.max_daily_usd:,.2f}\n"
+                "  (Real money may be at risk if broker is switched to live URL.)"
+            )
+        return (
+            "✓ Live trading DISABLED (safe)\n"
+            f"  Reason: {lim.reason_if_disabled}\n"
+            "  To enable (real money) you must set ALL of:\n"
+            "    ALPACA_BASE_URL = live endpoint\n"
+            "    AMMS_LIVE_ACKNOWLEDGED = I_UNDERSTAND_REAL_MONEY\n"
+            "    AMMS_LIVE_MAX_ORDER_USD = <positive number>\n"
+            "    AMMS_LIVE_MAX_DAILY_USD = <positive number>\n"
+            "  AND deliberately remove the PAPER_HOST_MARKER guard in config.py."
+        )
+
     # ── Auto-Trader ────────────────────────────────────────────────────────
 
     _auto_trader_instance: list = []
@@ -7044,7 +7234,7 @@ def build_command_handlers(
         from amms.execution.auto_trader import AutoTrader, AutoTraderConfig
         if not _auto_trader_instance:
             _auto_trader_instance.append(
-                AutoTrader(_get_paper_trader(), data, AutoTraderConfig())
+                AutoTrader(_get_broker(), data, AutoTraderConfig())
             )
         return _auto_trader_instance[0]
 
@@ -12903,4 +13093,16 @@ def build_command_handlers(
         "autorun": _autorun_cmd,
         "autotrade": _autorun_cmd,
         "autoconfig": _autoconfig_cmd,
+        "usebroker": _usebroker_cmd,
+        "broker": _usebroker_cmd,
+        "killswitch": _killswitch_cmd,
+        "kill": _killswitch_cmd,
+        "riskstatus": _riskstatus_cmd,
+        "riskguard": _riskstatus_cmd,
+        "schedstart": _schedstart_cmd,
+        "schedstop": _schedstop_cmd,
+        "schedstatus": _schedstatus_cmd,
+        "sched": _schedstatus_cmd,
+        "livestatus": _live_status_cmd,
+        "live": _live_status_cmd,
     }
