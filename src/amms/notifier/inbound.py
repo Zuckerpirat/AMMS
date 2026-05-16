@@ -5656,6 +5656,58 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _sigagg_cmd(args: list[str]) -> str:
+        """Multi-indicator signal aggregator: RSI, MACD, ROC, WR, SMA, Stoch, OBV.
+
+        Usage: /sigagg [SYM]
+        Votes from 8 indicators aggregated into -100 to +100 consensus score.
+        Positive = bullish, negative = bearish. Shows per-indicator votes.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /sigagg AAPL)"
+
+        from amms.analysis.signal_aggregator import compute as sa_compute
+
+        signal_icon = {
+            "strong_bull": "🚀", "bull": "🟢",
+            "neutral": "↔️ ", "bear": "🔴", "strong_bear": "⛔",
+        }
+        vote_icon = {1: "🟢", 0: "↔️ ", -1: "🔴"}
+
+        lines = []
+        for sym in symbols[:4]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = sa_compute(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 35+ bars)")
+                continue
+
+            icon = signal_icon.get(result.signal, "")
+            lines += [
+                f"── {sym} Signal Consensus ──",
+                f"  Score:  {result.score:+.0f}/100  {icon} {result.signal}",
+                f"  Votes:  {result.bull_votes}🟢  {result.bear_votes}🔴  {result.neutral_votes}↔️",
+                "",
+            ]
+            for v in result.votes:
+                vi = vote_icon.get(v.vote, "")
+                val_str = f"{v.value:.2f}" if v.value is not None else "n/a"
+                lines.append(f"  {vi} {v.name:<14}  {val_str:>8}  [{v.signal}]")
+            lines += [f"  {result.verdict}", ""]
+
+        return "\n".join(lines).rstrip()
+
     def _holdreturn_cmd(args: list[str]) -> str:
         """Hold duration vs return analysis: which hold lengths work best?
 
@@ -7752,4 +7804,6 @@ def build_command_handlers(
         "screener": _screen_cmd,
         "holdreturn": _holdreturn_cmd,
         "dreturn": _holdreturn_cmd,
+        "sigagg": _sigagg_cmd,
+        "consensus": _sigagg_cmd,
     }
