@@ -6796,6 +6796,53 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _volfcast_cmd(args: list[str]) -> str:
+        """EWMA Volatility Forecast: expected daily vol and 1-day 95% VaR.
+
+        Usage: /volfcast SYMBOL [BARS]  (default 100 bars)
+        Uses RiskMetrics EWMA model (λ=0.94) for volatility forecast.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(20, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /volfcast SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.volatility_forecast import analyze as vf_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = vf_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 15+)."
+
+        lines = [f"── EWMA Vol Forecast: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Current daily vol:   {result.ewma_vol_daily:.3f}%")
+        lines.append(f"  Annualised vol:      {result.ewma_vol_annual:.1f}%")
+        lines.append(f"  1-day 95% VaR:       {result.var_95_1d:.2f}%")
+        lines.append(f"  Vol percentile:      {result.vol_percentile:.0f}%  ({result.vol_trend})")
+        lines.append("")
+        lines.append(f"  Forward forecasts (daily vol):")
+        lines.append(f"    1-day:  {result.vol_1d:.3f}%")
+        lines.append(f"    5-day:  {result.vol_5d:.3f}%")
+        lines.append(f"    10-day: {result.vol_10d:.3f}%")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _exhaust_cmd(args: list[str]) -> str:
         """Trend Exhaustion Detector: price extension, RSI divergence, momentum decay.
 
@@ -10037,4 +10084,6 @@ def build_command_handlers(
         "fiblevels": _fib_cmd,
         "exhaust": _exhaust_cmd,
         "trendexhaust": _exhaust_cmd,
+        "volfcast": _volfcast_cmd,
+        "ewmavol": _volfcast_cmd,
     }
