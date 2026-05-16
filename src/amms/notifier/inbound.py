@@ -6741,6 +6741,61 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
+    def _calendaranomaly_cmd(args: list[str]) -> str:
+        """Calendar Anomaly Detector: day-of-week, month, Q-end, month-start effects.
+
+        Usage: /calanom [LIMIT]  (default 1000 trades)
+        Tests if you systematically perform better on specific days or months.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 1000
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 5000))
+            except ValueError:
+                pass
+
+        from amms.analysis.calendar_anomaly import compute as ca_compute
+
+        result = ca_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 10+ closed trades)."
+
+        lines = [f"── Calendar Anomalies ({result.n_trades} trades) ──", ""]
+
+        # Weekday table
+        lines.append("  Day-of-Week:")
+        for s in result.by_weekday:
+            if s.n_trades == 0:
+                continue
+            marker = "★" if s == result.best_weekday else ("☆" if s == result.worst_weekday else " ")
+            rel = "" if s.reliable else " ⚠️"
+            lines.append(f"  {marker} {s.label:<10}  {s.n_trades:>4}×  WR {s.win_rate:>4.0f}%  avg {s.avg_pnl_pct:>+6.2f}%{rel}")
+        lines.append("")
+
+        # Month table (only months with trades)
+        months_with_trades = [s for s in result.by_month if s.n_trades > 0]
+        if months_with_trades:
+            lines.append("  Monthly (trades > 0):")
+            for s in sorted(months_with_trades, key=lambda x: -x.avg_pnl_pct)[:6]:
+                marker = "★" if s == result.best_month else ("☆" if s == result.worst_month else " ")
+                rel = "" if s.reliable else " ⚠️"
+                lines.append(f"  {marker} {s.label:<5}  {s.n_trades:>4}×  WR {s.win_rate:>4.0f}%  avg {s.avg_pnl_pct:>+6.2f}%{rel}")
+            lines.append("")
+
+        # Q-end and month-start effects
+        qe, qo = result.qend_vs_other
+        if qe.n_trades > 0:
+            lines.append(f"  Q-end:       {qe.n_trades}× avg {qe.avg_pnl_pct:+.2f}%  vs  Other: {qo.avg_pnl_pct:+.2f}%")
+        ms, mo = result.month_start_vs_other
+        if ms.n_trades > 0:
+            lines.append(f"  Month-start: {ms.n_trades}× avg {ms.avg_pnl_pct:+.2f}%  vs  Other: {mo.avg_pnl_pct:+.2f}%")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -9389,4 +9444,6 @@ def build_command_handlers(
         "fillgap": _gapfill_cmd,
         "exitq": _exitquality_cmd,
         "exitquality": _exitquality_cmd,
+        "calanom": _calendaranomaly_cmd,
+        "seasonality": _calendaranomaly_cmd,
     }
