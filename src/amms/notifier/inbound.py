@@ -5756,6 +5756,65 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _ruin_cmd(args: list[str]) -> str:
+        """Risk of ruin: Monte Carlo probability of hitting a drawdown threshold.
+
+        Usage: /ruin [THRESHOLD%]  (default 30%)
+        Bootstraps 1000 equity paths from trade history to estimate the
+        probability of losing THRESHOLD% of capital.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        threshold = 30.0
+        if args:
+            try:
+                threshold = max(5.0, min(float(args[0].rstrip("%")), 95.0))
+            except ValueError:
+                pass
+
+        from amms.analysis.risk_of_ruin import compute as ror_compute
+
+        result = ror_compute(conn, ruin_threshold_pct=threshold)
+        if result is None:
+            return "Not enough trade history (need 10+ trades)."
+
+        risk_icon = {
+            "CRITICAL": "⛔", "HIGH": "🔴", "MODERATE": "⚠️", "LOW": "✅"
+        }
+        ruin_pct = result.ruin_probability * 100
+        level = (
+            "CRITICAL" if result.ruin_probability >= 0.20 else
+            "HIGH" if result.ruin_probability >= 0.10 else
+            "MODERATE" if result.ruin_probability >= 0.05 else
+            "LOW"
+        )
+        icon = risk_icon.get(level, "")
+
+        lines = [
+            f"── Risk of Ruin ({threshold:.0f}% drawdown threshold) ──",
+            f"  Ruin Probability: {ruin_pct:.1f}%  {icon} [{level}]",
+            f"  Based on {result.n_simulations} simulations × {result.n_trades_per_sim} trades",
+            "",
+            f"  Drawdown Stats (across all paths):",
+            f"    Median max DD:  {result.median_max_drawdown:.1f}%",
+            f"    95th pct max DD: {result.p95_max_drawdown:.1f}%",
+        ]
+        if result.expected_trades_to_ruin is not None:
+            lines.append(f"    Median trades to ruin: {result.expected_trades_to_ruin}")
+
+        lines += [
+            "",
+            f"  Historical edge:",
+            f"    Win rate:  {result.win_rate:.1f}%",
+            f"    Avg win:   {result.avg_win_pct:+.2f}%",
+            f"    Avg loss:  {result.avg_loss_pct:+.2f}%",
+            f"    Sample:    {result.n_historical_trades} trades",
+            "",
+            result.verdict,
+        ]
+        return "\n".join(lines)
+
     def _scorecard_cmd(args: list[str]) -> str:
         """Trading score card: weighted grade across 7 key performance metrics.
 
@@ -8121,4 +8180,6 @@ def build_command_handlers(
         "tradefreq": _tfreq_cmd,
         "scorecard": _scorecard_cmd,
         "grade": _scorecard_cmd,
+        "ruin": _ruin_cmd,
+        "ruinrisk": _ruin_cmd,
     }
