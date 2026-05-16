@@ -7036,6 +7036,63 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _coppock_cmd(args: list[str]) -> str:
+        """Coppock Curve: long-term buy/sell signal from double ROC + WMA.
+
+        Usage: /coppock SYMBOL [short]  (add 'short' for 14/11/10 periods)
+        Shows Coppock value, direction, zero-line position, and buy/sell signals.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        short_mode = any(a.lower() in ("short", "s") for a in args)
+        bar_count = 60 if short_mode else 600
+
+        # Extract symbol (first non-digit, non-mode arg)
+        symbol_parts = [a for a in parts if a.lower() not in ("short", "s")]
+        if not symbol_parts:
+            return "Usage: /coppock SYMBOL [short]"
+
+        symbol = symbol_parts[0].upper()
+
+        from amms.analysis.coppock_curve import analyze as cop_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = cop_analyze(bars, symbol=symbol, short_mode=short_mode)
+        if result is None:
+            suffix = "55+" if short_mode else "530+"
+            return f"Not enough bars for {symbol} (need {suffix})."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        rising_str = "↑ RISING" if result.rising else "↓ FALLING"
+        zero_str   = "above zero" if result.above_zero else "below zero"
+
+        lines = [f"── Coppock Curve: {result.symbol} ({result.bars_used} bars, {'short' if short_mode else 'long'} mode) ──", ""]
+        lines.append(f"  Signal:   {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:    {result.score:+.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  Coppock:  {result.coppock:+.4f}  {rising_str}  ({zero_str})")
+        lines.append(f"  Prev:     {result.coppock_prev:+.4f}")
+        lines.append(f"  Accel:    {result.acceleration:+.4f}")
+        if result.buy_signal:
+            lines.append("  🟢 BUY SIGNAL: turning up from below zero")
+        if result.sell_alert:
+            lines.append("  🔴 SELL ALERT: turning down from above zero")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _force_cmd(args: list[str]) -> str:
         """Force Index: Elder's price × volume momentum oscillator.
 
@@ -11783,4 +11840,6 @@ def build_command_handlers(
         "mi": _massindex_cmd,
         "force": _force_cmd,
         "forceindex": _force_cmd,
+        "coppock": _coppock_cmd,
+        "coppockcurve": _coppock_cmd,
     }
