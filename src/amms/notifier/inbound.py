@@ -6796,6 +6796,59 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _fib_cmd(args: list[str]) -> str:
+        """Fibonacci Retracement Levels: swing high/low Fib levels and nearest support/resistance.
+
+        Usage: /fib SYMBOL [WINDOW]  (default swing window = 50 bars, loads 200 bars)
+        Shows all Fib levels and where price currently sits.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        swing_window = 50
+        for a in args:
+            if a.isdigit():
+                swing_window = max(10, min(int(a), 200))
+
+        if not parts:
+            return "Usage: /fib SYMBOL [WINDOW]"
+
+        symbol = parts[0].upper()
+        bar_count = swing_window + 100
+
+        from amms.analysis.fib_retracement import analyze as fib_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = fib_analyze(bars, symbol=symbol, swing_window=swing_window)
+        if result is None:
+            return f"Not enough bars or no valid swing found for {symbol}."
+
+        lines = [f"── Fibonacci Levels: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Swing: {result.swing_low:.2f} → {result.swing_high:.2f}  ({result.trend_direction}-trend)")
+        lines.append(f"  Price: {result.current_price:.2f}  (retracement depth {result.retracement_depth:.0f}%)")
+        lines.append("")
+
+        lines.append("  Levels:")
+        for l in result.levels:
+            marker = " ◄" if l == result.nearest_level else ""
+            sup = " [S]" if l == result.nearest_support else ""
+            res = " [R]" if l == result.nearest_resistance else ""
+            near = " ~near~" if l.is_near else ""
+            lines.append(
+                f"    {l.label:>7}  {l.price:>10.2f}  ({l.pct_from_current:>+7.2f}%){near}{marker}{sup}{res}"
+            )
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _breadthproxy_cmd(args: list[str]) -> str:
         """Market Breadth Proxy: % of symbols above SMA-50, RSI, ROC-20.
 
@@ -9928,4 +9981,6 @@ def build_command_handlers(
         "bbsqueeze": _bbsqueeze_cmd,
         "breadthproxy": _breadthproxy_cmd,
         "mktbreadth": _breadthproxy_cmd,
+        "fib": _fib_cmd,
+        "fiblevels": _fib_cmd,
     }
