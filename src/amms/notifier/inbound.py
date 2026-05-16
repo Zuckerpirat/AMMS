@@ -7036,6 +7036,71 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _pmo_cmd(args: list[str]) -> str:
+        """Price Momentum Oscillator (PMO): double-smoothed ROC momentum.
+
+        Usage: /pmo SYMBOL [BARS]  (default 120 bars)
+        Shows PMO, signal, histogram, crossovers, and overbought/oversold.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(90, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /pmo SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.pmo import analyze as pmo_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = pmo_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 85+)."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        rank_bar = "░" * int(result.pmo_pct_rank / 10) + "▓" + "░" * (10 - int(result.pmo_pct_rank / 10))
+
+        lines = [f"── PMO: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  PMO:      {result.pmo:+.4f}  ({'above' if result.above_signal else 'below'} signal)")
+        lines.append(f"  Signal:   {result.pmo_signal:+.4f}")
+        lines.append(f"  Hist:     {result.pmo_histogram:+.4f}")
+        lines.append(f"  Rank:     {result.pmo_pct_rank:.0f}th pct  [{rank_bar}]")
+
+        tags = []
+        if result.overbought:
+            tags.append("overbought")
+        if result.oversold:
+            tags.append("oversold")
+        if result.cross_up:
+            tags.append("▲ bullish cross")
+        if result.cross_down:
+            tags.append("▼ bearish cross")
+        if tags:
+            lines.append(f"  Tags:     {', '.join(tags)}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _vortex_cmd(args: list[str]) -> str:
         """Vortex Indicator: VI+ and VI- trend direction oscillators.
 
@@ -11486,4 +11551,6 @@ def build_command_handlers(
         "kst": _trix_cmd,
         "vortex": _vortex_cmd,
         "vi": _vortex_cmd,
+        "pmo": _pmo_cmd,
+        "pricemomentum": _pmo_cmd,
     }
