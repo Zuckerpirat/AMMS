@@ -6229,6 +6229,55 @@ def build_command_handlers(
 
         return "\n".join(lines).rstrip()
 
+    def _volskew_cmd(args: list[str]) -> str:
+        """Realized volatility skew: upside vs. downside vol, tail ratio, gain-to-pain.
+
+        Usage: /volskew [SYM]  (default: all open positions)
+        Negative skew (down vol > up vol) signals crash risk.
+        Positive skew (up vol > down vol) signals breakout potential.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /volskew AAPL)"
+
+        from amms.analysis.vol_skew import analyze as vs_analyze
+
+        skew_icon = {"positive": "↑", "negative": "↓", "symmetric": "↔"}
+        lines = []
+        for sym in symbols[:5]:
+            try:
+                bars = data.get_bars(sym, limit=120)
+            except Exception:
+                bars = []
+            result = vs_analyze(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 10+ bars with up+down returns)")
+                continue
+
+            si = skew_icon.get(result.skew_label, "")
+            lines += [
+                f"── {sym} Vol Skew ({result.bars_used} bars) ──",
+                f"  Skew:     {si} {result.skew_label.upper()}  ({result.skew:+.3f})",
+                f"  RV total: {result.rv_total:.1f}%  "
+                f"(up {result.rv_up:.1f}% / down {result.rv_down:.1f}%)",
+                f"  Tail ratio:   {result.tail_ratio:.2f}  {'(fat upside)' if result.tail_ratio > 1.2 else '(fat downside)' if result.tail_ratio < 0.8 else '(balanced)'}",
+                f"  Gain/pain:    {result.gain_to_pain:.2f}",
+                f"  Semi-dev:     {result.semi_deviation:.1f}%",
+                f"  Up days:      {result.up_days_pct:.0f}%  "
+                f"(avg +{result.avg_up_return:.2f}% / avg {result.avg_down_return:.2f}%)",
+                f"  {result.verdict}",
+                "",
+            ]
+
+        return "\n".join(lines).rstrip()
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -8859,4 +8908,6 @@ def build_command_handlers(
         "anchored": _avwap_cmd,
         "ofi": _ofi_cmd,
         "orderflow": _ofi_cmd,
+        "volskew": _volskew_cmd,
+        "vskew": _volskew_cmd,
     }
