@@ -7036,6 +7036,64 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _force_cmd(args: list[str]) -> str:
+        """Force Index: Elder's price × volume momentum oscillator.
+
+        Usage: /force SYMBOL [BARS]  (default 80 bars)
+        Shows FI(2) short-term and FI(13) medium-term with Elder setups.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(65, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /force SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.force_index import analyze as fi_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = fi_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 60+)."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        lines = [f"── Force Index: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  FI(2):   {result.fi_2:+.1f}  ({'positive' if result.fi2_positive else 'negative'})")
+        lines.append(f"  FI(13):  {result.fi_13:+.1f}  ({'positive' if result.fi13_positive else 'negative'})")
+        lines.append(f"  Raw FI:  {result.raw_fi:+.1f}")
+        lines.append(f"  Trend:   {result.trend_confirmed.upper()}")
+        if result.fi13_zero_cross:
+            lines.append("  ⚡ FI(13) zero-line cross")
+        if result.buy_setup:
+            lines.append("  ▲ BUY SETUP: FI(2) negative in uptrend")
+        if result.sell_setup:
+            lines.append("  ▼ SELL SETUP: FI(2) positive in downtrend")
+        if result.fi2_spike:
+            lines.append("  ⚠ Volume/force spike detected")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _massindex_cmd(args: list[str]) -> str:
         """Mass Index: range expansion/contraction and reversal bulge detection.
 
@@ -11723,4 +11781,6 @@ def build_command_handlers(
         "klinger": _kvo_cmd,
         "massindex": _massindex_cmd,
         "mi": _massindex_cmd,
+        "force": _force_cmd,
+        "forceindex": _force_cmd,
     }
