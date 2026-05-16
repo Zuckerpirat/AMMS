@@ -5656,6 +5656,73 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _risksize_cmd(args: list[str]) -> str:
+        """Fixed-fractional position sizing based on stop-loss distance.
+
+        Usage: /risksize SYM ENTRY STOP [CAPITAL]
+          SYM    — ticker symbol
+          ENTRY  — planned entry price
+          STOP   — stop-loss price
+          CAPITAL — account size (default: uses broker account equity)
+
+        Example: /risksize AAPL 175.00 170.00
+        Shows shares for 0.5%%, 1%%, 2%% account risk with 1R/2R/3R targets.
+        """
+        USAGE = "Usage: /risksize SYM ENTRY STOP [CAPITAL]"
+
+        if len(args) < 3:
+            return USAGE
+
+        sym = args[0].upper()
+        try:
+            entry = float(args[1])
+            stop = float(args[2])
+        except ValueError:
+            return "Invalid price — " + USAGE
+
+        capital = None
+        if len(args) >= 4:
+            try:
+                capital = float(args[3])
+            except ValueError:
+                pass
+
+        if capital is None:
+            try:
+                acc = broker.get_account()
+                capital = float(acc.equity)
+            except Exception:
+                capital = 100_000.0
+
+        from amms.analysis.position_sizer import compute as ps_compute
+
+        result = ps_compute(sym, entry, stop, capital)
+        if result is None:
+            return (
+                f"Invalid inputs: stop must be below entry, capital must be > 0.\n"
+                + USAGE
+            )
+
+        lines = [
+            f"── Position Sizing: {result.symbol} ──",
+            f"  Entry:  ${result.entry_price:.2f}",
+            f"  Stop:   ${result.stop_price:.2f}  "
+            f"(${result.risk_per_share:.2f} / {result.risk_per_share_pct:.1f}%% per share)",
+            f"  Capital: ${capital:,.0f}",
+            "",
+            f"  {'Risk%%':>5}  {'Shares':>7}  {'Value':>10}  {'Wt%%':>5}  "
+            f"{'MaxLoss':>9}  1R → 2R → 3R",
+        ]
+        for level in result.levels:
+            lines.append(
+                f"  {level.risk_pct:>4.1f}%%  {level.shares:>7}  "
+                f"${level.position_value:>9,.0f}  {level.position_weight_pct:>4.1f}%%"
+                f"  ${level.max_loss:>8,.0f}"
+                f"  ${level.target_1r:.2f} → ${level.target_2r:.2f} → ${level.target_3r:.2f}"
+            )
+        lines += ["", f"  {result.note}"]
+        return "\n".join(lines)
+
     def _sectordetail_cmd(_args: list[str]) -> str:
         """Detailed sector exposure vs S&P 500 benchmark weights.
 
@@ -7347,4 +7414,6 @@ def build_command_handlers(
         "intraday": _imom_cmd,
         "sectordetail": _sectordetail_cmd,
         "sxp": _sectordetail_cmd,
+        "risksize": _risksize_cmd,
+        "rs2": _risksize_cmd,
     }
