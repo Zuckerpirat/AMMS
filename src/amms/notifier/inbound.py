@@ -7036,6 +7036,59 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _rvi_cmd(args: list[str]) -> str:
+        """Relative Vigor Index: close-to-open vigor vs bar range.
+
+        Usage: /rvi SYMBOL [BARS]  (default 80 bars)
+        Shows RVI, signal line, histogram, and cross detection.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(50, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /rvi SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.relative_vigor import analyze as rvi_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = rvi_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 45+)."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        lines = [f"── Relative Vigor Index: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  RVI:       {result.rvi:+.5f}  ({'above' if result.above_signal else 'below'} signal)")
+        lines.append(f"  Signal:    {result.rvi_signal:+.5f}")
+        lines.append(f"  Histogram: {result.rvi_histogram:+.5f}")
+        if result.cross_up:
+            lines.append("  ▲ Bullish cross")
+        if result.cross_down:
+            lines.append("  ▼ Bearish cross")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _fractal_cmd(args: list[str]) -> str:
         """Williams Fractal + Alligator: swing points and adaptive trend lines.
 
@@ -12040,4 +12093,6 @@ def build_command_handlers(
         "kaufman": _kama_cmd,
         "fractal": _fractal_cmd,
         "alligator": _fractal_cmd,
+        "rvi": _rvi_cmd,
+        "vigor": _rvi_cmd,
     }
