@@ -6485,6 +6485,52 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _lossaversion_cmd(args: list[str]) -> str:
+        """Behavioural bias analyzer: disposition effect and loss aversion.
+
+        Usage: /lossav [LIMIT]  (default 500 trades)
+        Compares hold times and PnL% for winners vs. losers.
+        Flags if you hold losers longer than winners (disposition effect)
+        or if your losses are systematically larger than your wins.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.loss_aversion import compute as la_compute
+
+        result = la_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need both wins and losses with timestamps)."
+
+        disp_icon = "⚠️" if result.disposition_effect else "✅"
+        la_icon = {"excessive": "🚨", "high": "⚠️", "normal": "✅", "low": "✅"}.get(result.loss_aversion_level, "")
+
+        lines = [
+            f"── Behavioural Analysis ({result.n_trades} trades) ──",
+            "",
+            f"  Disposition Effect: {disp_icon} {result.disposition_strength.upper()}",
+            f"    Hold winner:  {result.median_hold_winner_min:.0f} min (median)",
+            f"    Hold loser:   {result.median_hold_loser_min:.0f} min (median)",
+            f"    Hold ratio:   {result.hold_ratio:.2f}×  (>1.2 = disposition bias)",
+            "",
+            f"  Loss Aversion:    {la_icon} {result.loss_aversion_level.upper()}",
+            f"    Avg win:  +{result.avg_win_pct:.2f}%",
+            f"    Avg loss: -{result.avg_loss_pct:.2f}%",
+            f"    Loss mult: {result.loss_multiplier:.2f}×  (<1 = good, >2 = risky)",
+            "",
+            f"  Premature exits:  {result.premature_exit_rate:.0f}% of winners below avg",
+            "",
+            result.verdict,
+        ]
+        return "\n".join(lines)
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -9123,4 +9169,6 @@ def build_command_handlers(
         "regkelly": _regime_sizer_cmd,
         "tcluster": _tcluster_cmd,
         "tradecluster": _tcluster_cmd,
+        "lossav": _lossaversion_cmd,
+        "disposition": _lossaversion_cmd,
     }
