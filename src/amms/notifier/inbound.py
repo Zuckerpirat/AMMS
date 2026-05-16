@@ -5656,6 +5656,52 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _imom_cmd(args: list[str]) -> str:
+        """Intraday momentum: VWAP position, A/D ratio, session range.
+
+        Usage: /imom [SYM]
+        Shows VWAP relation, price-in-range, accumulation/distribution,
+        and cumulative session return for each open position.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /imom AAPL)"
+
+        from amms.analysis.intraday_momentum import compute as imom_compute
+
+        signal_icon = {
+            "strong_bull": "🚀", "bull": "🟢",
+            "neutral": "↔️ ", "bear": "🔴", "strong_bear": "⛔",
+        }
+
+        lines = ["Intraday Momentum (VWAP / A-D / session range):"]
+        for sym in symbols[:8]:
+            try:
+                bars = data.get_bars(sym, limit=40)
+            except Exception:
+                bars = []
+            result = imom_compute(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 3+ bars)")
+                continue
+            icon = signal_icon.get(result.momentum_signal, "")
+            fade = " fade⚠️" if result.fade_detected else ""
+            lines.append(
+                f"  {sym:<6}  ${result.current_price:.2f}"
+                f"  VWAP ${result.vwap:.2f} [{result.price_vs_vwap}]"
+                f"  rng {result.price_in_range_pct:.0f}%%"
+                f"  ret {result.cumulative_return_pct:+.1f}%%"
+                f"  {icon} {result.momentum_signal}{fade}"
+            )
+        return "\n".join(lines)
+
     def _dduration_cmd(args: list[str]) -> str:
         """Drawdown duration analysis: how long and how deep.
 
@@ -7261,4 +7307,6 @@ def build_command_handlers(
         "exp": _expectancy_cmd,
         "dduration": _dduration_cmd,
         "underwater": _dduration_cmd,
+        "imom": _imom_cmd,
+        "intraday": _imom_cmd,
     }
