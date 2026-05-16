@@ -6846,6 +6846,63 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _donchian_cmd(args: list[str]) -> str:
+        """Donchian Channel Analyser: rolling high/low breakout channel.
+
+        Usage: /donchian SYMBOL [BARS]  (default 80 bars)
+        Shows N-bar high/low channel, breakout status, and channel width trend.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(25, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /donchian SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.donchian_channel import analyze as dc_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = dc_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 22+)."
+
+        pos_pct = int(result.price_position * 10)
+        channel_bar = "░" * pos_pct + "▓" + "░" * (10 - pos_pct)
+
+        bo_tag = ""
+        if result.breakout_up:
+            bo_tag = "  ▲ NEW HIGH"
+        elif result.breakout_down:
+            bo_tag = "  ▼ NEW LOW"
+        elif result.near_upper:
+            bo_tag = "  ~ near upper"
+        elif result.near_lower:
+            bo_tag = "  ~ near lower"
+
+        lines = [f"── Donchian Channel: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Price:  {result.current_price:.2f}{bo_tag}")
+        lines.append(f"  Upper:  {result.upper:.2f}  ({result.period}-bar high)")
+        lines.append(f"  Middle: {result.middle:.2f}")
+        lines.append(f"  Lower:  {result.lower:.2f}  ({result.period}-bar low)")
+        lines.append(f"  Width:  {result.channel_width_pct:.1f}%  [{channel_bar}]  {result.channel_trend}")
+        lines.append(f"  Since upper: {result.bars_since_upper} bars  |  Since lower: {result.bars_since_lower} bars")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _supertrend_cmd(args: list[str]) -> str:
         """Supertrend Indicator: ATR-based trend-following with flip detection.
 
@@ -10421,4 +10478,6 @@ def build_command_handlers(
         "kc": _keltner_cmd,
         "supertrend": _supertrend_cmd,
         "st": _supertrend_cmd,
+        "donchian": _donchian_cmd,
+        "dc": _donchian_cmd,
     }
