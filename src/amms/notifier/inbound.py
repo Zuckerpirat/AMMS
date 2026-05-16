@@ -7036,6 +7036,60 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _massindex_cmd(args: list[str]) -> str:
+        """Mass Index: range expansion/contraction and reversal bulge detection.
+
+        Usage: /massindex SYMBOL [BARS]  (default 150 bars)
+        Shows MI value, bulge status, and potential reversal signals.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 150
+        for a in args:
+            if a.isdigit():
+                bar_count = max(115, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /massindex SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.mass_index import analyze as mi_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = mi_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 115+)."
+
+        rank_bar = "░" * int(result.mi_pct_rank / 10) + "▓" + "░" * (10 - int(result.mi_pct_rank / 10))
+
+        lines = [f"── Mass Index: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Range:   {result.signal.upper()}")
+        lines.append(f"  Trend:   {result.trend_direction.upper()}")
+        lines += [""]
+        lines.append(f"  MI:      {result.mass_index:.3f}  ({result.signal})")
+        lines.append(f"  Rank:    {result.mi_pct_rank:.0f}th pct  [{rank_bar}]")
+        lines += [""]
+        if result.above_bulge_setup:
+            lines.append("  ⚠ BULGE SETUP: MI > 27 (range expanding)")
+        if result.below_reversal:
+            lines.append("  ✓ Below reversal line (< 26.5)")
+        if result.bulge_recently:
+            lines.append(f"  🔄 Reversal bulge completed → {result.reversal_signal.replace('_', ' ')}")
+        elif result.reversal_signal == "none":
+            lines.append("  No reversal bulge active")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _kvo_cmd(args: list[str]) -> str:
         """Klinger Volume Oscillator: long-term money flow trend oscillator.
 
@@ -11667,4 +11721,6 @@ def build_command_handlers(
         "detrended": _dpo_cmd,
         "kvo": _kvo_cmd,
         "klinger": _kvo_cmd,
+        "massindex": _massindex_cmd,
+        "mi": _massindex_cmd,
     }
