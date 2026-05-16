@@ -6846,6 +6846,55 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _cmf_cmd(args: list[str]) -> str:
+        """Chaikin Money Flow: volume-weighted buying/selling pressure.
+
+        Usage: /cmf SYMBOL [BARS]  (default 80 bars)
+        Shows CMF value (-1 to +1), accumulation/distribution signal, trend.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(25, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /cmf SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.chaikin_mf import analyze as cmf_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = cmf_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 22+)."
+
+        cmf_pct = int((result.cmf + 1.0) / 2.0 * 10)
+        cmf_bar = "░" * cmf_pct + "▓" + "░" * (10 - cmf_pct)
+
+        sig_arrow = {"strong_buy": "▲▲", "buy": "▲", "neutral": "─",
+                     "sell": "▼", "strong_sell": "▼▼"}.get(result.signal, "─")
+
+        lines = [f"── Chaikin Money Flow: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  CMF:     {result.cmf:+.3f}  [{cmf_bar}]")
+        lines.append(f"  Signal:  {sig_arrow} {result.signal.upper().replace('_', ' ')}")
+        lines.append(f"  Trend:   {result.cmf_trend.upper()}  ({result.trend_bars} bars)")
+        lines.append(f"  +Flow:   {result.above_zero_pct:.0f}% of bars positive")
+        lines.append(f"  Crosses: {result.zero_crossings}  |  Avg Vol: {result.avg_volume:,.0f}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _donchian_cmd(args: list[str]) -> str:
         """Donchian Channel Analyser: rolling high/low breakout channel.
 
@@ -10480,4 +10529,6 @@ def build_command_handlers(
         "st": _supertrend_cmd,
         "donchian": _donchian_cmd,
         "dc": _donchian_cmd,
+        "cmf": _cmf_cmd,
+        "chaikin": _cmf_cmd,
     }
