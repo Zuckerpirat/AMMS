@@ -6846,6 +6846,54 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _pascore_cmd(args: list[str]) -> str:
+        """Price Action Composite Score: 6-factor pure price analysis.
+
+        Usage: /pascore SYMBOL [BARS]  (default 150 bars)
+        Scores trend, momentum, mean reversion, volatility, bar quality, range expansion.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 150
+        for a in args:
+            if a.isdigit():
+                bar_count = max(110, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /pascore SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.price_action_score import analyze as pa_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = pa_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 105+)."
+
+        score_bar = "█" * int(result.composite // 10) + "░" * (10 - int(result.composite // 10))
+
+        lines = [f"── Price Action Score: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Score:  {result.composite:.0f}/100  [{score_bar}]  {result.grade.upper().replace('_', ' ')}")
+        lines.append(f"  Price:  {result.current_price:.2f}  ROC20: {result.roc20:+.1f}%")
+        lines.append(f"  Z:      {result.z_score:+.2f}  ATR: {result.atr_pct:.1f}%")
+        lines.append("")
+        lines.append("  Factors:")
+        for f in result.factors:
+            bar = "█" * int(f.score // 10) + "░" * (10 - int(f.score // 10))
+            lines.append(f"    {f.name:<20} {f.score:>5.0f}  [{bar}]  {f.description}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _psar_cmd(args: list[str]) -> str:
         """Parabolic SAR Analyser: stop-and-reverse trend system.
 
@@ -10590,4 +10638,6 @@ def build_command_handlers(
         "chaikin": _cmf_cmd,
         "psar": _psar_cmd,
         "parabolicsar": _psar_cmd,
+        "pascore": _pascore_cmd,
+        "priceaction": _pascore_cmd,
     }
