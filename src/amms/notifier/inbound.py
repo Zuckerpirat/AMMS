@@ -5756,6 +5756,55 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _ribbon_cmd(args: list[str]) -> str:
+        """Moving Average Ribbon: 6 EMAs ordered = strong trend, tangled = ranging.
+
+        Usage: /ribbon [SYM]  (default: all open positions)
+        Shows EMA-5/8/13/21/34/55 alignment and ribbon expansion/contraction.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /ribbon AAPL)"
+
+        from amms.analysis.ma_ribbon import analyze as ribbon_analyze
+
+        dir_icon = {"up": "↑ UPTREND", "down": "↓ DOWNTREND", "tangled": "↔ RANGING"}
+        expand_icon = {True: "📈 expanding", False: "📉 contracting"}
+
+        lines = []
+        for sym in symbols[:4]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = ribbon_analyze(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 60+ bars)")
+                continue
+
+            di = dir_icon.get(result.direction, result.direction)
+            lines += [
+                f"── {sym} MA Ribbon ──",
+                f"  Direction:  {di}  ({'ordered' if result.ordered else 'tangled'})",
+                f"  Price:      {result.current_price:.2f}  [{result.price_position.replace('_', ' ')}]",
+                f"  Spread:     {result.ribbon_spread_pct:.2f}%  {expand_icon.get(result.is_expanding, '')}",
+                "",
+            ]
+            for p in result.periods:
+                v = result.emas[p]
+                diff = (result.current_price - v) / v * 100
+                lines.append(f"  EMA-{p:<3}  {v:>9.2f}  ({diff:+.2f}% from price)")
+            lines += [f"  {result.verdict}", ""]
+
+        return "\n".join(lines).rstrip()
+
     def _fvg_cmd(args: list[str]) -> str:
         """Fair Value Gap detector: find price imbalance zones.
 
@@ -8645,4 +8694,6 @@ def build_command_handlers(
         "pp": _pivots_cmd,
         "fvg": _fvg_cmd,
         "imbalance": _fvg_cmd,
+        "ribbon": _ribbon_cmd,
+        "maribbon": _ribbon_cmd,
     }
