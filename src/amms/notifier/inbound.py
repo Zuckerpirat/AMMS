@@ -7036,6 +7036,58 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _dpo_cmd(args: list[str]) -> str:
+        """Detrended Price Oscillator: cycle isolation by removing trend.
+
+        Usage: /dpo SYMBOL [BARS]  (default 120 bars)
+        Shows DPO value, percentile rank, estimated cycle length, and signal.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(85, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /dpo SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.dpo import analyze as dpo_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = dpo_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 80+)."
+
+        rank_bar = "░" * int(result.dpo_pct_rank / 10) + "▓" + "░" * (10 - int(result.dpo_pct_rank / 10))
+
+        lines = [f"── DPO: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:    {result.signal.upper()}")
+        lines.append(f"  Score:     {result.score:+.1f}/100")
+        lines += [""]
+        lines.append(f"  DPO:       {result.dpo:+.4f}  ({'positive' if result.dpo_positive else 'negative'})")
+        lines.append(f"  Period:    {result.period} (displacement: {result.displacement})")
+        lines.append(f"  Rank:      {result.dpo_pct_rank:.0f}th pct  [{rank_bar}]")
+        if result.estimated_cycle is not None:
+            lines.append(f"  Cycle est: ~{result.estimated_cycle} bars")
+        if result.recent_peak is not None:
+            lines.append(f"  Peak:      {result.recent_peak:+.4f}")
+        if result.recent_trough is not None:
+            lines.append(f"  Trough:    {result.recent_trough:+.4f}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _pmo_cmd(args: list[str]) -> str:
         """Price Momentum Oscillator (PMO): double-smoothed ROC momentum.
 
@@ -11553,4 +11605,6 @@ def build_command_handlers(
         "vi": _vortex_cmd,
         "pmo": _pmo_cmd,
         "pricemomentum": _pmo_cmd,
+        "dpo": _dpo_cmd,
+        "detrended": _dpo_cmd,
     }
