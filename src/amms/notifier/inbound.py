@@ -5656,6 +5656,99 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _ecal_cmd(args: list[str]) -> str:
+        """Earnings calendar: view upcoming earnings or add dates.
+
+        Usage:
+          /ecal                        — show upcoming (7 days) for open positions
+          /ecal list [DAYS]            — list all upcoming (default 30 days)
+          /ecal add SYM DATE [TIME]    — add earnings date (TIME: before_open/after_close)
+          /ecal remove SYM [DATE]      — remove entry
+          /ecal check SYM              — check if SYM has upcoming earnings
+
+        Example: /ecal add AAPL 2026-07-31 after_close
+        """
+        if conn is None:
+            return "DB not wired."
+
+        from amms.data.earnings_calendar import (
+            add as ec_add, remove as ec_remove,
+            upcoming as ec_upcoming, check_positions,
+            ensure_table,
+        )
+        from datetime import date as _date
+
+        ensure_table(conn)
+
+        sub = args[0].lower() if args else "list"
+
+        if sub == "add":
+            if len(args) < 3:
+                return "Usage: /ecal add SYM DATE [before_open|after_close]"
+            sym = args[1].upper()
+            dt = args[2]
+            tod = args[3].lower() if len(args) >= 4 else "unknown"
+            if tod not in ("before_open", "after_close", "unknown"):
+                tod = "unknown"
+            ok = ec_add(conn, sym, dt, time_of_day=tod)
+            return f"Added {sym} earnings on {dt} ({tod})." if ok else f"Failed — invalid date: {dt}"
+
+        if sub == "remove":
+            if len(args) < 2:
+                return "Usage: /ecal remove SYM [DATE]"
+            sym = args[1].upper()
+            dt = args[2] if len(args) >= 3 else None
+            n = ec_remove(conn, sym, dt)
+            return f"Removed {n} entry/entries for {sym}."
+
+        if sub == "check":
+            if len(args) < 2:
+                return "Usage: /ecal check SYM"
+            sym = args[1].upper()
+            entries = ec_upcoming(conn, within_days=30, symbols=[sym])
+            if not entries:
+                return f"{sym}: no earnings in the next 30 days."
+            lines = [f"{sym} upcoming earnings:"]
+            for e in entries:
+                lines.append(f"  {e.report_date}  ({e.time_of_day})  in {e.days_until}d")
+            return "\n".join(lines)
+
+        # Default: list or show positions earnings
+        if sub == "list" or sub not in ("add", "remove", "check"):
+            within = 30
+            if sub == "list" and len(args) >= 2:
+                try:
+                    within = int(args[1])
+                except ValueError:
+                    pass
+            elif sub not in ("list",):
+                within = 7
+                # Show earnings for open positions
+                try:
+                    positions = broker.get_positions()
+                    syms = [p.symbol for p in positions]
+                except Exception:
+                    syms = None
+                entries = check_positions(conn, syms or [], within_days=within) if syms else ec_upcoming(conn, within_days=within)
+                if not entries:
+                    return f"No earnings in open positions in the next {within} days."
+                lines = [f"Upcoming earnings (next {within}d) for open positions:"]
+                for e in entries:
+                    tod_icon = {"before_open": "🌅", "after_close": "🌙", "unknown": "❓"}.get(e.time_of_day, "")
+                    lines.append(f"  {e.symbol:<6}  {e.report_date}  {tod_icon} {e.time_of_day}  in {e.days_until}d")
+                return "\n".join(lines)
+
+            entries = ec_upcoming(conn, within_days=within)
+            if not entries:
+                return f"No earnings in the next {within} days. Add with: /ecal add AAPL 2026-07-31 after_close"
+            lines = [f"Upcoming earnings (next {within}d):"]
+            for e in entries:
+                tod_icon = {"before_open": "🌅", "after_close": "🌙", "unknown": "❓"}.get(e.time_of_day, "")
+                lines.append(f"  {e.symbol:<6}  {e.report_date}  {tod_icon} {e.time_of_day}  in {e.days_until}d")
+            return "\n".join(lines)
+
+        return "Unknown subcommand. Use /ecal list|add|remove|check"
+
     def _risksize_cmd(args: list[str]) -> str:
         """Fixed-fractional position sizing based on stop-loss distance.
 
@@ -7416,4 +7509,6 @@ def build_command_handlers(
         "sxp": _sectordetail_cmd,
         "risksize": _risksize_cmd,
         "rs2": _risksize_cmd,
+        "ecal": _ecal_cmd,
+        "ecaladd": _ecal_cmd,
     }
