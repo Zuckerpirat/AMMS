@@ -5756,6 +5756,47 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _tfreq_cmd(args: list[str]) -> str:
+        """Trade frequency vs performance: does more trading help or hurt?
+
+        Usage: /tfreq [LIMIT]  (default 500 trades)
+        Buckets trading days by number of trades and shows avg return per bucket.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.trade_frequency import compute as tf_compute
+
+        result = tf_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 10+ trades across 5+ trading days)."
+
+        corr_str = f"{result.correlation:.2f}" if result.correlation is not None else "n/a"
+        lines = [
+            f"── Trade Frequency Analysis ({result.n_trading_days} trading days, {result.n_trades} trades) ──",
+            f"  Avg: {result.avg_trades_per_day:.1f} trades/day  ({result.avg_trades_per_week:.0f}/week)",
+            f"  Max active day: {result.most_active_day_count} trades",
+            f"  Correlation (freq vs return): {corr_str}  [{result.correlation_label}]",
+            "",
+            f"  {'Frequency':<18} {'Days':>5} {'Win Days%':>10} {'Avg Ret%':>9}",
+            f"  {'-'*18} {'-'*5} {'-'*10} {'-'*9}",
+        ]
+        for b in result.buckets:
+            mark = " ← best" if b.label == result.best_bucket else (" ← worst" if b.label == result.worst_bucket else "")
+            lines.append(
+                f"  {b.label:<18} {b.n_days:>5} "
+                f"{b.win_days_pct:>9.0f}% {b.avg_daily_pnl_pct:>+9.2f}%{mark}"
+            )
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _sizeperf_cmd(args: list[str]) -> str:
         """Position size vs return: do larger trades outperform?
 
@@ -8033,4 +8074,6 @@ def build_command_handlers(
         "mtrend": _perftrend_cmd,
         "sizeperf": _sizeperf_cmd,
         "sizevret": _sizeperf_cmd,
+        "tfreq": _tfreq_cmd,
+        "tradefreq": _tfreq_cmd,
     }
