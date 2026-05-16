@@ -7036,6 +7036,58 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _stochrsi_cmd(args: list[str]) -> str:
+        """Stochastic RSI: Stochastic applied to RSI for faster signals.
+
+        Usage: /stochrsi SYMBOL [BARS]  (default 100 bars)
+        Shows %K, %D, cross events, and overbought/oversold zones.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(70, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /stochrsi SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.stoch_rsi import analyze as srsi_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = srsi_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 60+)."
+
+        filled_k = int(result.k / 10)
+        bar_k = "█" * filled_k + "░" * (10 - filled_k)
+        ob_tag = " ◀ OVERBOUGHT" if result.overbought else (" ◀ OVERSOLD" if result.oversold else "")
+
+        lines = [f"── Stochastic RSI: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100")
+        lines += [""]
+        lines.append(f"  %K:      {result.k:.1f}  [{bar_k}]{ob_tag}")
+        lines.append(f"  %D:      {result.d:.1f}  ({'%K above %D' if result.k_above_d else '%K below %D'})")
+        lines.append(f"  RSI:     {result.rsi:.1f}")
+        if result.cross_up:
+            lines.append("  ▲ %K crossed above %D")
+        if result.cross_down:
+            lines.append("  ▼ %K crossed below %D")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _natr_cmd(args: list[str]) -> str:
         """Normalized ATR: ATR as % of price for cross-symbol vol comparison.
 
@@ -12370,4 +12422,6 @@ def build_command_handlers(
         "cvol": _chaikinvol_cmd,
         "natr": _natr_cmd,
         "normalizedatr": _natr_cmd,
+        "stochrsi": _stochrsi_cmd,
+        "srsi": _stochrsi_cmd,
     }
