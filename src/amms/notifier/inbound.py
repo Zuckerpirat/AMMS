@@ -5756,6 +5756,47 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _sectorwr_cmd(args: list[str]) -> str:
+        """Win rate and PnL by sector from closed trade history.
+
+        Usage: /sectorwr [LIMIT]  (default 500 trades)
+        Maps traded symbols to GICS sectors and shows win rate / PnL per sector.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(5, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.sector_win_rate import compute as swr_compute
+
+        result = swr_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 5+ trades)."
+
+        lines = [
+            f"── Sector Win Rate ({result.n_trades} trades, {result.n_sectors} sectors) ──",
+            "",
+            f"  {'Sector':<22} {'Trades':>6} {'WR':>6} {'Avg%':>8} {'Total PnL':>10}",
+            f"  {'-'*22} {'-'*6} {'-'*6} {'-'*8} {'-'*10}",
+        ]
+        for s in result.sectors:
+            mark = " ← best" if s.sector == result.best_sector else (" ← worst" if s.sector == result.worst_sector else "")
+            lines.append(
+                f"  {s.sector:<22} {s.n_trades:>6} "
+                f"{s.win_rate:>5.0f}% {s.avg_pnl_pct:>+8.2f}% {s.total_pnl:>+10.2f}{mark}"
+            )
+
+        if result.unknown_trades > 0:
+            lines.append(f"\n  ({result.unknown_trades} trades could not be mapped to a sector)")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _wrstab_cmd(args: list[str]) -> str:
         """Win rate stability: how consistent is the win rate over time?
 
@@ -8278,4 +8319,6 @@ def build_command_handlers(
         "retdist": _paydist_cmd,
         "wrstab": _wrstab_cmd,
         "wrstability": _wrstab_cmd,
+        "sectorwr": _sectorwr_cmd,
+        "secwr": _sectorwr_cmd,
     }
