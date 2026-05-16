@@ -5756,6 +5756,50 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _autocorr_cmd(args: list[str]) -> str:
+        """Trade outcome autocorrelation: hot-hand or mean-reversion?
+
+        Usage: /autocorr [LIMIT]  (default 200 trades)
+        Tests if wins/losses cluster (hot hand) or alternate (mean-reversion).
+        Uses lag-1/2/3 autocorrelation and the runs test.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 200
+        if args:
+            try:
+                limit = max(20, min(int(args[0]), 1000))
+            except ValueError:
+                pass
+
+        from amms.analysis.outcome_autocorr import compute as ac_compute
+
+        result = ac_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 20+ trades)."
+
+        interp_icon = {
+            "hot_hand": "🔥", "mean_reversion": "↔️ ", "random": "🎲"
+        }.get(result.interpretation, "")
+
+        lines = [
+            f"── Outcome Autocorrelation ({result.n_trades} trades) ──",
+            f"  Pattern:  {interp_icon} {result.interpretation.replace('_', ' ').upper()}",
+            f"  Win rate: {result.win_rate:.1f}%",
+            "",
+            f"  Lag-1 autocorr: {result.lag1_autocorr:+.3f}",
+            f"  Lag-2 autocorr: {result.lag2_autocorr:+.3f}",
+            f"  Lag-3 autocorr: {result.lag3_autocorr:+.3f}",
+            "",
+            f"  Runs test: {result.runs_count} runs (expected {result.expected_runs:.0f})",
+            f"  Z-score: {result.runs_z_score:+.2f}  "
+            f"{'← significant (p<0.05)' if result.runs_significant else '← not significant'}",
+            "",
+            result.verdict,
+        ]
+        return "\n".join(lines)
+
     def _sectorwr_cmd(args: list[str]) -> str:
         """Win rate and PnL by sector from closed trade history.
 
@@ -8321,4 +8365,6 @@ def build_command_handlers(
         "wrstability": _wrstab_cmd,
         "sectorwr": _sectorwr_cmd,
         "secwr": _sectorwr_cmd,
+        "autocorr": _autocorr_cmd,
+        "hothand": _autocorr_cmd,
     }
