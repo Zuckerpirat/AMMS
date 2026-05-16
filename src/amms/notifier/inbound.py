@@ -6796,6 +6796,54 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _bbsqueeze_cmd(args: list[str]) -> str:
+        """Bollinger Band Squeeze Detector: compressed volatility before breakout.
+
+        Usage: /bbsq SYMBOL [BARS]  (default 150 bars)
+        Detects when BB width drops to local minimum (squeeze) and shows bias direction.
+        """
+        if data_source is None:
+            return "Data source not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 150
+        for a in args:
+            if a.isdigit():
+                bar_count = max(80, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /bbsq SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.bb_squeeze import analyze as bb_analyze
+
+        try:
+            bars = data_source.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = bb_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 75+)."
+
+        sq_bar = "█" * int(result.current_squeeze_score // 10) + "░" * (10 - int(result.current_squeeze_score // 10))
+
+        lines = [f"── BB Squeeze: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Squeeze score:  {result.current_squeeze_score:.0f}/100  {sq_bar}")
+        lines.append(f"  BW percentile:  {result.bandwidth_percentile:.0f}%  (0=tightest, 100=widest)")
+        lines.append(f"  Squeezed:       {'YES ⚠' if result.is_squeezed else 'no'}  ({result.squeeze_active_bars} bars active)")
+        lines.append(f"  Direction bias: {result.direction_bias}")
+        lines.append(f"  Price:          {result.current_price:.2f}  (position in band: {result.price_position * 100:.0f}%)")
+        lines.append(f"  BB:             {result.lower:.2f} – {result.middle:.2f} – {result.upper:.2f}")
+        if result.is_squeezed and result.roc_since_squeeze != 0:
+            lines.append(f"  Drift since squeeze start: {result.roc_since_squeeze:+.2f}%")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _mtfmom_cmd(args: list[str]) -> str:
         """Multi-Timeframe Momentum: 5/20/50/100-bar alignment and regime.
 
@@ -9811,4 +9859,6 @@ def build_command_handlers(
         "profitfactor": _pfdecomp_cmd,
         "mtfmom": _mtfmom_cmd,
         "mtf": _mtfmom_cmd,
+        "bbsq": _bbsqueeze_cmd,
+        "bbsqueeze": _bbsqueeze_cmd,
     }
