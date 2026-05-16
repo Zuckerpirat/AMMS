@@ -7036,6 +7036,64 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _kvo_cmd(args: list[str]) -> str:
+        """Klinger Volume Oscillator: long-term money flow trend oscillator.
+
+        Usage: /kvo SYMBOL [BARS]  (default 120 bars)
+        Shows KVO, signal, histogram, cross detection, and divergence.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(95, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /kvo SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.klinger_vo import analyze as kvo_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = kvo_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 88+)."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        lines = [f"── Klinger VO: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  KVO:       {result.kvo:+.1f}  ({'above' if result.above_signal else 'below'} signal)")
+        lines.append(f"  Signal:    {result.kvo_signal:+.1f}")
+        lines.append(f"  Hist:      {result.kvo_histogram:+.1f}")
+        if result.cross_up:
+            lines.append("  ▲ Bullish cross")
+        if result.cross_down:
+            lines.append("  ▼ Bearish cross")
+        lines += [""]
+        lines.append(f"  Price dir:  {result.price_direction.upper()}")
+        lines.append(f"  KVO dir:    {result.kvo_direction.upper()}")
+        if result.divergence:
+            lines.append("  ⚡ DIVERGENCE detected")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _dpo_cmd(args: list[str]) -> str:
         """Detrended Price Oscillator: cycle isolation by removing trend.
 
@@ -11607,4 +11665,6 @@ def build_command_handlers(
         "pricemomentum": _pmo_cmd,
         "dpo": _dpo_cmd,
         "detrended": _dpo_cmd,
+        "kvo": _kvo_cmd,
+        "klinger": _kvo_cmd,
     }
