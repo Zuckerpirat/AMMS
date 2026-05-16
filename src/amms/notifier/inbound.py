@@ -7036,6 +7036,71 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _cmo_cmd(args: list[str]) -> str:
+        """Chande Momentum Oscillator: raw up/down momentum ratio (-100 to +100).
+
+        Usage: /cmo SYMBOL [BARS]  (default 80 bars)
+        Shows CMO, signal line, zero-cross, overbought/oversold.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(60, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /cmo SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.chande_mo import analyze as cmo_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = cmo_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 54+)."
+
+        # CMO bar: -100 left to +100 right
+        cmo_pos = int((result.cmo + 100) / 20)  # 0-10
+        cmo_bar = "░" * max(0, cmo_pos) + "▓" + "░" * max(0, 10 - cmo_pos)
+
+        lines = [f"── CMO: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100")
+        lines += [""]
+        lines.append(f"  CMO:     {result.cmo:+.2f}  [{cmo_bar}]")
+        lines.append(f"  Signal:  {result.cmo_signal:+.2f}")
+        lines.append(f"  Hist:    {result.cmo_histogram:+.2f}  ({'above' if result.above_signal else 'below'} signal)")
+
+        tags = []
+        if result.overbought:
+            tags.append("OVERBOUGHT")
+        if result.oversold:
+            tags.append("OVERSOLD")
+        if result.zero_cross_up:
+            tags.append("▲ zero cross")
+        if result.zero_cross_down:
+            tags.append("▼ zero cross")
+        if result.signal_cross_up:
+            tags.append("▲ signal cross")
+        if result.signal_cross_down:
+            tags.append("▼ signal cross")
+        if tags:
+            lines.append(f"  Tags:    {', '.join(tags)}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _coppock_cmd(args: list[str]) -> str:
         """Coppock Curve: long-term buy/sell signal from double ROC + WMA.
 
@@ -11842,4 +11907,6 @@ def build_command_handlers(
         "forceindex": _force_cmd,
         "coppock": _coppock_cmd,
         "coppockcurve": _coppock_cmd,
+        "cmo": _cmo_cmd,
+        "chande": _cmo_cmd,
     }
