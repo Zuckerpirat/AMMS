@@ -5756,6 +5756,53 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _paydist_cmd(args: list[str]) -> str:
+        """Payoff distribution: return histogram showing win/loss spread.
+
+        Usage: /paydist [LIMIT]  (default 500 trades)
+        Classifies trades into 6 buckets from Big Loss to Big Win.
+        Reports skewness, kurtosis, and outlier dependence.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(15, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.payoff_distribution import compute as pd_compute
+
+        result = pd_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 15+ trades)."
+
+        lines = [
+            f"── Payoff Distribution ({result.n_trades} trades) ──",
+            f"  Shape:    {result.distribution_shape.replace('_', ' ')}",
+            f"  Skewness: {result.skewness:+.2f}  Kurtosis: {result.kurtosis:+.2f}",
+            f"  Mean:     {result.mean_return:+.2f}%  Median: {result.median_return:+.2f}%",
+            "",
+        ]
+        max_n = max(b.n_trades for b in result.buckets) or 1
+        for b in result.buckets:
+            bar = "█" * max(1, int(b.n_trades / max_n * 15)) if b.n_trades > 0 else ""
+            lines.append(
+                f"  {b.label:<24} {b.n_trades:>4}tr "
+                f"({b.pct_of_total:>4.0f}%)  {bar}"
+            )
+
+        lines += [
+            "",
+            f"  Top 10% trades contribute: {result.top10_pct_contribution:+.0f}% of total PnL",
+            f"  Bottom 10% trades drag:    {result.bottom10_pct_drag:+.0f}% of total PnL",
+            "",
+            result.verdict,
+        ]
+        return "\n".join(lines)
+
     def _ruin_cmd(args: list[str]) -> str:
         """Risk of ruin: Monte Carlo probability of hitting a drawdown threshold.
 
@@ -8182,4 +8229,6 @@ def build_command_handlers(
         "grade": _scorecard_cmd,
         "ruin": _ruin_cmd,
         "ruinrisk": _ruin_cmd,
+        "paydist": _paydist_cmd,
+        "retdist": _paydist_cmd,
     }
