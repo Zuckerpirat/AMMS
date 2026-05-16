@@ -5756,6 +5756,61 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _mstruct_cmd(args: list[str]) -> str:
+        """Market structure: HH/HL uptrend vs LH/LL downtrend, CHoCH detection.
+
+        Usage: /mstruct [SYM]  (default: all open positions)
+        Identifies swing highs/lows and classifies trend structure.
+        Flags Change of Character (CHoCH) when structure breaks.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /mstruct AAPL)"
+
+        from amms.analysis.market_structure import analyze as ms_analyze
+
+        struct_icon = {
+            "uptrend": "↑↑", "downtrend": "↓↓", "ranging": "↔↔", "unclear": "??"
+        }
+        lines = []
+        for sym in symbols[:4]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = ms_analyze(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need more bars)")
+                continue
+
+            si = struct_icon.get(result.structure, "")
+            choch_note = f"  ⚠️ CHoCH ({result.choch_direction})!" if result.choch_detected else ""
+            lines += [
+                f"── {sym} Market Structure ──",
+                f"  Structure: {si} {result.structure.upper()}{choch_note}",
+                f"  Price: {result.current_price:.2f}",
+            ]
+            if result.last_swing_high:
+                lines.append(f"  Last swing high: {result.last_swing_high:.2f}  ({result.pct_from_last_high:+.1f}% from price)")
+            if result.last_swing_low:
+                lines.append(f"  Last swing low:  {result.last_swing_low:.2f}  ({result.pct_from_last_low:+.1f}% from price)")
+            if result.swing_highs:
+                highs_str = " → ".join(f"{h:.2f}" for h in result.swing_highs)
+                lines.append(f"  Swing highs: {highs_str}")
+            if result.swing_lows:
+                lows_str = " → ".join(f"{l:.2f}" for l in result.swing_lows)
+                lines.append(f"  Swing lows:  {lows_str}")
+            lines += [f"  {result.verdict}", ""]
+
+        return "\n".join(lines).rstrip()
+
     def _mtf_cmd(args: list[str]) -> str:
         """Multi-timeframe trend analysis: short/medium/long alignment.
 
@@ -8419,4 +8474,6 @@ def build_command_handlers(
         "hothand": _autocorr_cmd,
         "mtf": _mtf_cmd,
         "multitf": _mtf_cmd,
+        "mstruct": _mstruct_cmd,
+        "mktstruct": _mstruct_cmd,
     }
