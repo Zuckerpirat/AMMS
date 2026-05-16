@@ -7036,6 +7036,60 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _willr_cmd(args: list[str]) -> str:
+        """Williams %R + Aroon Oscillator: momentum and trend strength.
+
+        Usage: /willr SYMBOL [BARS]  (default 80 bars)
+        Shows %R overbought/oversold, Aroon Up/Down/Osc, and composite signal.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(50, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /willr SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.williams_aroon import analyze as wa_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = wa_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 45+)."
+
+        # %R bar: -100 (left) to 0 (right)
+        wr_pos = int((result.williams_r + 100) / 10)  # 0-10
+        wr_bar = "░" * wr_pos + "▓" + "░" * (10 - wr_pos)
+
+        # Aroon bars
+        aroon_up_bar = "▲" * int(result.aroon_up / 10) + "░" * (10 - int(result.aroon_up / 10))
+        aroon_dn_bar = "▼" * int(result.aroon_down / 10) + "░" * (10 - int(result.aroon_down / 10))
+
+        lines = [f"── Williams %R + Aroon: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.composite_signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.composite_score:+.1f}/100")
+        lines += ["", "  Williams %R:"]
+        lines.append(f"    %R:   {result.williams_r:.1f}  [{wr_bar}]  ({result.williams_signal})")
+        lines += ["", "  Aroon (25):"]
+        lines.append(f"    Up:   {result.aroon_up:.1f}  [{aroon_up_bar}]")
+        lines.append(f"    Down: {result.aroon_down:.1f}  [{aroon_dn_bar}]")
+        lines.append(f"    Osc:  {result.aroon_osc:+.1f}  ({result.aroon_signal.replace('_', ' ')})")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _cloud_cmd(args: list[str]) -> str:
         """Extended Ichimoku Cloud: 6-signal scoring with cloud context.
 
@@ -11256,4 +11310,6 @@ def build_command_handlers(
         "orderflow": _ofi_cmd,
         "cloud": _cloud_cmd,
         "icloud": _cloud_cmd,
+        "willr": _willr_cmd,
+        "aroon": _willr_cmd,
     }
