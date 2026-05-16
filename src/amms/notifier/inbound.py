@@ -6846,6 +6846,60 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _keltner_cmd(args: list[str]) -> str:
+        """Keltner Channel Analyser: EMA + ATR bands for trend & breakout.
+
+        Usage: /keltner SYMBOL [BARS]  (default 100 bars)
+        Shows EMA middle with ±2 ATR upper/lower bands and price position.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(30, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /keltner SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.keltner_channel import analyze as kc_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = kc_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 30+)."
+
+        pos_pct = int(min(result.price_position, 1.0) * 10)
+        channel_bar = "░" * pos_pct + "▓" + "░" * (10 - pos_pct)
+
+        bo_tag = ""
+        if result.breakout_up:
+            bo_tag = "  ▲ BREAKOUT UP"
+        elif result.breakout_down:
+            bo_tag = "  ▼ BREAKOUT DOWN"
+
+        lines = [f"── Keltner Channel: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Price:  {result.current_price:.2f}{bo_tag}")
+        lines.append(f"  Upper:  {result.upper:.2f}")
+        lines.append(f"  Middle: {result.middle:.2f}  (EMA-{result.period})")
+        lines.append(f"  Lower:  {result.lower:.2f}")
+        lines.append(f"  Width:  {result.channel_width_pct:.1f}%  [{channel_bar}]  {result.position_label}")
+        lines.append(f"  Trend:  {result.trend_direction.upper()}  ({result.trend_bars} bars)")
+        lines.append(f"  ATR:    {result.atr:.2f} ({result.atr_pct:.1f}%)")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _candle_cmd(args: list[str]) -> str:
         """Candlestick Pattern Recognizer: detects hammer, engulfing, stars, etc.
 
@@ -10305,4 +10359,6 @@ def build_command_handlers(
         "meanrevband": _mrband_cmd,
         "candle": _candle_cmd,
         "candlepattern": _candle_cmd,
+        "keltner": _keltner_cmd,
+        "kc": _keltner_cmd,
     }
