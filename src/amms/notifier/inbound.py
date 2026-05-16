@@ -6981,6 +6981,61 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _ofi_cmd(args: list[str]) -> str:
+        """Order Flow Imbalance: buy vs sell pressure from OHLCV bars.
+
+        Usage: /ofi SYMBOL [BARS]  (default 80 bars)
+        Shows score, buy%, divergence, and recent vs baseline OFI ratio.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(25, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /ofi SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.order_flow_imbalance import analyze as ofi_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = ofi_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 20+)."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        lines = [f"── Order Flow Imbalance: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  Buy vol:    {result.total_buy_vol:,.0f}  ({result.buy_pct:.1f}%)")
+        lines.append(f"  Sell vol:   {result.total_sell_vol:,.0f}")
+        lines.append(f"  Cumul OFI:  {result.cumulative_ofi_norm:+.1f} (normalised)")
+        lines.append(f"  OFI ratio:  {result.ofi_ratio:+.2f}  (recent vs baseline)")
+        lines += [""]
+        lines.append(f"  Price dir:  {result.price_direction.upper()}")
+        lines.append(f"  OFI dir:    {result.ofi_direction.upper()}")
+        if result.divergence:
+            lines.append("  ⚡ DIVERGENCE detected (price vs OFI)")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _linreg_cmd(args: list[str]) -> str:
         """Linear Regression Channel: trend slope, R², and deviation bands.
 
@@ -11124,4 +11179,6 @@ def build_command_handlers(
         "wyphase": _wyckoff_cmd,
         "mktinternals": _mktinternals_cmd,
         "internals": _mktinternals_cmd,
+        "ofi": _ofi_cmd,
+        "orderflow": _ofi_cmd,
     }
