@@ -5756,6 +5756,64 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _pivots_cmd(args: list[str]) -> str:
+        """Pivot points: classic, Fibonacci, or Camarilla support/resistance levels.
+
+        Usage: /pivots [SYM] [method]  (method: classic/fib/cam, default classic)
+        Computes pivot levels from yesterday's H/L/C for all open positions.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        # Parse args: /pivots [SYM] [method]
+        symbols = []
+        method = "classic"
+        for a in args:
+            if a.lower() in ("classic", "fibonacci", "fib", "camarilla", "cam"):
+                method = {"fib": "fibonacci", "cam": "camarilla"}.get(a.lower(), a.lower())
+            else:
+                symbols.append(a.upper())
+        if not symbols:
+            symbols = [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /pivots AAPL)"
+
+        from amms.analysis.pivot_points import compute as pp_compute
+
+        kind_label = {"R": "R", "S": "S", "PP": "◆"}
+        lines = []
+        for sym in symbols[:4]:
+            try:
+                bars = data.get_bars(sym, limit=5)
+            except Exception:
+                bars = []
+            if not bars or len(bars) < 2:
+                lines.append(f"  {sym}  n/a (need bar data)")
+                continue
+            # Use second-to-last bar as "previous period"
+            prev = bars[-2]
+            curr_price = float(bars[-1].close)
+            result = pp_compute(
+                float(prev.high), float(prev.low), float(prev.close),
+                curr_price, symbol=sym, method=method,
+            )
+            if result is None:
+                lines.append(f"  {sym}  error computing pivots")
+                continue
+
+            lines += [f"── {sym} Pivots ({method}) ──"]
+            for lv in reversed(result.levels):
+                arrow = " ← price" if abs(lv.price - curr_price) / curr_price < 0.005 else ""
+                label = kind_label.get(lv.kind, lv.kind)
+                lines.append(f"  {label}{lv.name:<3}  {lv.price:>9.2f}{arrow}")
+            lines += [f"  Current: {curr_price:.2f}  [{result.current_zone}]", ""]
+
+        return "\n".join(lines).rstrip()
+
     def _squeeze_cmd(args: list[str]) -> str:
         """Volatility squeeze / price compression detector.
 
@@ -8524,4 +8582,6 @@ def build_command_handlers(
         "mktstruct": _mstruct_cmd,
         "squeeze": _squeeze_cmd,
         "compress": _squeeze_cmd,
+        "pivots": _pivots_cmd,
+        "pp": _pivots_cmd,
     }
