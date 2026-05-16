@@ -5656,6 +5656,61 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _expectancy_cmd(args: list[str]) -> str:
+        """Trade expectancy per trade and per symbol.
+
+        Usage: /expectancy [LIMIT]  (default 200 recent trades)
+        Shows expected $ per trade, R-multiple expectancy, and per-symbol breakdown.
+        Expectancy > 0 = positive edge. Grade A = 0.5R+.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 200
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 1000))
+            except ValueError:
+                pass
+
+        from amms.analysis.expectancy import compute as exp_compute
+
+        result = exp_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 5+ completed trades)."
+
+        grade_icon = {"A": "🟢", "B": "🟡", "C": "🟠", "D": "🔴", "F": "⛔"}.get(
+            result.overall.grade, ""
+        )
+
+        o = result.overall
+        lines = [
+            f"── Trade Expectancy ({result.n_trades} trades) ──",
+            f"  Win rate:   {o.win_rate:.1f}%%",
+            f"  Avg win:    ${o.avg_win:.2f}",
+            f"  Avg loss:   ${o.avg_loss:.2f}",
+            f"  Expectancy: ${o.expectancy:+.2f} per trade",
+            f"  R-multiple: {o.r_expectancy:+.3f}R per trade",
+            f"  Grade:      {grade_icon} {o.grade}",
+        ]
+
+        if result.by_symbol:
+            lines += [
+                "",
+                f"  Per-symbol breakdown ({result.n_symbols} symbols):",
+                f"  {'Symbol':<8}  {'N':>4}  {'WR%%':>6}  {'Exp$':>8}  {'R':>6}  Grade",
+            ]
+            for se in result.by_symbol[:8]:
+                g_icon = {"A": "🟢", "B": "🟡", "C": "🟠", "D": "🔴", "F": "⛔"}.get(se.grade, "")
+                lines.append(
+                    f"  {se.symbol:<8}  {se.n_trades:>4}  {se.win_rate:>5.1f}%%"
+                    f"  ${se.expectancy:>+7.2f}  {se.r_expectancy:>+5.3f}R  {g_icon} {se.grade}"
+                )
+            if result.best_symbol:
+                lines.append(f"  Best: {result.best_symbol}  |  Worst: {result.worst_symbol}")
+
+        return "\n".join(lines)
+
     def _vpdetail_cmd(args: list[str]) -> str:
         """Detailed volume profile: POC, Value Area, HVN/LVN nodes.
 
@@ -7150,4 +7205,6 @@ def build_command_handlers(
         "tradestreak": _tstreak_cmd,
         "vpdetail": _vpdetail_cmd,
         "vpd": _vpdetail_cmd,
+        "expectancy": _expectancy_cmd,
+        "exp": _expectancy_cmd,
     }
