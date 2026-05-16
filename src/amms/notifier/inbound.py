@@ -6796,6 +6796,45 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _tradesector_cmd(args: list[str]) -> str:
+        """Trade Sector Performance: which sectors win most in your journal?
+
+        Usage: /tsector [LIMIT]  (default 1000 trades)
+        Detects if sector leadership is rotating recently vs historically.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 1000
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 5000))
+            except ValueError:
+                pass
+
+        from amms.analysis.trade_sector import compute as ts_compute
+
+        result = ts_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough data (need 10+ trades across 2+ sectors)."
+
+        lines = [f"── Sector Performance ({result.n_trades} trades, {result.n_sectors} sectors) ──", ""]
+
+        for s in result.sectors:
+            rel = "" if s.is_reliable else " ⚠"
+            rot = f"  Δ{s.rotation_score:+.2f}" if abs(s.rotation_score) > 0.1 else ""
+            leader_mark = " ★" if s == result.leader else ""
+            lines.append(
+                f"  {s.sector:<14}  {s.n_trades:>4}×  WR {s.win_rate:>4.0f}%  "
+                f"avg {s.avg_pnl_pct:>+6.2f}%  recent {s.recent_avg_pnl:>+6.2f}%{rot}{leader_mark}{rel}"
+            )
+
+        lines.append("")
+        if result.rotation_detected and result.historical_leader:
+            lines.append(f"  ROTATION: was {result.historical_leader.sector}, now {result.leader.sector if result.leader else '?'}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _holdtime_cmd(args: list[str]) -> str:
         """Position Hold Time Analyser: median hold, best bucket, hold-PnL correlation.
 
@@ -9664,4 +9703,6 @@ def build_command_handlers(
         "streakanalysis": _streak_cmd,
         "holdtime": _holdtime_cmd,
         "holdanalysis": _holdtime_cmd,
+        "tsector": _tradesector_cmd,
+        "tradesector": _tradesector_cmd,
     }
