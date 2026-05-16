@@ -5756,6 +5756,65 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _fvg_cmd(args: list[str]) -> str:
+        """Fair Value Gap detector: find price imbalance zones.
+
+        Usage: /fvg [SYM]  (default: all open positions)
+        Identifies three-candle patterns where price left a visible gap
+        (institutional order imbalance zone) that may act as future magnet.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /fvg AAPL)"
+
+        from amms.analysis.fair_value_gap import detect as fvg_detect
+
+        lines = []
+        for sym in symbols[:4]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            result = fvg_detect(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 5+ bars)")
+                continue
+
+            lines += [
+                f"── {sym} Fair Value Gaps ──",
+                f"  Price: {result.current_price:.2f}  |  {result.bars_scanned} bars scanned",
+                f"  Found: {len(result.fvgs)} gaps  ({len(result.active_fvgs)} active, "
+                f"{result.bullish_count} bull, {result.bearish_count} bear)",
+                "",
+            ]
+
+            if result.nearest_bearish_gap:
+                g = result.nearest_bearish_gap
+                lines.append(f"  ↓ Nearest bear FVG (resistance): {g.lower:.2f}–{g.upper:.2f}  ({g.size_pct:.2f}%)")
+            lines.append(f"  — Price: {result.current_price:.2f} —")
+            if result.nearest_bullish_gap:
+                g = result.nearest_bullish_gap
+                lines.append(f"  ↑ Nearest bull FVG (support): {g.lower:.2f}–{g.upper:.2f}  ({g.size_pct:.2f}%)")
+
+            # Show last 5 active FVGs
+            active_recent = result.active_fvgs[:5]
+            if active_recent:
+                lines += ["", "  Active gaps (newest first):"]
+                for g in active_recent:
+                    icon = "🟢" if g.kind == "bullish" else "🔴"
+                    pfx = "▲" if g.kind == "bullish" else "▼"
+                    lines.append(f"    {icon} {pfx} {g.lower:.2f}–{g.upper:.2f}  ({g.size_pct:.2f}%)")
+            lines += [f"  {result.verdict}", ""]
+
+        return "\n".join(lines).rstrip()
+
     def _pivots_cmd(args: list[str]) -> str:
         """Pivot points: classic, Fibonacci, or Camarilla support/resistance levels.
 
@@ -8584,4 +8643,6 @@ def build_command_handlers(
         "compress": _squeeze_cmd,
         "pivots": _pivots_cmd,
         "pp": _pivots_cmd,
+        "fvg": _fvg_cmd,
+        "imbalance": _fvg_cmd,
     }
