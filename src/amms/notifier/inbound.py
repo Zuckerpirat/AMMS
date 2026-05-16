@@ -6906,6 +6906,81 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _mktinternals_cmd(args: list[str]) -> str:
+        """Market Internals: breadth, A/D ratio, and composite health score.
+
+        Usage: /mktinternals [SYMBOL1 SYMBOL2 ...] [BARS]
+        Default basket: SPY QQQ IWM DIA XLK XLF XLE XLV XLI XLC XLY XLP XLB XLRE XLU
+        """
+        if data is None:
+            return "Data client not wired."
+
+        default_basket = [
+            "SPY", "QQQ", "IWM", "DIA",
+            "XLK", "XLF", "XLE", "XLV", "XLI",
+            "XLC", "XLY", "XLP", "XLB", "XLRE", "XLU",
+        ]
+
+        bar_count = 120
+        symbols = []
+        for a in args:
+            if a.isdigit():
+                bar_count = max(60, min(int(a), 500))
+            else:
+                symbols.append(a.upper())
+
+        if not symbols:
+            symbols = default_basket
+
+        from amms.analysis.market_internals import analyze as mi_analyze
+
+        bars_by_symbol: dict = {}
+        for sym in symbols:
+            try:
+                b = data.get_bars(sym, limit=bar_count)
+                if b:
+                    bars_by_symbol[sym] = b
+            except Exception:
+                pass
+
+        if not bars_by_symbol:
+            return "No bar data fetched for any symbol."
+
+        result = mi_analyze(bars_by_symbol)
+        if result is None:
+            return "Not enough data to compute market internals."
+
+        score_bar = "█" * int(result.composite_score / 10) + "░" * (10 - int(result.composite_score / 10))
+        ad_bar_filled = int(result.advance_decline_ratio * 10)
+        ad_bar = "▲" * ad_bar_filled + "▼" * (10 - ad_bar_filled)
+
+        lines = [f"── Market Internals ({result.symbols_scored} symbols) ──", ""]
+        lines.append(f"  Health:  {result.health_label.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.composite_score:.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  Trend Counts:  ▲ Bull={result.symbols_bull}  ◆ Neutral={result.symbols_neutral}  ▼ Bear={result.symbols_bear}")
+        lines.append(f"  A/D Ratio:     {result.advance_decline_ratio:.3f}  [{ad_bar}]")
+        lines += [""]
+        lines.append(f"  % Above SMA-20:  {result.pct_above_sma20:.1f}%")
+        lines.append(f"  % Above SMA-50:  {result.pct_above_sma50:.1f}%")
+        lines.append(f"  % Above SMA-200: {result.pct_above_sma200:.1f}%")
+        lines += [""]
+        lines.append(f"  New Highs: {result.pct_new_highs:.1f}%  |  New Lows: {result.pct_new_lows:.1f}%  |  NH/NL ratio: {result.nh_nl_ratio:.3f}")
+
+        top = sorted(result.by_symbol, key=lambda s: s.score, reverse=True)[:5]
+        bot = sorted(result.by_symbol, key=lambda s: s.score)[:5]
+        if top:
+            lines += ["", "  Top 5:"]
+            for s in top:
+                lines.append(f"    {s.symbol:<6}  {s.score:>5.1f}  ({s.trend})")
+        if bot:
+            lines += ["", "  Bottom 5:"]
+            for s in bot:
+                lines.append(f"    {s.symbol:<6}  {s.score:>5.1f}  ({s.trend})")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _linreg_cmd(args: list[str]) -> str:
         """Linear Regression Channel: trend slope, R², and deviation bands.
 
@@ -11047,4 +11122,6 @@ def build_command_handlers(
         "regchannel": _linreg_cmd,
         "wyckoff": _wyckoff_cmd,
         "wyphase": _wyckoff_cmd,
+        "mktinternals": _mktinternals_cmd,
+        "internals": _mktinternals_cmd,
     }
