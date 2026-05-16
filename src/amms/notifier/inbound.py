@@ -7036,6 +7036,66 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _crsi_cmd(args: list[str]) -> str:
+        """Connors RSI: 3-component mean-reversion oscillator.
+
+        Usage: /crsi SYMBOL [BARS]  (default 150 bars)
+        Shows CRSI, component breakdown, streak, and signal.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 150
+        for a in args:
+            if a.isdigit():
+                bar_count = max(110, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /crsi SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.connors_rsi import analyze as crsi_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = crsi_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 130+)."
+
+        filled = int(result.crsi / 10)
+        bar = "█" * filled + "░" * (10 - filled)
+        ob_tag = ""
+        if result.overbought:
+            ob_tag = " ◀ OVERBOUGHT"
+        elif result.oversold:
+            ob_tag = " ◀ OVERSOLD"
+        elif result.ob_soft:
+            ob_tag = " (soft OB)"
+        elif result.os_soft:
+            ob_tag = " (soft OS)"
+
+        streak_str = f"+{result.streak}" if result.streak > 0 else str(result.streak)
+
+        lines = [f"── Connors RSI: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:    {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:     {result.score:+.1f}/100  (mean-reversion)")
+        lines += [""]
+        lines.append(f"  CRSI:      {result.crsi:.1f}/100  [{bar}]{ob_tag}")
+        lines.append(f"  RSI(3):    {result.rsi_price:.1f}")
+        lines.append(f"  RSI(str):  {result.rsi_streak:.1f}")
+        lines.append(f"  Pctile:    {result.percentile:.1f}")
+        lines.append(f"  Streak:    {streak_str} bars,  Δ% today {result.pct_change:+.2f}%")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _arsi_cmd(args: list[str]) -> str:
         """Adaptive RSI: RSI with Kaufman ER-driven dynamic period.
 
@@ -12210,4 +12270,6 @@ def build_command_handlers(
         "schaff": _stc_cmd,
         "arsi": _arsi_cmd,
         "adaptiversi": _arsi_cmd,
+        "crsi": _crsi_cmd,
+        "connors": _crsi_cmd,
     }
