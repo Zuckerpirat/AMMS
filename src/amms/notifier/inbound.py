@@ -7036,6 +7036,60 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _elder_cmd(args: list[str]) -> str:
+        """Elder Ray Index: Bull Power and Bear Power relative to EMA.
+
+        Usage: /elder SYMBOL [BARS]  (default 80 bars)
+        Shows EMA, Bull Power (High-EMA), Bear Power (Low-EMA), and signal.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(35, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /elder SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.elder_ray import analyze as er_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = er_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 32+)."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        bull_trend = "↑" if result.bull_rising else "↓"
+        bear_trend = "↑" if result.bear_rising else "↓"
+
+        lines = [f"── Elder Ray: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  EMA ({result.ema_period}):    {result.ema:.2f}")
+        lines.append(f"  Price:       {result.current_price:.2f}")
+        lines += [""]
+        lines.append(f"  Bull Power:  {result.bull_power:+.4f}  {bull_trend}")
+        lines.append(f"  Bear Power:  {result.bear_power:+.4f}  {bear_trend}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _willr_cmd(args: list[str]) -> str:
         """Williams %R + Aroon Oscillator: momentum and trend strength.
 
@@ -11312,4 +11366,6 @@ def build_command_handlers(
         "icloud": _cloud_cmd,
         "willr": _willr_cmd,
         "aroon": _willr_cmd,
+        "elder": _elder_cmd,
+        "elderray": _elder_cmd,
     }
