@@ -5756,6 +5756,48 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _perftrend_cmd(args: list[str]) -> str:
+        """Monthly performance trend: is trading improving or declining?
+
+        Usage: /perftrend [LIMIT]  (default 500 trades)
+        Fits linear regression over monthly PnL to surface improvement/decline.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.performance_trend import compute as pt_compute
+
+        result = pt_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough history (need trades across 3+ calendar months)."
+
+        dir_icon = {"improving": "↗", "declining": "↘", "flat": "→"}.get(result.trend_direction, "")
+        acc_icon = {"accelerating": "⚡", "decelerating": "⚠️", "stable": "●"}.get(result.acceleration, "")
+
+        lines = [
+            f"── Monthly Performance Trend ({result.n_months} months) ──",
+            f"  Trend:       {dir_icon} {result.trend_direction.upper()}  (slope {result.slope:+.0f}/month)",
+            f"  R²:          {result.r_squared:.2f}",
+            f"  Consistency: {result.consistency_pct:.0f}% of months profitable",
+            f"  Momentum:    {acc_icon} {result.acceleration}",
+            "",
+            "  Monthly PnL:",
+        ]
+        for m in result.monthly:
+            bar = "▲" if m.total_pnl >= 0 else "▼"
+            mark = " ← best" if m.label == result.best_month else (" ← worst" if m.label == result.worst_month else "")
+            lines.append(f"    {m.label}  {bar}  {m.total_pnl:>+10.2f}  {m.win_rate:.0f}% WR  {m.n_trades}tr{mark}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _symperf_cmd(args: list[str]) -> str:
         """Closed-trade performance ranked by symbol.
 
@@ -7947,4 +7989,6 @@ def build_command_handlers(
         "profitcal": _pcal_cmd,
         "symperf": _symperf_cmd,
         "symbolperf": _symperf_cmd,
+        "perftrend": _perftrend_cmd,
+        "mtrend": _perftrend_cmd,
     }
