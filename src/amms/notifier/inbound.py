@@ -7036,6 +7036,59 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _vortex_cmd(args: list[str]) -> str:
+        """Vortex Indicator: VI+ and VI- trend direction oscillators.
+
+        Usage: /vortex SYMBOL [BARS]  (default 80 bars)
+        Shows VI+, VI-, spread, crossovers, and trend signal.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(35, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /vortex SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.vortex import analyze as vx_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = vx_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 30+)."
+
+        score_abs = abs(result.score)
+        filled = int(score_abs / 10)
+        direction = "▲" if result.score >= 0 else "▼"
+        score_bar = (direction * filled) + "░" * (10 - filled)
+
+        lines = [f"── Vortex Indicator: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:   {result.score:+.1f}/100  [{score_bar}]")
+        lines += [""]
+        lines.append(f"  VI+:     {result.vi_plus:.4f}  {'▲ strong' if result.vi_plus_above_threshold else ''}")
+        lines.append(f"  VI-:     {result.vi_minus:.4f}  {'▼ strong' if result.vi_minus_above_threshold else ''}")
+        lines.append(f"  Spread:  {result.vortex_spread:+.4f}  ({'bullish' if result.bullish else 'bearish'})")
+        if result.cross_bullish:
+            lines.append("  ▲ Bullish crossover")
+        if result.cross_bearish:
+            lines.append("  ▼ Bearish crossover")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _trix_cmd(args: list[str]) -> str:
         """TRIX and Know Sure Thing (KST): triple-EMA and weighted ROC momentum.
 
@@ -11431,4 +11484,6 @@ def build_command_handlers(
         "elderray": _elder_cmd,
         "trix": _trix_cmd,
         "kst": _trix_cmd,
+        "vortex": _vortex_cmd,
+        "vi": _vortex_cmd,
     }
