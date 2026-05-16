@@ -5656,6 +5656,95 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _screen_cmd(args: list[str]) -> str:
+        """Screen open positions against RSI / ROC / SMA / volume criteria.
+
+        Usage: /screen [rsi=40-70] [roc=5] [sma=above] [vol=1.5]
+          rsi=MIN-MAX  — RSI range filter (e.g. rsi=40-70)
+          roc=N        — min 20-bar ROC % (e.g. roc=5 for +5%%)
+          sma=above    — must be above SMA20 (or below)
+          vol=N        — volume ratio minimum (e.g. vol=1.5)
+
+        Example: /screen rsi=50-70 roc=3 sma=above
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if not positions:
+            return "No open positions to screen."
+
+        # Parse args
+        rsi_min = rsi_max = roc_min = vol_min = None
+        above_sma = None
+
+        for arg in args:
+            if arg.startswith("rsi="):
+                parts = arg[4:].split("-")
+                try:
+                    if len(parts) == 2:
+                        rsi_min, rsi_max = float(parts[0]), float(parts[1])
+                    else:
+                        rsi_min = float(parts[0])
+                except ValueError:
+                    pass
+            elif arg.startswith("roc="):
+                try:
+                    roc_min = float(arg[4:])
+                except ValueError:
+                    pass
+            elif arg.startswith("sma="):
+                val = arg[4:].lower()
+                above_sma = True if val in ("above", "1", "true") else (False if val in ("below", "0", "false") else None)
+            elif arg.startswith("vol="):
+                try:
+                    vol_min = float(arg[4:])
+                except ValueError:
+                    pass
+
+        from amms.analysis.symbol_screener import screen as sym_screen
+
+        # Fetch bars for all positions
+        symbols_bars: dict[str, list] = {}
+        for pos in positions[:20]:
+            try:
+                symbols_bars[pos.symbol] = data.get_bars(pos.symbol, limit=60)
+            except Exception:
+                pass
+
+        result = sym_screen(
+            symbols_bars,
+            rsi_min=rsi_min, rsi_max=rsi_max,
+            roc_min=roc_min,
+            require_above_sma20=above_sma,
+            volume_ratio_min=vol_min,
+        )
+
+        if result is None or not result.results:
+            return "No positions matched the screening criteria."
+
+        filter_str = "  ".join(result.filters_applied) if result.filters_applied else "none"
+        lines = [
+            f"── Symbol Screener ({result.n_screened} screened) ──",
+            f"  Filters: {filter_str}",
+            f"  Passed all: {result.n_passed}/{result.n_screened}",
+            "",
+            f"  {'Sym':<7}  {'Price':>8}  {'Score':>6}  {'RSI':>5}  {'ROC20':>7}  {'Vol×':>5}  {'SMA20':>6}",
+        ]
+        for r in result.results[:10]:
+            sma_str = "↑" if r.above_sma20 is True else ("↓" if r.above_sma20 is False else " ")
+            rsi_str = f"{r.rsi:.0f}" if r.rsi is not None else " n/a"
+            roc_str = f"{r.roc_20:+.1f}%%" if r.roc_20 is not None else "  n/a"
+            vol_str = f"{r.volume_ratio:.1f}×" if r.volume_ratio is not None else "n/a"
+            lines.append(
+                f"  {r.symbol:<7}  ${r.price:>7.2f}  {r.score:>5.0f}%%"
+                f"  {rsi_str:>5}  {roc_str:>7}  {vol_str:>5}  {sma_str}"
+            )
+        return "\n".join(lines)
+
     def _jsum_cmd(args: list[str]) -> str:
         """Journal summary: monthly/weekly trade performance breakdown.
 
@@ -7614,4 +7703,6 @@ def build_command_handlers(
         "hvcone": _volcone_cmd,
         "jsum": _jsum_cmd,
         "jmonth": _jsum_cmd,
+        "screen": _screen_cmd,
+        "screener": _screen_cmd,
     }
