@@ -5708,6 +5708,54 @@ def build_command_handlers(
 
         return "\n".join(lines).rstrip()
 
+    def _trade_timing_cmd(args: list[str]) -> str:
+        """Trade timing analysis: best day-of-week and hour-of-day to enter.
+
+        Usage: /timing [LIMIT]  (default 500 trades)
+        Shows win rate and avg PnL% per weekday and per hour of entry.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(20, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.trade_timing import compute as tt_compute
+
+        result = tt_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 10+ trades with buy timestamps)."
+
+        lines = [
+            f"── Trade Timing Analysis ({result.n_trades} trades) ──",
+            "",
+            "By Weekday:",
+        ]
+        for b in result.by_weekday:
+            bar = "█" * int(max(0, b.avg_pnl_pct) * 5) if b.avg_pnl_pct > 0 else "░" * int(abs(min(0, b.avg_pnl_pct)) * 5)
+            mark = " ◀ best" if b.label == result.best_weekday else (" ◀ worst" if b.label == result.worst_weekday else "")
+            lines.append(
+                f"  {b.label:<10}  {b.n_trades:>3}tr  "
+                f"WR:{b.win_rate:.0f}%  avg:{b.avg_pnl_pct:+.2f}%{mark}"
+            )
+
+        if result.by_hour:
+            lines += ["", "By Hour (top 5):"]
+            sorted_hours = sorted(result.by_hour, key=lambda b: b.avg_pnl_pct, reverse=True)
+            for b in sorted_hours[:5]:
+                mark = " ◀ best" if b.label == result.best_hour else ""
+                lines.append(
+                    f"  {b.label}  {b.n_trades:>3}tr  "
+                    f"WR:{b.win_rate:.0f}%  avg:{b.avg_pnl_pct:+.2f}%{mark}"
+                )
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _holdreturn_cmd(args: list[str]) -> str:
         """Hold duration vs return analysis: which hold lengths work best?
 
@@ -7806,4 +7854,6 @@ def build_command_handlers(
         "dreturn": _holdreturn_cmd,
         "sigagg": _sigagg_cmd,
         "consensus": _sigagg_cmd,
+        "timing": _trade_timing_cmd,
+        "tradetiming": _trade_timing_cmd,
     }
