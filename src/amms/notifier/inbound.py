@@ -6846,6 +6846,66 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _wyckoff_cmd(args: list[str]) -> str:
+        """Wyckoff Phase Detector: accumulation/distribution/trend phase analysis.
+
+        Usage: /wyckoff SYMBOL [BARS]  (default 120 bars)
+        Identifies Wyckoff A/B/C phases, springs, UTADs, and trend phases.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(35, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /wyckoff SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.wyckoff_phase import analyze as wk_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = wk_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 30+)."
+
+        conf_bar = "█" * int(result.confidence * 10) + "░" * (10 - int(result.confidence * 10))
+        pos_bar = "░" * int(result.price_position * 10) + "▓" + "░" * (10 - int(result.price_position * 10))
+
+        lines = [f"── Wyckoff Phase: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Phase:   {result.phase_label}")
+        lines.append(f"  Conf:    {result.confidence:.0%}  [{conf_bar}]")
+        lines.append(f"  Price:   {result.current_price:.2f}  ({result.price_position * 100:.0f}th pct of range)")
+        lines.append(f"  Range:   {result.range_low:.2f} – {result.range_high:.2f}  ({result.range_pct:.1f}%)")
+        lines.append(f"  Trend:   {result.trend_direction.upper()}  |  Sideways: {'yes' if result.is_sideways else 'no'}")
+        vol_tags = []
+        if result.vol_climax:
+            vol_tags.append("climactic")
+        if result.vol_drying:
+            vol_tags.append("drying")
+        if vol_tags:
+            lines.append(f"  Volume:  {', '.join(vol_tags)}")
+        events = []
+        if result.spring_detected:
+            events.append("▲ Spring")
+        if result.utad_detected:
+            events.append("▼ UTAD")
+        if events:
+            lines.append(f"  Events:  {', '.join(events)}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _linreg_cmd(args: list[str]) -> str:
         """Linear Regression Channel: trend slope, R², and deviation bands.
 
@@ -10985,4 +11045,6 @@ def build_command_handlers(
         "rsharpe": _rollsharpe_cmd,
         "linreg": _linreg_cmd,
         "regchannel": _linreg_cmd,
+        "wyckoff": _wyckoff_cmd,
+        "wyphase": _wyckoff_cmd,
     }
