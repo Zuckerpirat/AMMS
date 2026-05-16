@@ -5656,6 +5656,58 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _dduration_cmd(args: list[str]) -> str:
+        """Drawdown duration analysis: how long and how deep.
+
+        Usage: /dduration [PERIODS]  (default 252 snapshots)
+        Shows current drawdown depth and duration, max historical drawdown,
+        average recovery time, and pain index from equity curve.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 252
+        if args:
+            try:
+                limit = max(20, min(int(args[0]), 1000))
+            except ValueError:
+                pass
+
+        from amms.analysis.drawdown_duration import compute as dd_compute
+
+        result = dd_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough equity history (need 10+ snapshots)."
+
+        status_icon = "🔴" if result.is_underwater else "🟢"
+
+        lines = [
+            f"── Drawdown Duration ({result.n_periods} snapshots) ──",
+            f"  Status:        {status_icon} {'Underwater' if result.is_underwater else 'At new high'}",
+        ]
+
+        if result.is_underwater:
+            lines += [
+                f"  Current DD:    {result.current_drawdown_pct:.2f}%%",
+                f"  DD duration:   {result.current_drawdown_periods} periods",
+            ]
+
+        lines += [
+            f"  Equity high:   ${result.equity_high:,.0f}",
+            f"  Current equity: ${result.current_equity:,.0f}",
+            "",
+            f"  Max drawdown:  {result.max_drawdown_pct:.2f}%%  ({result.max_drawdown_duration} periods)",
+            f"  Longest uw:    {result.longest_underwater} periods",
+            f"  Pain index:    {result.pain_index:.3f}%%  (avg drawdown)",
+            f"  Episodes:      {result.n_drawdown_periods} total, {result.n_recovered} recovered",
+        ]
+
+        if result.avg_recovery_periods is not None:
+            lines.append(f"  Avg recovery:  {result.avg_recovery_periods:.1f} periods")
+
+        lines += ["", f"  {result.verdict}"]
+        return "\n".join(lines)
+
     def _expectancy_cmd(args: list[str]) -> str:
         """Trade expectancy per trade and per symbol.
 
@@ -7207,4 +7259,6 @@ def build_command_handlers(
         "vpd": _vpdetail_cmd,
         "expectancy": _expectancy_cmd,
         "exp": _expectancy_cmd,
+        "dduration": _dduration_cmd,
+        "underwater": _dduration_cmd,
     }
