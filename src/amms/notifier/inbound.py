@@ -6796,6 +6796,57 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _mtfmom_cmd(args: list[str]) -> str:
+        """Multi-Timeframe Momentum: 5/20/50/100-bar alignment and regime.
+
+        Usage: /mtfmom SYMBOL [BARS]  (default 150 bars)
+        Shows momentum direction on 4 timeframes and overall regime.
+        """
+        if data_source is None:
+            return "Data source not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 150
+        for a in args:
+            if a.isdigit():
+                bar_count = max(105, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /mtfmom SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.mtf_momentum import analyze as mtf_analyze
+
+        try:
+            bars = data_source.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = mtf_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 102+)."
+
+        lines = [f"── MTF Momentum: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Regime: {result.regime}  (score {result.total_score:+d}/4)")
+        lines.append(f"  Aligned: {'yes' if result.aligned else 'no'}  |  Divergence: {'yes' if result.divergence else 'no'}")
+        lines.append(f"  Price: {result.current_price:.2f}")
+        lines.append("")
+
+        header = f"  {'TF':<8} {'ROC':>8} {'RSI':>7} {'EMA slope':>12} {'dir':<10} {'score':>6}"
+        lines.append(header)
+        lines.append("  " + "-" * 52)
+        for w in result.windows:
+            lines.append(
+                f"  {w.bars:<8} {w.roc:>+7.2f}% {w.rsi:>6.1f}  {w.ema_slope_pct:>+10.4f}%  {w.direction:<10} {w.score:>+4}"
+            )
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _pfdecomp_cmd(args: list[str]) -> str:
         """Profit Factor Decomposition: PF, payoff ratio, edge, Kelly.
 
@@ -9758,4 +9809,6 @@ def build_command_handlers(
         "tradesector": _tradesector_cmd,
         "pfdecomp": _pfdecomp_cmd,
         "profitfactor": _pfdecomp_cmd,
+        "mtfmom": _mtfmom_cmd,
+        "mtf": _mtfmom_cmd,
     }
