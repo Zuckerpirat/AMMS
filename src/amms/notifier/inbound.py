@@ -7036,6 +7036,60 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _arsi_cmd(args: list[str]) -> str:
+        """Adaptive RSI: RSI with Kaufman ER-driven dynamic period.
+
+        Usage: /arsi SYMBOL [BARS]  (default 120 bars)
+        Shows ARSI, signal line, effective period, and ER score.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(80, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /arsi SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.adaptive_rsi import analyze as arsi_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = arsi_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 70+)."
+
+        filled = int(result.arsi / 10)
+        bar = "█" * filled + "░" * (10 - filled)
+        ob_tag = " ◀ OVERBOUGHT" if result.overbought else (" ◀ OVERSOLD" if result.oversold else "")
+
+        lines = [f"── Adaptive RSI: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:   {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Score:    {result.score:+.1f}/100")
+        lines += [""]
+        lines.append(f"  ARSI:     {result.arsi:.1f}  [{bar}]{ob_tag}")
+        lines.append(f"  SigLine:  {result.arsi_signal:.1f}  ({'above' if result.bullish else 'below'} signal)")
+        lines.append(f"  ER:       {result.er:.3f}  (period={result.effective_period})")
+        if result.cross_up:
+            lines.append("  ▲ Bullish cross above signal")
+        if result.cross_down:
+            lines.append("  ▼ Bearish cross below signal")
+        if result.divergence:
+            lines.append(f"  ⚠ Divergence: price {result.price_direction}, ARSI {result.arsi_direction}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _stc_cmd(args: list[str]) -> str:
         """Schaff Trend Cycle: MACD + double Stochastic oscillator (0-100).
 
@@ -12154,4 +12208,6 @@ def build_command_handlers(
         "vigor": _rvi_cmd,
         "stc": _stc_cmd,
         "schaff": _stc_cmd,
+        "arsi": _arsi_cmd,
+        "adaptiversi": _arsi_cmd,
     }
