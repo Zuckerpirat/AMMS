@@ -7036,6 +7036,79 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _fractal_cmd(args: list[str]) -> str:
+        """Williams Fractal + Alligator: swing points and adaptive trend lines.
+
+        Usage: /fractal SYMBOL [BARS]  (default 100 bars)
+        Shows recent fractals, support/resistance, and Alligator state.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(45, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /fractal SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.williams_fractal import analyze as frac_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = frac_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 40+)."
+
+        lines = [f"── Williams Fractal: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Signal:  {result.signal.replace('_', ' ').upper()}")
+        lines.append(f"  Price:   {result.current_price:.2f}")
+        lines += [""]
+
+        # Alligator
+        if result.jaw and result.teeth and result.lips:
+            alligator_state = "OPEN" if result.alligator_open else ("SLEEPING" if result.alligator_sleeping else "AWAKE")
+            lines.append(f"  Alligator: {alligator_state}")
+            lines.append(f"    Jaw (13):    {result.jaw:.2f}")
+            lines.append(f"    Teeth (8):   {result.teeth:.2f}")
+            lines.append(f"    Lips (5):    {result.lips:.2f}")
+            if result.alligator_bullish:
+                lines.append("    ▲ Price above Alligator (bullish)")
+            elif result.alligator_bearish:
+                lines.append("    ▼ Price below Alligator (bearish)")
+
+        lines += [""]
+        if result.nearest_resistance:
+            lines.append(f"  Resistance: {result.nearest_resistance:.2f}  (+{result.resistance_pct:.2f}% away)")
+        else:
+            lines.append("  Resistance: n/a (no up fractals above price)")
+        if result.nearest_support:
+            lines.append(f"  Support:    {result.nearest_support:.2f}  (-{result.support_pct:.2f}% away)")
+        else:
+            lines.append("  Support:    n/a (no down fractals below price)")
+
+        if result.up_fractals:
+            lines += ["", f"  Up Fractals ({len(result.up_fractals)}):"]
+            for f in result.up_fractals[:3]:
+                lines.append(f"    {f.price:.2f}  ({f.bar_index} bars ago)")
+        if result.down_fractals:
+            lines += ["", f"  Down Fractals ({len(result.down_fractals)}):"]
+            for f in result.down_fractals[:3]:
+                lines.append(f"    {f.price:.2f}  ({f.bar_index} bars ago)")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _kama_cmd(args: list[str]) -> str:
         """Kaufman Adaptive Moving Average: efficiency ratio-based adaptive trend.
 
@@ -11965,4 +12038,6 @@ def build_command_handlers(
         "chande": _cmo_cmd,
         "kama": _kama_cmd,
         "kaufman": _kama_cmd,
+        "fractal": _fractal_cmd,
+        "alligator": _fractal_cmd,
     }
