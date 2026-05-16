@@ -16,3 +16,7 @@ dist/
 .coverage
 htmlcov/
 .DS_Store
+
+# Runtime state — paper trading + auto-trader cooldowns
+paper_portfolio.json
+auto_trader_state.json
