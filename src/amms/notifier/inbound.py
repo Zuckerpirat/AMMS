@@ -5756,6 +5756,52 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _pcal_cmd(args: list[str]) -> str:
+        """Profit calendar: daily PnL summary grouped by month.
+
+        Usage: /pcal [LIMIT]  (default 500 trades)
+        Shows profit/loss per trading day as a calendar summary.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.profit_calendar import compute as pc_compute
+
+        result = pc_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 5+ trades with sell timestamps)."
+
+        lines = [
+            f"── Profit Calendar ({result.n_months} month(s), {result.overall_profitable_days + result.overall_losing_days} trading days) ──",
+            f"  Daily win rate: {result.overall_profitable_days}/{result.overall_profitable_days + result.overall_losing_days} profitable days",
+            f"  Total PnL: {result.overall_pnl:+.2f}",
+            "",
+        ]
+        for m in result.months[-3:]:  # show last 3 months
+            sign = "+" if m.total_pnl >= 0 else ""
+            lines.append(
+                f"  {m.year}-{m.month:02d}  "
+                f"{m.n_profitable_days}/{m.n_trading_days} up  "
+                f"PnL:{sign}{m.total_pnl:.2f}  "
+                f"avg:{m.avg_daily_pnl:+.2f}/day"
+            )
+            for d in m.days:
+                bar = "▲" if d.total_pnl > 0 else "▼"
+                lines.append(
+                    f"    {d.date}  {bar}  {d.n_trades}tr  {d.total_pnl:+.2f}"
+                )
+            lines.append("")
+
+        lines.append(result.verdict)
+        return "\n".join(lines)
+
     def _holdreturn_cmd(args: list[str]) -> str:
         """Hold duration vs return analysis: which hold lengths work best?
 
@@ -7856,4 +7902,6 @@ def build_command_handlers(
         "consensus": _sigagg_cmd,
         "timing": _trade_timing_cmd,
         "tradetiming": _trade_timing_cmd,
+        "pcal": _pcal_cmd,
+        "profitcal": _pcal_cmd,
     }
