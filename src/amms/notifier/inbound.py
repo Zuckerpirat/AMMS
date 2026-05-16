@@ -6183,6 +6183,52 @@ def build_command_handlers(
 
         return "\n".join(lines).rstrip()
 
+    def _ofi_cmd(args: list[str]) -> str:
+        """Order Flow Imbalance: estimates buy vs. sell pressure from OHLCV bars.
+
+        Usage: /ofi [SYM]  (default: all open positions)
+        Uses close-position within bar range as a buy/sell pressure proxy.
+        Cumulative OFI trend + divergence from price = accumulation/distribution signal.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /ofi AAPL)"
+
+        from amms.analysis.order_flow import analyze as ofi_analyze
+
+        dir_icon = {"rising": "↑", "falling": "↓", "flat": "↔"}
+        lines = []
+        for sym in symbols[:5]:
+            try:
+                bars = data.get_bars(sym, limit=60)
+            except Exception:
+                bars = []
+            result = ofi_analyze(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 5+ bars)")
+                continue
+
+            di = dir_icon.get(result.cofi_direction, "")
+            div_note = "  ⚠️ DIVERGENCE" if result.divergence else ""
+            lines += [
+                f"── {sym} Order Flow ({result.bars_used} bars) ──",
+                f"  COFI:     {result.cofi:+.3f}  {di} {result.cofi_direction}{div_note}",
+                f"  Avg OFI:  {result.avg_ofi:+.4f}/bar",
+                f"  Buy pres: {result.buy_pressure_pct:.0f}% of bars",
+                f"  Price:    {result.current_price:.2f}  ({result.price_trend})",
+                f"  {result.verdict}",
+                "",
+            ]
+
+        return "\n".join(lines).rstrip()
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -8811,4 +8857,6 @@ def build_command_handlers(
         "heikinashi": _heikin_ashi_cmd,
         "avwap": _avwap_cmd,
         "anchored": _avwap_cmd,
+        "ofi": _ofi_cmd,
+        "orderflow": _ofi_cmd,
     }
