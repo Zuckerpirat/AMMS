@@ -5756,6 +5756,52 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _squeeze_cmd(args: list[str]) -> str:
+        """Volatility squeeze / price compression detector.
+
+        Usage: /squeeze [SYM]  (default: all open positions)
+        Detects when ATR and Bollinger Band width are contracting below their
+        historical average — a classic pre-breakout setup.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /squeeze AAPL)"
+
+        from amms.analysis.price_compression import analyze as pc_analyze
+
+        lines = []
+        for sym in symbols[:5]:
+            try:
+                bars = data.get_bars(sym, limit=80)
+            except Exception:
+                bars = []
+            result = pc_analyze(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 35+ bars)")
+                continue
+
+            squeeze_icon = "⚡" if result.compressed else ("⚠️" if result.atr_ratio < 0.75 else "✅")
+            lines += [
+                f"── {sym} Compression ──",
+                f"  Status:    {squeeze_icon} {'SQUEEZE' if result.compressed else 'normal'}  "
+                f"(strength {result.compression_strength:.0f}/100)",
+                f"  ATR ratio:  {result.atr_ratio:.2f}  ({result.atr_current:.3f} vs avg {result.atr_average:.3f})",
+                f"  BB width:  {result.bb_width_ratio:.2f}  ({result.bb_width_current:.2f}% vs avg {result.bb_width_average:.2f}%)",
+                f"  Range:     {result.range_low:.2f} – {result.range_high:.2f}",
+                f"  Bias:      {result.bias}",
+                f"  Squeeze:   {result.bars_in_squeeze} bars",
+                f"  {result.verdict}",
+                "",
+            ]
+        return "\n".join(lines).rstrip()
+
     def _mstruct_cmd(args: list[str]) -> str:
         """Market structure: HH/HL uptrend vs LH/LL downtrend, CHoCH detection.
 
@@ -8476,4 +8522,6 @@ def build_command_handlers(
         "multitf": _mtf_cmd,
         "mstruct": _mstruct_cmd,
         "mktstruct": _mstruct_cmd,
+        "squeeze": _squeeze_cmd,
+        "compress": _squeeze_cmd,
     }
