@@ -6531,6 +6531,60 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
+    def _corrbreakdown_cmd(args: list[str]) -> str:
+        """Correlation Breakdown Monitor: detects crisis correlation surges.
+
+        Usage: /corrb  (monitors all open positions)
+        Compares pairwise correlations between positions in the first half vs.
+        second half of the bar history. Flags correlation surges (all moving
+        together = diversification failing) or collapses (assets decorrelating).
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        if not positions:
+            return "no open positions"
+        if len(positions) < 2:
+            return "need 2+ open positions for correlation analysis"
+
+        symbols = [p.symbol for p in positions][:8]
+        bars_by_symbol: dict[str, list] = {}
+        for sym in symbols:
+            try:
+                bars_by_symbol[sym] = data.get_bars(sym, limit=80)
+            except Exception:
+                pass
+
+        from amms.analysis.corr_breakdown import analyze as cb_analyze
+
+        result = cb_analyze(bars_by_symbol)
+        if result is None:
+            return "Not enough data (need 2+ symbols with 10+ bars each)."
+
+        surge_icon = "🚨" if result.corr_surge else ("⚠️" if result.avg_recent_corr > 0.6 else "✅")
+        lines = [
+            f"── Correlation Breakdown ({', '.join(result.symbols)}) ──",
+            f"  Status:  {surge_icon} {'SURGE' if result.corr_surge else 'COLLAPSE' if result.corr_collapse else 'stable'}",
+            f"  Baseline avg: {result.avg_baseline_corr:.2f}  →  Recent avg: {result.avg_recent_corr:.2f}",
+            "",
+        ]
+        if result.broken_pairs:
+            lines.append(f"  Broken pairs (|Δ|>{result.surge_threshold:.1f}):")
+            for p in result.broken_pairs[:5]:
+                icon = "↑" if p.delta > 0 else "↓"
+                lines.append(f"    {p.sym1}/{p.sym2}:  {p.baseline_corr:+.2f} → {p.recent_corr:+.2f}  ({icon}{abs(p.delta):.2f})")
+            lines.append("")
+        else:
+            lines.append("  No significant pair changes.")
+            lines.append("")
+
+        lines.append(result.verdict)
+        return "\n".join(lines)
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -9171,4 +9225,6 @@ def build_command_handlers(
         "tradecluster": _tcluster_cmd,
         "lossav": _lossaversion_cmd,
         "disposition": _lossaversion_cmd,
+        "corrb": _corrbreakdown_cmd,
+        "corrbreakdown": _corrbreakdown_cmd,
     }
