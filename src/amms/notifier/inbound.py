@@ -6846,6 +6846,65 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _swingpts_cmd(args: list[str]) -> str:
+        """Swing High/Low Detector: pivot points and market structure.
+
+        Usage: /swingpts SYMBOL [BARS]  (default 120 bars)
+        Identifies HH/HL/LH/LL structure, nearest support and resistance.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(20, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /swingpts SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.swing_points import analyze as sp_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = sp_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 15+)."
+
+        struct_arrow = {"uptrend": "▲", "downtrend": "▼", "sideways": "─", "unknown": "?"}.get(result.structure, "?")
+        hh_str = "HH ✓" if result.hh else "HH ✗"
+        hl_str = "HL ✓" if result.hl else "HL ✗"
+        lh_str = "LH ✓" if result.lh else "LH ✗"
+        ll_str = "LL ✓" if result.ll else "LL ✗"
+
+        lines = [f"── Swing Points: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Structure: {struct_arrow} {result.structure.upper()}  |  {hh_str}  {hl_str}  {lh_str}  {ll_str}")
+        lines.append(f"  Pivots:    {len(result.swing_highs)} highs, {len(result.swing_lows)} lows")
+        lines.append(f"  Price:     {result.current_price:.2f}")
+
+        if result.nearest_resistance is not None:
+            lines.append(f"  Resistance:{result.nearest_resistance:.2f}  ({result.resistance_distance_pct:.1f}% above)")
+        if result.nearest_support is not None:
+            lines.append(f"  Support:   {result.nearest_support:.2f}  ({result.support_distance_pct:.1f}% below)")
+
+        lines.append("")
+        if result.recent_high:
+            lines.append(f"  Last swing H: bar {result.recent_high.bar_idx} @ {result.recent_high.price:.2f}")
+        if result.recent_low:
+            lines.append(f"  Last swing L: bar {result.recent_low.bar_idx} @ {result.recent_low.price:.2f}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _pascore_cmd(args: list[str]) -> str:
         """Price Action Composite Score: 6-factor pure price analysis.
 
@@ -10640,4 +10699,6 @@ def build_command_handlers(
         "parabolicsar": _psar_cmd,
         "pascore": _pascore_cmd,
         "priceaction": _pascore_cmd,
+        "swingpts": _swingpts_cmd,
+        "swinglevels": _swingpts_cmd,
     }
