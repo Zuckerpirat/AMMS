@@ -6796,6 +6796,51 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _ddcurve_cmd(args: list[str]) -> str:
+        """Drawdown Curve Analyser: equity curve, episodes, ulcer index.
+
+        Usage: /ddcurve [LIMIT]  (default 500 trades)
+        Identifies all drawdown periods: depth, duration, recovery time.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(5, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.drawdown_curve import compute as dd_compute
+
+        result = dd_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 5+ closed trades)."
+
+        lines = [f"── Drawdown Curve ({result.n_trades} trades, {result.n_episodes} episodes) ──", ""]
+
+        lines.append(f"  Max drawdown:   {result.max_drawdown_pct:>+7.2f}%  over {result.max_drawdown_duration} trades")
+        lines.append(f"  Avg drawdown:   {result.avg_drawdown_pct:>+7.2f}%  avg dur {result.avg_drawdown_duration:.1f} trades")
+        lines.append(f"  Current DD:     {result.current_drawdown_pct:>+7.2f}%  {'⚠ IN DRAWDOWN' if result.in_drawdown else '✓ at high'}")
+        lines.append(f"  Ulcer Index:    {result.ulcer_index:.4f}")
+        if result.max_drawdown_pct < 0:
+            lines.append(f"  Recovery factor: {result.recovery_factor:.2f}")
+        if result.longest_recovery_bars is not None:
+            lines.append(f"  Longest recovery: {result.longest_recovery_bars} trades")
+        lines.append("")
+
+        if result.episodes:
+            lines.append("  Worst 3 episodes:")
+            worst = sorted(result.episodes, key=lambda e: e.depth_pct)[:3]
+            for ep in worst:
+                rec = f"{ep.recovery_bars}t" if ep.recovery_bars is not None else "ongoing"
+                lines.append(f"    depth {ep.depth_pct:>+6.2f}%  dur {ep.duration_bars}t  rec {rec}")
+            lines.append("")
+
+        lines.append(result.verdict)
+        return "\n".join(lines)
+
     def _wscore_cmd(args: list[str]) -> str:
         """Watchlist Opportunity Scorer: rank symbols 0-100 by composite score.
 
@@ -9503,4 +9548,6 @@ def build_command_handlers(
         "seasonality": _calendaranomaly_cmd,
         "wscore": _wscore_cmd,
         "watchscore": _wscore_cmd,
+        "ddcurve": _ddcurve_cmd,
+        "ddanalysis": _ddcurve_cmd,
     }
