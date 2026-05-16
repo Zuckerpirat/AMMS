@@ -6846,6 +6846,68 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _gapclass_cmd(args: list[str]) -> str:
+        """Gap Classifier: identifies and classifies price gaps.
+
+        Usage: /gapclass SYMBOL [BARS]  (default 120 bars)
+        Types: common, breakaway, runaway, exhaustion. Shows fill rates.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 120
+        for a in args:
+            if a.isdigit():
+                bar_count = max(10, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /gapclass SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.gap_classifier import analyze as gc_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = gc_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 5+)."
+
+        lines = [f"── Gap Classifier: {result.symbol} ({result.bars_used} bars) ──", ""]
+
+        if result.total_gaps == 0:
+            lines.append("  No qualifying gaps detected.")
+        else:
+            lines.append(f"  Gaps:    {result.total_gaps}  (↑{len(result.up_gaps)}  ↓{len(result.down_gaps)})")
+            lines.append(f"  Filled:  {result.filled_gaps}/{result.total_gaps}  ({result.fill_rate * 100:.0f}%)")
+            lines.append(f"  Open:    {len(result.open_gaps)}")
+            lines.append(f"  Avg size: {result.avg_gap_pct:.2f}%")
+
+            if result.recent_gap:
+                g = result.recent_gap
+                arrow = "▲" if g.direction == "up" else "▼"
+                fill_tag = " [FILLED]" if g.filled else f" [open, fill prob {g.fill_probability:.0%}]"
+                lines.append("")
+                lines.append(f"  Last gap: {arrow} {g.gap_type.upper()}  {g.gap_pct:.2f}%{fill_tag}")
+                lines.append(f"    Range: {g.gap_open:.2f} – {g.gap_close_:.2f}  @ bar {g.bar_idx}")
+
+            if result.open_gaps:
+                lines.append("")
+                lines.append("  Open gaps:")
+                for g in result.open_gaps[-4:]:
+                    arrow = "▲" if g.direction == "up" else "▼"
+                    lines.append(f"    {arrow} {g.gap_type:<12} {g.gap_pct:.2f}%  {g.gap_open:.2f}–{g.gap_close_:.2f}  prob {g.fill_probability:.0%}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _adi_cmd(args: list[str]) -> str:
         """Accumulation/Distribution Index: volume-weighted cumulative flow.
 
@@ -10817,4 +10879,6 @@ def build_command_handlers(
         "volumespread": _vsa_cmd,
         "adi": _adi_cmd,
         "accumdist": _adi_cmd,
+        "gapclass": _gapclass_cmd,
+        "gaptypes": _gapclass_cmd,
     }
