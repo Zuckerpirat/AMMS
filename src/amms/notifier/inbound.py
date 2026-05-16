@@ -6846,6 +6846,57 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _mrband_cmd(args: list[str]) -> str:
+        """Mean Reversion Band Analyser: z-score distance from rolling mean.
+
+        Usage: /mrband SYMBOL [BARS]  (default 80 bars)
+        Shows -2σ/-1σ/mean/+1σ/+2σ bands and reversion signal.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(32, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /mrband SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.mean_reversion_band import analyze as mrb_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = mrb_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 30+)."
+
+        bar_z = max(0, min(10, int((result.z_score + 2) / 4 * 10)))
+        visual = "░" * bar_z + "▓" + "░" * (10 - bar_z)
+
+        lines = [f"── Mean Reversion Bands: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Price:  {result.current_price:.2f}  ({result.pct_from_mean:+.1f}% from mean)")
+        lines.append(f"  Z-score: {result.z_score:+.2f}  [{visual}]  {result.signal.upper()}")
+        lines.append(f"  Percentile: {result.z_percentile:.0f}th  |  Strength: {result.signal_strength:.2f}")
+        if result.half_life is not None:
+            lines.append(f"  Half-life: {result.half_life:.1f} bars")
+        lines.append("")
+        lines.append("  Bands:")
+        for b in reversed(result.bands):
+            marker = " ◄" if abs(result.current_price - b.price) < result.std * 0.3 else ""
+            lines.append(f"    {b.sigma:+.0f}σ  {b.price:.2f}{marker}")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _regtrans_cmd(args: list[str]) -> str:
         """Regime Transition Detector: bull/neutral/bear state changes.
 
@@ -10193,4 +10244,6 @@ def build_command_handlers(
         "regimetrans": _regtrans_cmd,
         "sigstr": _sigstrength_cmd,
         "signalstrength": _sigstrength_cmd,
+        "mrband": _mrband_cmd,
+        "meanrevband": _mrband_cmd,
     }
