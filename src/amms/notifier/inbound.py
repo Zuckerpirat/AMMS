@@ -5756,6 +5756,49 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _scorecard_cmd(args: list[str]) -> str:
+        """Trading score card: weighted grade across 7 key performance metrics.
+
+        Usage: /scorecard [LIMIT]  (default 500 trades)
+        Scores win rate, profit factor, return, consistency, risk-adj return,
+        expectancy, and streak risk. Returns overall grade A-F.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.scorecard import compute as sc_compute
+
+        result = sc_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 10+ trades)."
+
+        grade_bar = "█" * int(result.overall_score / 10)
+        grade_icon = {"A": "🏆", "B": "✅", "C": "⚠️", "D": "🔴", "F": "⛔"}.get(result.grade, "")
+
+        lines = [
+            f"── Trading Score Card ({result.n_trades} trades) ──",
+            f"  Overall: {result.grade}  {grade_icon}  {result.overall_score:.0f}/100",
+            f"  [{grade_bar:<10}]",
+            "",
+            f"  {'Metric':<22} {'Value':>12}  {'Score':>6}  {'Grade':>5}",
+            f"  {'-'*22} {'-'*12}  {'-'*6}  {'-'*5}",
+        ]
+        for m in result.metrics:
+            bar = "█" * int(m.score / 20)
+            lines.append(
+                f"  {m.name:<22} {m.value:>12}  {m.score:>5.0f}%  "
+                f"  {m.grade}  {bar}"
+            )
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _tfreq_cmd(args: list[str]) -> str:
         """Trade frequency vs performance: does more trading help or hurt?
 
@@ -8076,4 +8119,6 @@ def build_command_handlers(
         "sizevret": _sizeperf_cmd,
         "tfreq": _tfreq_cmd,
         "tradefreq": _tfreq_cmd,
+        "scorecard": _scorecard_cmd,
+        "grade": _scorecard_cmd,
     }
