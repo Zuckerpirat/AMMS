@@ -5656,6 +5656,52 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _jsum_cmd(args: list[str]) -> str:
+        """Journal summary: monthly/weekly trade performance breakdown.
+
+        Usage: /jsum [monthly|weekly] [LIMIT]
+        Shows PnL, win rate, profit factor per calendar period.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        mode = "monthly"
+        limit = 500
+        for arg in args:
+            if arg.lower() in ("weekly", "week", "w"):
+                mode = "weekly"
+            elif arg.lower() in ("monthly", "month", "m"):
+                mode = "monthly"
+            else:
+                try:
+                    limit = max(10, min(int(arg), 2000))
+                except ValueError:
+                    pass
+
+        from amms.analysis.journal_summary import compute as js_compute
+
+        result = js_compute(conn, mode=mode, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 3+ completed trades with timestamps)."
+
+        lines = [
+            f"── Trade Journal Summary ({mode}, {result.n_trades} trades) ──",
+            f"  Overall PnL:  ${result.overall_pnl:+,.2f}",
+            f"  Overall WR:   {result.overall_win_rate:.1f}%%",
+            f"  Best period:  {result.best_period}",
+            f"  Worst period: {result.worst_period}",
+            "",
+            f"  {'Period':<12}  {'N':>4}  {'WR%%':>6}  {'Total PnL':>10}  {'Avg':>8}  {'PF':>5}",
+        ]
+        for p in result.periods[-12:]:  # show last 12 periods
+            pf_str = f"{p.profit_factor:.2f}" if p.profit_factor is not None else " ∞ "
+            pnl_icon = "🟢" if p.total_pnl >= 0 else "🔴"
+            lines.append(
+                f"  {p.period:<12}  {p.n_trades:>4}  {p.win_rate:>5.1f}%%"
+                f"  {pnl_icon} ${p.total_pnl:>+8.2f}  ${p.avg_pnl:>+6.2f}  {pf_str:>5}"
+            )
+        return "\n".join(lines)
+
     def _volcone_cmd(args: list[str]) -> str:
         """Historical Volatility Cone: current vol vs historical distribution.
 
@@ -7566,4 +7612,6 @@ def build_command_handlers(
         "ecaladd": _ecal_cmd,
         "volcone": _volcone_cmd,
         "hvcone": _volcone_cmd,
+        "jsum": _jsum_cmd,
+        "jmonth": _jsum_cmd,
     }
