@@ -6846,6 +6846,63 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _vsa_cmd(args: list[str]) -> str:
+        """Volume Spread Analysis: bar-range/volume relationship for supply/demand.
+
+        Usage: /vsa SYMBOL [BARS]  (default 80 bars)
+        Labels recent bars: Effort Up, Up Thrust, No Supply, Stopping Volume, etc.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 80
+        for a in args:
+            if a.isdigit():
+                bar_count = max(25, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /vsa SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.volume_spread import analyze as vsa_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = vsa_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 22+)."
+
+        bias_arrow = {"bullish": "▲", "bearish": "▼", "neutral": "─"}.get(result.dominant_bias, "─")
+
+        lines = [f"── Volume Spread Analysis: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Current bar: {result.current_bar.label}  [{result.current_bar.bias}]")
+        lines.append(f"  Bias:    {bias_arrow} {result.dominant_bias.upper()}  ({result.bullish_count}B / {result.bearish_count}S)")
+        lines.append(f"  Price:   {result.current_price:.2f}")
+        lines.append(f"  Spread:  {result.current_spread:.2f} (avg {result.avg_spread:.2f})")
+        lines.append(f"  Volume:  {result.current_volume:,.0f} (avg {result.avg_volume:,.0f})")
+
+        if result.supply_detected:
+            lines.append("  ⚠ Supply/distribution signals detected")
+        if result.demand_detected:
+            lines.append("  ✓ Demand/accumulation signals detected")
+
+        lines.append("")
+        lines.append("  Recent bars:")
+        for b in result.recent_bars[-7:]:
+            arrow = "▲" if b.bias == "bullish" else ("▼" if b.bias == "bearish" else "─")
+            lines.append(f"    {arrow} {b.label:<22} rv={b.relative_volume:.2f}  rs={b.relative_spread:.2f}")
+
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _swingpts_cmd(args: list[str]) -> str:
         """Swing High/Low Detector: pivot points and market structure.
 
@@ -10701,4 +10758,6 @@ def build_command_handlers(
         "priceaction": _pascore_cmd,
         "swingpts": _swingpts_cmd,
         "swinglevels": _swingpts_cmd,
+        "vsa": _vsa_cmd,
+        "volumespread": _vsa_cmd,
     }
