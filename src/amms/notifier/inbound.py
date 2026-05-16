@@ -6340,6 +6340,97 @@ def build_command_handlers(
 
         return "\n".join(lines).rstrip()
 
+    def _regime_sizer_cmd(args: list[str]) -> str:
+        """Regime-conditioned position sizer: Kelly adjusted for market environment.
+
+        Usage: /regsize [SYM]  (default: first open position)
+        Reads historical win rate from trade DB, detects current ATR/trend regime,
+        and outputs Kelly fraction scaled by regime multiplier (0.10× – 1.00×).
+        """
+        if conn is None:
+            return "DB not wired."
+        if data is None:
+            return "Data client not wired."
+
+        # Pull historical stats from trade DB
+        try:
+            rows = conn.execute(
+                "SELECT pnl_pct FROM trades WHERE status='closed' AND pnl_pct IS NOT NULL "
+                "ORDER BY closed_at DESC LIMIT 300"
+            ).fetchall()
+        except Exception as e:
+            return f"DB error: {e!r}"
+
+        if len(rows) < 10:
+            return "Need 10+ closed trades for regime sizing."
+
+        pnl_pcts = [float(r[0]) for r in rows]
+        wins = [p for p in pnl_pcts if p > 0]
+        losses = [p for p in pnl_pcts if p < 0]
+        if not wins or not losses:
+            return "Need both wins and losses in trade history."
+
+        win_rate = len(wins) / len(pnl_pcts) * 100.0
+        avg_win = sum(wins) / len(wins)
+        avg_loss = abs(sum(losses) / len(losses))
+
+        # Get bars for the requested symbol or first open position
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        sym = args[0].upper() if args else (positions[0].symbol if positions else None)
+        if sym is None:
+            return "no open positions (pass a ticker: /regsize AAPL)"
+
+        try:
+            bars = data.get_bars(sym, limit=60)
+        except Exception:
+            bars = []
+
+        try:
+            port_val = sum(float(p.market_value) for p in positions) if positions else None
+            cur_price = float(bars[-1].close) if bars else None
+        except Exception:
+            port_val = None
+            cur_price = None
+
+        from amms.analysis.regime_sizer import analyze as rs_analyze
+
+        result = rs_analyze(
+            bars,
+            win_rate=win_rate,
+            avg_win_pct=avg_win,
+            avg_loss_pct=avg_loss,
+            portfolio_value=port_val,
+            current_price=cur_price,
+        )
+        if result is None:
+            return f"Could not compute regime size for {sym} (need 5+ bars)."
+
+        regime_icon = {
+            "calm_bull": "🟢", "calm_neutral": "🟡", "calm_bear": "🟠",
+            "hot_bull": "🔶", "hot_neutral": "🔴", "hot_bear": "💀",
+            "extreme_vol": "🚨",
+        }.get(result.regime, "")
+
+        lines = [
+            f"── {sym} Regime Sizer ──",
+            f"  Regime:     {regime_icon} {result.regime}  (×{result.regime_multiplier:.2f})",
+            f"  ATR:        {result.atr_pct:.2f}%/bar  |  Trend: {result.trend_direction}",
+            "",
+            f"  Win rate:   {result.win_rate:.1f}%  |  Payoff: {result.payoff_ratio:.2f}×",
+            f"  Full Kelly: {result.kelly_pct:.1f}%",
+            f"  Half Kelly: {result.half_kelly_pct:.1f}%",
+            f"  Adj. size:  {result.adjusted_pct:.2f}% of capital",
+            f"  Max loss/trade: {result.max_loss_pct:.2f}%",
+        ]
+        if result.suggested_shares is not None:
+            lines.append(f"  Suggested:  {result.suggested_shares} shares")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -8974,4 +9065,6 @@ def build_command_handlers(
         "vskew": _volskew_cmd,
         "ptc": _ptconsensus_cmd,
         "ptconsensus": _ptconsensus_cmd,
+        "regsize": _regime_sizer_cmd,
+        "regkelly": _regime_sizer_cmd,
     }
