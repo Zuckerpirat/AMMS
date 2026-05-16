@@ -5756,6 +5756,46 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _sizeperf_cmd(args: list[str]) -> str:
+        """Position size vs return: do larger trades outperform?
+
+        Usage: /sizeperf [LIMIT]  (default 500 trades)
+        Buckets trades by entry value and shows avg return per tier.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.size_performance import compute as szp_compute
+
+        result = szp_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough trade history (need 10+ trades with buy_price/qty)."
+
+        corr_str = f"{result.correlation:.2f}" if result.correlation is not None else "n/a"
+        lines = [
+            f"── Position Size vs Return ({result.n_trades} trades) ──",
+            f"  Correlation: {corr_str}  [{result.correlation_label}]",
+            "",
+            f"  {'Tier':<8} {'Trades':>6} {'Avg Value':>10} {'WR':>6} {'Avg Ret%':>9}",
+            f"  {'-'*8} {'-'*6} {'-'*10} {'-'*6} {'-'*9}",
+        ]
+        for t in result.tiers:
+            mark = " ← best" if t.label == result.best_tier else (" ← worst" if t.label == result.worst_tier else "")
+            lines.append(
+                f"  {t.label:<8} {t.n_trades:>6} "
+                f"${t.avg_position_value:>9,.0f} "
+                f"{t.win_rate:>5.0f}% {t.avg_pnl_pct:>+9.2f}%{mark}"
+            )
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _perftrend_cmd(args: list[str]) -> str:
         """Monthly performance trend: is trading improving or declining?
 
@@ -7991,4 +8031,6 @@ def build_command_handlers(
         "symbolperf": _symperf_cmd,
         "perftrend": _perftrend_cmd,
         "mtrend": _perftrend_cmd,
+        "sizeperf": _sizeperf_cmd,
+        "sizevret": _sizeperf_cmd,
     }
