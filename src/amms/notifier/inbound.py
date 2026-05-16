@@ -6122,6 +6122,67 @@ def build_command_handlers(
 
         return "\n".join(lines).rstrip()
 
+    def _avwap_cmd(args: list[str]) -> str:
+        """Anchored VWAP: VWAP from a swing high/low or custom bar offset.
+
+        Usage: /avwap [SYM] [anchor]
+          anchor: "high" (swing high), "low" (swing low, default), or a number
+                  of bars back (e.g. /avwap AAPL 20)
+        Shows AVWAP, ±1σ/±2σ bands, and price position relative to AVWAP.
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        # Parse args: /avwap [SYM] [anchor]
+        sym_arg = None
+        anchor_arg: str | int = "auto_low"
+        for a in args:
+            try:
+                anchor_arg = int(a)
+            except ValueError:
+                if a.lower() in ("high", "auto_high"):
+                    anchor_arg = "auto_high"
+                elif a.lower() in ("low", "auto_low"):
+                    anchor_arg = "auto_low"
+                elif a.upper().isalpha():
+                    sym_arg = a.upper()
+
+        symbols = [sym_arg] if sym_arg else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /avwap AAPL)"
+
+        from amms.analysis.anchored_vwap import analyze as avwap_analyze
+
+        pos_icon = {"above": "↑", "below": "↓", "at": "↔"}
+        lines = []
+        for sym in symbols[:5]:
+            try:
+                bars = data.get_bars(sym, limit=100)
+            except Exception:
+                bars = []
+            result = avwap_analyze(bars, symbol=sym, anchor=anchor_arg)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 5+ bars with volume)")
+                continue
+
+            pi = pos_icon.get(result.price_position, "")
+            lines += [
+                f"── {sym} Anchored VWAP ({result.anchor_label}) ──",
+                f"  AVWAP:    {result.avwap:.2f}  |  Price: {result.current_price:.2f}  "
+                f"{pi} {result.pct_from_avwap:+.2f}%",
+                f"  +2σ/+1σ:  {result.upper_2:.2f} / {result.upper_1:.2f}",
+                f"  -1σ/-2σ:  {result.lower_1:.2f} / {result.lower_2:.2f}",
+                f"  Window:   {result.bars_in_window} bars  (of {result.total_bars})",
+                f"  {result.verdict}",
+                "",
+            ]
+
+        return "\n".join(lines).rstrip()
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -8748,4 +8809,6 @@ def build_command_handlers(
         "ha": _heikin_ashi_cmd,
         "heikin": _heikin_ashi_cmd,
         "heikinashi": _heikin_ashi_cmd,
+        "avwap": _avwap_cmd,
+        "anchored": _avwap_cmd,
     }
