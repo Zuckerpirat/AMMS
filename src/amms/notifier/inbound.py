@@ -5656,6 +5656,59 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _volcone_cmd(args: list[str]) -> str:
+        """Historical Volatility Cone: current vol vs historical distribution.
+
+        Usage: /volcone [SYM]
+        Shows realized HV for 5/10/20/30/60-day windows with percentile rank
+        and term structure (normal = calm, inverted = stress).
+        """
+        if data is None:
+            return "Data client not wired."
+        try:
+            positions = broker.get_positions()
+        except Exception as e:
+            return f"broker error: {e!r}"
+
+        symbols = [args[0].upper()] if args else [p.symbol for p in positions]
+        if not symbols:
+            return "no open positions (pass a ticker: /volcone AAPL)"
+
+        from amms.analysis.volatility_cone import compute as vc_compute
+
+        regime_icon = {"low": "🟢", "normal": "↔️ ", "elevated": "🟡", "extreme": "🔴"}
+        ts_icon = {"normal": "📉", "inverted": "📈", "flat": "↔️ "}
+
+        lines = []
+        for sym in symbols[:4]:
+            try:
+                bars = data.get_bars(sym, limit=300)
+            except Exception:
+                bars = []
+            result = vc_compute(bars, symbol=sym)
+            if result is None:
+                lines.append(f"  {sym:<6}  n/a (need 80+ bars)")
+                continue
+
+            ts = result.term_structure
+            lines += [
+                f"── {sym} Vol Cone ──",
+                f"  Term structure: {ts_icon.get(ts, '')} {ts}",
+                f"  Short-term:     {regime_icon.get(result.short_term_regime, '')} {result.short_term_regime}",
+                f"  {'Win':>4}  {'HV':>6}  {'25th':>6}  {'Med':>6}  {'75th':>6}  {'Pct':>5}  Regime",
+            ]
+            for w in result.windows:
+                icon = regime_icon.get(w.regime, "")
+                lines.append(
+                    f"  {w.window:>4}d  {w.hv:>5.1f}%%"
+                    f"  {w.hv_25th:>5.1f}%%  {w.hv_median:>5.1f}%%  {w.hv_75th:>5.1f}%%"
+                    f"  {w.percentile:>4.0f}%%  {icon} {w.regime}"
+                )
+            lines.append(f"  {result.verdict}")
+            lines.append("")
+
+        return "\n".join(lines).rstrip()
+
     def _ecal_cmd(args: list[str]) -> str:
         """Earnings calendar: view upcoming earnings or add dates.
 
@@ -7511,4 +7564,6 @@ def build_command_handlers(
         "rs2": _risksize_cmd,
         "ecal": _ecal_cmd,
         "ecaladd": _ecal_cmd,
+        "volcone": _volcone_cmd,
+        "hvcone": _volcone_cmd,
     }
