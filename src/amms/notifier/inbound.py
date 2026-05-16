@@ -7036,6 +7036,109 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    # ── Auto-Trader ────────────────────────────────────────────────────────
+
+    _auto_trader_instance: list = []
+
+    def _get_auto_trader():
+        from amms.execution.auto_trader import AutoTrader, AutoTraderConfig
+        if not _auto_trader_instance:
+            _auto_trader_instance.append(
+                AutoTrader(_get_paper_trader(), data, AutoTraderConfig())
+            )
+        return _auto_trader_instance[0]
+
+    def _autorun_cmd(args: list[str]) -> str:
+        """Run the Auto-Trader on a watchlist.
+
+        Usage: /autorun SYMBOL1 SYMBOL2 ...
+        Runs Decision Engine on each symbol, executes paper trades for
+        strong/medium signals subject to safety guards.
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /autorun SYMBOL1 SYMBOL2 ..."
+
+        symbols = [a.upper() for a in args]
+        at = _get_auto_trader()
+        results = at.run_watchlist(symbols)
+
+        lines = [f"══ Auto-Trader Run ({len(results)} symbols) ══", ""]
+        bought = closed = skipped = 0
+        for r in results:
+            icon = {
+                "bought":  "🟢 BOUGHT ",
+                "closed":  "🔴 CLOSED ",
+                "sold":    "🔴 SOLD   ",
+                "skipped": "⬜ SKIP   ",
+            }.get(r.action, "?")
+
+            if r.action == "bought":   bought  += 1
+            elif r.action == "closed": closed  += 1
+            elif r.action == "skipped": skipped += 1
+
+            lines.append(
+                f"  {icon} {r.symbol:<6} "
+                f"score {r.score:+6.0f}  conf {r.confidence:.0%}  "
+                f"@ ${r.price:.2f}"
+            )
+            if r.reason:
+                lines.append(f"           → {r.reason}")
+
+        lines += ["", f"Summary: {bought} bought, {closed} closed, {skipped} skipped."]
+        return "\n".join(lines)
+
+    def _autoconfig_cmd(args: list[str]) -> str:
+        """View or update Auto-Trader config.
+
+        Usage: /autoconfig                  → show current
+               /autoconfig KEY=VALUE ...    → update keys
+        Keys: max_position_pct, max_positions, cooldown_minutes,
+              min_confidence, min_score, allow_strong_only.
+        """
+        from amms.execution.auto_trader import AutoTraderConfig
+        at = _get_auto_trader()
+        cfg = at.config
+
+        if not args:
+            return (
+                "── Auto-Trader Config ──\n"
+                f"  max_position_pct:  {cfg.max_position_pct:.2%}\n"
+                f"  max_positions:     {cfg.max_positions}\n"
+                f"  cooldown_minutes:  {cfg.cooldown_minutes}\n"
+                f"  min_confidence:    {cfg.min_confidence:.0%}\n"
+                f"  min_score:         {cfg.min_score:.0f}\n"
+                f"  allow_strong_only: {cfg.allow_strong_only}\n"
+                f"  enable_close_on_sell: {cfg.enable_close_on_sell}"
+            )
+
+        updated = []
+        for kv in args:
+            if "=" not in kv:
+                continue
+            k, v = kv.split("=", 1)
+            k = k.strip().lower()
+            v = v.strip()
+            try:
+                if k in {"max_position_pct", "min_confidence"}:
+                    setattr(cfg, k, float(v))
+                elif k in {"max_positions", "cooldown_minutes"}:
+                    setattr(cfg, k, int(v))
+                elif k == "min_score":
+                    setattr(cfg, k, float(v))
+                elif k in {"allow_strong_only", "enable_close_on_sell"}:
+                    setattr(cfg, k, v.lower() in {"1", "true", "yes", "on"})
+                else:
+                    continue
+                updated.append(f"{k}={v}")
+            except ValueError:
+                return f"Invalid value for {k}: {v}"
+
+        if not updated:
+            return "No valid key=value pairs given."
+        return "Updated: " + ", ".join(updated)
+
     # ── Central Decision Engine ────────────────────────────────────────────
 
     def _decide_cmd(args: list[str]) -> str:
@@ -12797,4 +12900,7 @@ def build_command_handlers(
         "paperbuy": _paperbuy_cmd,
         "papersell": _papersell_cmd,
         "paperclose": _paperclose_cmd,
+        "autorun": _autorun_cmd,
+        "autotrade": _autorun_cmd,
+        "autoconfig": _autoconfig_cmd,
     }
