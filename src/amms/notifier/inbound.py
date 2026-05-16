@@ -6796,6 +6796,58 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _exhaust_cmd(args: list[str]) -> str:
+        """Trend Exhaustion Detector: price extension, RSI divergence, momentum decay.
+
+        Usage: /exhaust SYMBOL [BARS]  (default 100 bars)
+        Score 0-100: higher = trend more likely to reverse.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        parts = [a for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(60, min(int(a), 500))
+
+        if not parts:
+            return "Usage: /exhaust SYMBOL [BARS]"
+
+        symbol = parts[0].upper()
+
+        from amms.analysis.trend_exhaustion import analyze as ex_analyze
+
+        try:
+            bars = data.get_bars(symbol, limit=bar_count)
+        except Exception:
+            return f"Could not fetch bars for {symbol}."
+
+        if not bars:
+            return f"No bar data for {symbol}."
+
+        result = ex_analyze(bars, symbol=symbol)
+        if result is None:
+            return f"Not enough bars for {symbol} (need 55+)."
+
+        score_bar = "█" * int(result.exhaustion_score // 10) + "░" * (10 - int(result.exhaustion_score // 10))
+
+        lines = [f"── Trend Exhaustion: {result.symbol} ({result.bars_used} bars) ──", ""]
+        lines.append(f"  Exhaustion: {result.exhaustion_score:.0f}/100  {score_bar}  [{result.exhaustion_label.upper()}]")
+        lines.append(f"  Trend:      {result.trend_direction}-trend  |  Price: {result.current_price:.2f}")
+        lines.append(f"  RSI:        {result.rsi:.1f}  ROC-5: {result.roc5:+.2f}%  ROC-20: {result.roc20:+.2f}%")
+        if result.sma20:
+            lines.append(f"  SMA-20:     {result.sma20:.2f}  ({result.pct_above_sma20:+.1f}% away)")
+        lines.append("")
+        lines.append("  Signals:")
+        lines.append(f"    Price extension:   {result.price_extension * 100:.0f}%")
+        lines.append(f"    RSI divergence:    {'YES' if result.rsi_divergence else 'no'}")
+        lines.append(f"    Momentum decay:    {'YES' if result.momentum_decay else 'no'}")
+        lines.append(f"    ATR contraction:   {'YES' if result.atr_contraction else 'no'}  (ATR {result.atr_pct:.2f}%)")
+        lines.append(f"    Wick rejection:    {result.bar_rejection * 100:.0f}%")
+        lines += ["", result.verdict]
+        return "\n".join(lines)
+
     def _fib_cmd(args: list[str]) -> str:
         """Fibonacci Retracement Levels: swing high/low Fib levels and nearest support/resistance.
 
@@ -9983,4 +10035,6 @@ def build_command_handlers(
         "mktbreadth": _breadthproxy_cmd,
         "fib": _fib_cmd,
         "fiblevels": _fib_cmd,
+        "exhaust": _exhaust_cmd,
+        "trendexhaust": _exhaust_cmd,
     }
