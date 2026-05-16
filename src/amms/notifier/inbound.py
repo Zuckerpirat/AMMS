@@ -6796,6 +6796,57 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _pfdecomp_cmd(args: list[str]) -> str:
+        """Profit Factor Decomposition: PF, payoff ratio, edge, Kelly.
+
+        Usage: /pfdecomp [LIMIT]  (default 500 trades)
+        Shows profit factor, breakeven win rate, edge, and rolling trend.
+        """
+        if conn is None:
+            return "DB not wired."
+
+        limit = 500
+        if args:
+            try:
+                limit = max(10, min(int(args[0]), 2000))
+            except ValueError:
+                pass
+
+        from amms.analysis.profit_factor import compute as pf_compute
+
+        result = pf_compute(conn, limit=limit)
+        if result is None:
+            return "Not enough data (need 10+ closed trades with both wins and losses)."
+
+        pf_str = f"{result.profit_factor:.2f}" if result.profit_factor < 100 else ">100"
+        lines = [f"── Profit Factor Decomposition ({result.n_trades} trades) ──", ""]
+
+        lines.append(f"  Profit factor:      {pf_str}")
+        lines.append(f"  Win rate:           {result.win_rate:.1f}%  (breakeven {result.breakeven_win_rate:.1f}%,  edge {result.edge:+.1f}pp)")
+        lines.append(f"  Payoff ratio:       {result.payoff_ratio:.2f}×  (avg win {result.avg_winner_pct:+.2f}%  /  avg loss {result.avg_loser_pct:+.2f}%)")
+        lines.append(f"  Expectancy/trade:   {result.expectancy:+.3f}%")
+        lines.append(f"  Gross wins:         {result.gross_wins:+.2f}%  (across {result.n_winners} trades)")
+        lines.append(f"  Gross losses:      -{result.gross_losses:.2f}%  (across {result.n_losers} trades)")
+        lines.append(f"  Full Kelly:         {result.kelly_pct:.1f}%  (use half = {result.kelly_pct / 2:.1f}%)")
+        lines.append("")
+
+        if result.rolling_20:
+            lines.append(f"  Rolling PF (20t) trend: {result.rolling_pf_trend}")
+            if result.rolling_20.values:
+                latest = result.rolling_20.values[-1]
+                lines.append(f"  Latest rolling PF: {latest:.2f}")
+            lines.append("")
+
+        if result.by_symbol:
+            lines.append("  By symbol (top 5):")
+            for s in result.by_symbol:
+                pf_s = f"{s.profit_factor:.2f}" if s.profit_factor < 100 else ">100"
+                lines.append(f"    {s.symbol:<8}  {s.n_trades:>3}×  PF {pf_s}  WR {s.win_rate:.0f}%  payoff {s.payoff_ratio:.2f}×")
+            lines.append("")
+
+        lines.append(result.verdict)
+        return "\n".join(lines)
+
     def _tradesector_cmd(args: list[str]) -> str:
         """Trade Sector Performance: which sectors win most in your journal?
 
@@ -9705,4 +9756,6 @@ def build_command_handlers(
         "holdanalysis": _holdtime_cmd,
         "tsector": _tradesector_cmd,
         "tradesector": _tradesector_cmd,
+        "pfdecomp": _pfdecomp_cmd,
+        "profitfactor": _pfdecomp_cmd,
     }
