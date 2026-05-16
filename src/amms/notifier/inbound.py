@@ -6796,6 +6796,61 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _wscore_cmd(args: list[str]) -> str:
+        """Watchlist Opportunity Scorer: rank symbols 0-100 by composite score.
+
+        Usage: /wscore SYM1 SYM2 ... [BARS=60]
+        Scores: momentum ROC-20 (20%), RSI (20%), volume trend (15%),
+                SMA-50 proximity (15%), ATR volatility (15%), EMA trend (15%).
+        Grade: A≥80, B≥65, C≥50, D≥35, F<35.
+        """
+        if data_source is None:
+            return "Data source not wired."
+
+        symbols = [a.upper() for a in args if not a.isdigit()]
+        bar_count = 100
+        for a in args:
+            if a.isdigit():
+                bar_count = max(30, min(int(a), 500))
+
+        if not symbols:
+            return "Usage: /wscore SYM1 SYM2 ... [BARS]  — provide at least one symbol."
+
+        from amms.analysis.watchlist_scorer import score_many
+
+        bars_by_symbol: dict[str, list] = {}
+        for sym in symbols:
+            try:
+                bars = data_source.get_bars(sym, limit=bar_count)
+                if bars:
+                    bars_by_symbol[sym] = bars
+            except Exception:
+                pass
+
+        if not bars_by_symbol:
+            return "Could not fetch bars for any of the requested symbols."
+
+        report = score_many(bars_by_symbol)
+
+        if report.n_graded == 0:
+            return "No symbols had sufficient bar history (need 25+ bars)."
+
+        lines = [f"── Watchlist Scorer ({report.n_graded}/{report.n_symbols} graded) ──", ""]
+        for s in report.scores:
+            bar = "█" * int(s.total_score // 10) + "░" * (10 - int(s.total_score // 10))
+            lines.append(f"  {s.grade}  {s.symbol:<6}  {s.total_score:>5.1f}  {bar}")
+            lines.append(f"       mom {s.momentum_score:.0f}  rsi {s.rsi_score:.0f}  vol {s.volume_score:.0f}"
+                         f"  sma {s.sma_score:.0f}  atr {s.vol_score:.0f}  trnd {s.trend_score:.0f}")
+            lines.append(f"       price {s.current_price:.2f}  RSI {s.rsi:.0f}  ROC {s.roc_20:+.1f}%")
+            lines.append("")
+
+        if report.top_pick:
+            tp = report.top_pick
+            lines.append(f"Top pick: {tp.symbol} ({tp.grade}, {tp.total_score:.0f}/100)")
+            lines.append(tp.summary)
+
+        return "\n".join(lines)
+
     def _autocorr_cmd(args: list[str]) -> str:
         """Trade outcome autocorrelation: hot-hand or mean-reversion?
 
@@ -9446,4 +9501,6 @@ def build_command_handlers(
         "exitquality": _exitquality_cmd,
         "calanom": _calendaranomaly_cmd,
         "seasonality": _calendaranomaly_cmd,
+        "wscore": _wscore_cmd,
+        "watchscore": _wscore_cmd,
     }
