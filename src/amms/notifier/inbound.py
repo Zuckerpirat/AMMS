@@ -12742,6 +12742,52 @@ def build_command_handlers(
             lines.append(f"  {format_report_summary(r)}")
         return "\n".join(lines)
 
+    def _decompare_cmd(args: list[str]) -> str:
+        """Compare Decision Engine strategy vs Buy-and-Hold for a symbol.
+
+        Usage: /decompare SYM [BARS]
+        Runs the DE backtest and compares total return, max drawdown,
+        and Sharpe against passive buy-and-hold over the same period.
+        Answers: is the DE strategy actually worth using?
+
+        Example: /decompare AAPL 400
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /decompare SYM [BARS]  e.g. /decompare AAPL 400"
+        symbol = args[0].upper()
+        try:
+            limit = int(args[1]) if len(args) > 1 else 400
+            limit = max(210, min(limit, 1000))
+        except ValueError:
+            return "Usage: /decompare SYM [BARS]  — BARS must be a number"
+
+        try:
+            bars = data.get_bars(symbol, limit=limit)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 210:
+            return (
+                f"Not enough bars for {symbol}: need at least 210, "
+                f"got {len(bars) if bars else 0}"
+            )
+
+        from amms.engine.backtest import DEBacktestConfig, run_de_vs_buyhold
+        cfg = DEBacktestConfig(
+            starting_cash=100_000.0,
+            position_pct=0.10,
+            commission_pct=0.001,
+            min_confidence=0.60,
+            min_score=35.0,
+        )
+        try:
+            comparison = run_de_vs_buyhold(bars, symbol=symbol, config=cfg)
+        except Exception as exc:
+            return f"Comparison failed: {exc!r}"
+
+        return comparison["summary"]
+
     def _debatch_cmd(args: list[str]) -> str:
         """Batch DE backtest across multiple symbols.
 
@@ -12915,6 +12961,7 @@ def build_command_handlers(
             "/debacktest SYM [BARS] — Decision Engine backtest from live data (no DB needed)\n"
             "/debatch [SYM ...] [BARS] — batch DE backtest leaderboard across symbols\n"
             "/descan [SYM ...] [BARS] — scan watchlist with Decision Engine, ranked by score\n"
+            "/decompare SYM [BARS] — DE strategy vs buy-and-hold: who wins?\n"
             "/setup — show configuration status (API keys, broker, risk guard, scheduler)\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
@@ -13390,6 +13437,8 @@ def build_command_handlers(
         "deb": _debatch_cmd,
         "descan": _descan_cmd,
         "des": _descan_cmd,
+        "decompare": _decompare_cmd,
+        "devsbnh": _decompare_cmd,
         "setup": _setup_cmd,
         "check": _setup_cmd,
     }

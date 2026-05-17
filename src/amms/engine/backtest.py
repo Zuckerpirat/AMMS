@@ -319,6 +319,85 @@ def run_batch_de_backtest(
     return results
 
 
+def run_de_vs_buyhold(
+    bars: list[Any],
+    symbol: str = "",
+    config: DEBacktestConfig | None = None,
+) -> dict:
+    """Compare DE strategy return against passive buy-and-hold on the same bars.
+
+    Returns a dict with DE result, buy-and-hold equity curve, and comparison
+    metrics. The buy-and-hold baseline invests 100% at the first bar's close
+    and holds until the last bar.
+
+    Keys returned:
+      de_result        : DEBacktestResult
+      bnh_return_pct   : buy-and-hold total return
+      bnh_max_dd_pct   : buy-and-hold max drawdown
+      alpha            : de_result.total_return_pct - bnh_return_pct
+      outperformed     : bool — DE beat buy-and-hold
+      summary          : str — formatted comparison text
+    """
+    cfg = config or DEBacktestConfig()
+    de_result = run_de_backtest(bars, symbol=symbol, config=cfg)
+
+    # Buy-and-hold: full position at first bar, held until last bar
+    if len(bars) >= 2:
+        entry = float(bars[0].close)
+        equity = cfg.starting_cash
+        if entry > 0:
+            shares = equity / entry
+        else:
+            shares = 0.0
+
+        bnh_curve = [shares * float(b.close) for b in bars]
+        bnh_final = bnh_curve[-1]
+        bnh_return_pct = (bnh_final / cfg.starting_cash - 1.0) * 100.0
+
+        # Max drawdown for buy-and-hold
+        peak = cfg.starting_cash
+        bnh_max_dd = 0.0
+        for eq in bnh_curve:
+            peak = max(peak, eq)
+            if peak > 0:
+                dd = (peak - eq) / peak * 100.0
+                bnh_max_dd = max(bnh_max_dd, dd)
+    else:
+        bnh_return_pct = 0.0
+        bnh_max_dd = 0.0
+
+    alpha = de_result.total_return_pct - bnh_return_pct
+    outperformed = alpha > 0
+
+    de_line = (
+        f"DE Strategy:    {de_result.total_return_pct:>+7.2f}%  "
+        f"(Sharpe {de_result.sharpe_ratio:.2f}  MaxDD {de_result.max_drawdown_pct:.2f}%  "
+        f"{de_result.num_round_trips} trades)"
+    )
+    bnh_line = (
+        f"Buy & Hold:     {bnh_return_pct:>+7.2f}%  "
+        f"(Sharpe n/a        MaxDD {bnh_max_dd:.2f}%)"
+    )
+    verdict = "DE WINS" if outperformed else "BUY-AND-HOLD WINS"
+    alpha_line = f"Alpha:          {alpha:>+7.2f}%  → {verdict}"
+
+    summary = "\n".join([
+        f"── DE vs Buy-and-Hold: {symbol} ({len(bars)} bars) ──",
+        de_line,
+        bnh_line,
+        alpha_line,
+    ])
+
+    return {
+        "de_result": de_result,
+        "bnh_return_pct": round(bnh_return_pct, 2),
+        "bnh_max_dd_pct": round(bnh_max_dd, 2),
+        "alpha": round(alpha, 2),
+        "outperformed": outperformed,
+        "summary": summary,
+    }
+
+
 def format_batch_summary(results: list[DEBacktestResult], *, top_n: int = 10) -> str:
     """Compact leaderboard table for a batch backtest run."""
     if not results:
