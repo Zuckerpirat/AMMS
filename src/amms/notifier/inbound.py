@@ -7938,6 +7938,103 @@ def build_command_handlers(
                 lines.append(f"         Reason: {t.reason}")
         return "\n".join(lines)
 
+    def _pmetrics_cmd(_args: list[str]) -> str:
+        """Paper portfolio performance metrics from trade history.
+
+        Usage: /pmetrics
+        Computes win rate, profit factor, expectancy, Sharpe ratio, and
+        max drawdown from the paper trader's in-memory trade list.
+        No database required.
+        """
+        trader = _get_paper_trader()
+        trades = trader.trades
+
+        # Pair buys/sells to compute realized trade P&L
+        # Since paper_trader tracks realized_pnl in positions, use trades list
+        sell_trades = [t for t in trades if t.side == "sell"]
+        if not sell_trades:
+            snap = trader.snapshot()
+            return (
+                "── Paper Portfolio Metrics ──\n"
+                f"  No closed trades yet.\n"
+                f"  Unrealized P&L: ${snap.total_unrealized_pnl:>+,.2f}\n"
+                f"  Open positions: {len(snap.positions)}"
+            )
+
+        pnls = [t.pnl for t in sell_trades if hasattr(t, "pnl") and t.pnl is not None]
+        if not pnls:
+            return "── Paper Portfolio Metrics ──\n  No closed-trade P&L data."
+
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p <= 0]
+        n = len(pnls)
+        win_rate = len(wins) / n * 100 if n else 0.0
+        gross_profit = sum(wins)
+        gross_loss = abs(sum(losses))
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+        expectancy = sum(pnls) / n if n else 0.0
+        avg_win = sum(wins) / len(wins) if wins else 0.0
+        avg_loss = abs(sum(losses) / len(losses)) if losses else 0.0
+
+        # Sharpe from trade returns (annualized assuming ~252 trading days)
+        import math
+        try:
+            import statistics
+            if len(pnls) >= 2:
+                mu = statistics.mean(pnls)
+                sd = statistics.stdev(pnls)
+                sharpe = (mu / sd * math.sqrt(252)) if sd > 0 else 0.0
+            else:
+                sharpe = 0.0
+        except Exception:
+            sharpe = 0.0
+
+        # Max drawdown from equity curve (portfolio_value_after field)
+        pv_series = [t.portfolio_value_after for t in trades
+                     if hasattr(t, "portfolio_value_after") and t.portfolio_value_after]
+        max_dd = 0.0
+        if pv_series:
+            peak = pv_series[0]
+            for pv in pv_series:
+                if pv > peak:
+                    peak = pv
+                dd = (peak - pv) / peak * 100 if peak > 0 else 0.0
+                if dd > max_dd:
+                    max_dd = dd
+
+        snap = trader.snapshot()
+        pf_str = f"{profit_factor:.2f}" if profit_factor != float("inf") else "∞"
+
+        lines = [
+            "── Paper Portfolio Metrics ──",
+            "",
+            f"  Closed trades:  {n}  ({len(wins)} wins / {len(losses)} losses)",
+            f"  Win rate:       {win_rate:.1f}%",
+            f"  Profit factor:  {pf_str}",
+            f"  Expectancy:     ${expectancy:>+,.2f} per trade",
+            f"  Avg win:        ${avg_win:>,.2f}",
+            f"  Avg loss:      -${avg_loss:>,.2f}",
+            f"  Gross P&L:      ${snap.total_realized_pnl:>+,.2f}",
+            f"  Sharpe (ann.):  {sharpe:.2f}",
+            f"  Max drawdown:   {max_dd:.2f}%",
+            "",
+            f"  Total return:   {snap.total_return_pct:+.2f}%",
+            f"  Portfolio value: ${snap.portfolio_value:>,.2f}",
+        ]
+
+        # Grade
+        if win_rate >= 60 and profit_factor >= 2.0:
+            grade = "A — excellent"
+        elif win_rate >= 50 and profit_factor >= 1.5:
+            grade = "B — good"
+        elif profit_factor >= 1.0:
+            grade = "C — break-even"
+        else:
+            grade = "D — losing edge"
+        lines.append(f"\n  Performance grade: {grade}")
+
+        return "\n".join(lines)
+
     def _paperbuy_cmd(args: list[str]) -> str:
         """Execute a paper buy order.
 
@@ -14180,6 +14277,9 @@ def build_command_handlers(
         "paper": _paper_cmd,
         "portfolio": _portfolio_cmd,
         "ptrades": _ptrades_cmd,
+        "pmetrics": _pmetrics_cmd,
+        "papermetrics": _pmetrics_cmd,
+        "pstats": _pmetrics_cmd,
         "paperbuy": _paperbuy_cmd,
         "papersell": _papersell_cmd,
         "paperclose": _paperclose_cmd,
