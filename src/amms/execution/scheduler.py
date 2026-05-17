@@ -44,7 +44,8 @@ class TraderScheduler:
                  market_hours_only: bool = False,
                  clock_fn = None,
                  journal_path: Path | None = None,
-                 db_conn=None):
+                 db_conn=None,
+                 risk_guard=None):
         self.auto_trader = auto_trader
         self.symbols = [s.upper() for s in symbols]
         self.tick_seconds = max(10, int(tick_seconds))
@@ -52,6 +53,7 @@ class TraderScheduler:
         self.clock_fn = clock_fn   # optional callable returning ClockStatus-like obj
         self.journal_path = journal_path or Path("scheduler_journal.log")
         self.db_conn = db_conn     # optional SQLite conn for equity snapshots
+        self.risk_guard = risk_guard  # optional RiskGuard for peak tracking
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -153,6 +155,13 @@ class TraderScheduler:
                     f"@ ${r.price:.2f}  score={r.score:+.0f} conf={r.confidence:.0%}\n"
                 )
         self._append_journal(line)
+
+        # Update RiskGuard peak equity after each tick (best-effort)
+        if self.risk_guard is not None:
+            try:
+                self.risk_guard.update_peak()
+            except Exception as exc:
+                logger.debug("RiskGuard peak update failed: %s", exc)
 
         # Record equity snapshot after each tick (best-effort)
         if self.db_conn is not None:
