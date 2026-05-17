@@ -7237,12 +7237,14 @@ def build_command_handlers(
     def _schedstart_cmd(args: list[str]) -> str:
         """Start the background scheduler.
 
-        Usage: /schedstart [SECONDS] SYMBOL1 SYMBOL2 ...
+        Usage: /schedstart [SECONDS] [SYMBOL ...]
+        If no symbols given, uses the static watchlist.
+        SECONDS defaults to 300 (5 min); range 10-3600.
+
+        Example: /schedstart 600 AAPL MSFT NVDA
+        Example: /schedstart  (uses watchlist, ticks every 5 min)
         """
         from amms.execution.scheduler import TraderScheduler
-
-        if not args:
-            return "Usage: /schedstart [SECONDS] SYMBOL1 SYMBOL2 ..."
 
         tick = 300
         syms: list[str] = []
@@ -7253,7 +7255,9 @@ def build_command_handlers(
                 syms.append(a.upper())
 
         if not syms:
-            return "Need at least one SYMBOL."
+            syms = list(static_watchlist)
+        if not syms:
+            return "Need at least one SYMBOL (or configure a watchlist)."
 
         if _scheduler_instance:
             old = _scheduler_instance[0]
@@ -7337,16 +7341,20 @@ def build_command_handlers(
     def _autorun_cmd(args: list[str]) -> str:
         """Run the Auto-Trader on a watchlist.
 
-        Usage: /autorun SYMBOL1 SYMBOL2 ...
+        Usage: /autorun [SYMBOL ...]
+        If no symbols given, uses the static watchlist.
         Runs Decision Engine on each symbol, executes paper trades for
         strong/medium signals subject to safety guards.
         """
         if data is None:
             return "Data client not wired."
-        if not args:
-            return "Usage: /autorun SYMBOL1 SYMBOL2 ..."
 
-        symbols = [a.upper() for a in args]
+        if args:
+            symbols = [a.upper() for a in args]
+        else:
+            symbols = list(static_watchlist)
+        if not symbols:
+            return "No symbols given and watchlist is empty."
         at = _get_auto_trader()
         results = at.run_watchlist(symbols)
 
