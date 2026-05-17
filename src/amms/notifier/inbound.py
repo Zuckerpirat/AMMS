@@ -7575,21 +7575,33 @@ def build_command_handlers(
         return "\n".join(lines)
 
     def _schedstart_cmd(args: list[str]) -> str:
-        """Start the background scheduler.
+        """Start the background scheduler with proactive Telegram notifications.
 
         Usage: /schedstart [SECONDS] [SYMBOL ...]
-        If no symbols given, uses the static watchlist.
-        SECONDS defaults to 300 (5 min); range 10-3600.
+               /schedstart                 — Watchlist, 5-Minuten-Takt
+               /schedstart 600             — 10-Minuten-Takt
+               /schedstart AAPL NVDA TSLA  — spezifische Symbole
+               /schedstart noscan          — Auto-Scanner deaktivieren
 
-        Example: /schedstart 600 AAPL MSFT NVDA
-        Example: /schedstart  (uses watchlist, ticks every 5 min)
+        Automatische Nachrichten die du bekommst:
+          🟢 Scheduler gestartet/gestoppt
+          📈 Kauf: Symbol, Menge, Preis, Grund
+          📉/🛑 Verkauf oder Stop-Loss mit P&L
+          ⚠️ Drawdown-Alarm (>5% unter Peak)
+          🌅 Morgen-Briefing (Marktöffnung)
+          🌆 Tagesabschluss-Zusammenfassung
+          🔍 Auto-Scanner: neue Symbole entdeckt
         """
         from amms.execution.scheduler import TraderScheduler
+        from amms.notifier.telegram import build_notifier
 
         tick = 300
         syms: list[str] = []
+        use_scanner = True
         for a in args:
-            if a.isdigit() and not syms:
+            if a.lower() == "noscan":
+                use_scanner = False
+            elif a.isdigit() and not syms:
                 tick = max(10, min(int(a), 3600))
             else:
                 syms.append(a.upper())
@@ -7597,32 +7609,63 @@ def build_command_handlers(
         if not syms:
             syms = list(static_watchlist)
         if not syms:
-            return "Need at least one SYMBOL (or configure a watchlist)."
+            return "Mindestens ein Symbol nötig (oder Watchlist in config.yaml konfigurieren)."
 
         if _scheduler_instance:
             old = _scheduler_instance[0]
             if old.is_running():
-                return f"Scheduler already running — stop with /schedstop first."
+                return "Scheduler läuft bereits — stoppe ihn zuerst mit /schedstop."
 
         rg = None
         try:
             rg = _get_risk_guard()
         except Exception:
             pass
+
+        # Wire proactive Telegram notifier
+        notifier = build_notifier()
+
+        # Wire auto-scanner
+        scanner = None
+        if use_scanner and data is not None:
+            try:
+                from amms.execution.auto_scanner import AutoScanner, DEFAULT_UNIVERSE
+                scanner = AutoScanner(
+                    data, DEFAULT_UNIVERSE,
+                    max_additions=5, min_score=40.0, decay_ticks=6,
+                )
+            except Exception as exc:
+                logger.debug("Auto-scanner init failed: %s", exc)
+
         sched = TraderScheduler(
             _get_auto_trader(), syms,
-            tick_seconds=tick, db_conn=conn, risk_guard=rg,
+            tick_seconds=tick,
+            db_conn=conn,
+            risk_guard=rg,
+            notifier=notifier,
+            auto_scanner=scanner,
         )
         _scheduler_instance.clear()
         _scheduler_instance.append(sched)
         sched.start()
+
         notes = []
         if conn:
-            notes.append("equity snapshots: on")
+            notes.append("📊 Equity-Snapshots")
         if rg:
-            notes.append("risk peak tracking: on")
-        note_str = f" ({', '.join(notes)})" if notes else ""
-        return f"✓ Scheduler started — {len(syms)} symbols, tick every {tick}s{note_str}"
+            notes.append("🛡️ Risiko-Tracking")
+        if scanner:
+            notes.append("🔍 Auto-Scanner")
+        from amms.notifier.telegram import TelegramNotifier
+        if isinstance(notifier, TelegramNotifier):
+            notes.append("📢 Proaktive Benachrichtigungen")
+        note_str = "\n  ".join(notes)
+        return (
+            f"✓ Scheduler gestartet\n"
+            f"  Symbole: {len(syms)} ({', '.join(syms[:6])}{'...' if len(syms) > 6 else ''})\n"
+            f"  Intervall: {tick}s\n"
+            f"  {note_str}"
+        )
 
     def _schedstop_cmd(args: list[str]) -> str:
         """Stop the background scheduler."""
