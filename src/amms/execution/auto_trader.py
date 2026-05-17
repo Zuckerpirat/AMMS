@@ -61,13 +61,15 @@ class AutoTrader:
     """Runs decisions for a list of symbols, executes paper trades."""
 
     def __init__(self, paper_trader, data_client, config: AutoTraderConfig | None = None,
-                 state_path: Path = _COOLDOWN_FILE, risk_guard=None, signal_db=None):
+                 state_path: Path = _COOLDOWN_FILE, risk_guard=None, signal_db=None,
+                 db_conn=None):
         self.trader = paper_trader
         self.data = data_client
         self.config = config or AutoTraderConfig()
         self.state_path = state_path
         self.risk_guard = risk_guard           # optional RiskGuard instance
         self.signal_db = signal_db             # optional SQLite conn for signal history
+        self.db_conn = db_conn                 # optional SQLite conn for runtime overrides
         self._cooldowns: dict[str, str] = self._load_state()  # symbol → ISO timestamp
         # Prevent concurrent processing of the same symbol (manual + scheduler)
         self._process_lock = threading.Lock()
@@ -373,6 +375,18 @@ class AutoTrader:
 
     def run_watchlist(self, symbols: list[str]) -> list[AutoTradeDecision]:
         """Run process_symbol for each symbol. Returns all decisions."""
+        # Sync trading mode from runtime overrides so /mode changes take effect live
+        if self.db_conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                overrides = get_overrides(self.db_conn)
+                live_mode = overrides.get("trading_mode")
+                if live_mode and live_mode != self.config.mode:
+                    logger.info("Auto-trader mode updated: %s → %s", self.config.mode, live_mode)
+                    self.config.mode = live_mode
+            except Exception as exc:
+                logger.debug("Could not sync trading mode: %s", exc)
+
         results = []
         for sym in symbols:
             try:

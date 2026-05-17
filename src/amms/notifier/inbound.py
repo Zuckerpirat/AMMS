@@ -7801,10 +7801,12 @@ def build_command_handlers(
         if not _auto_trader_instance:
             # CRITICAL: pass risk_guard so the killswitch and drawdown veto
             # actually gate every auto-trade decision.
+            # Pass db_conn so /mode changes are picked up on every tick.
             _auto_trader_instance.append(
                 AutoTrader(
                     _get_broker(), data, AutoTraderConfig(),
                     risk_guard=_get_risk_guard(),
+                    db_conn=conn,
                 )
             )
         return _auto_trader_instance[0]
@@ -13763,7 +13765,7 @@ def build_command_handlers(
             for t in reversed(trades):
                 lines.append(
                     f"    {t.side.upper():4} {t.symbol:<6} ×{t.qty:.2f} @ ${t.price:,.2f}"
-                    + (f"  P&L {t.pnl:+,.2f}" if t.pnl else "")
+                    + (f"  P&L {t.pnl:+,.2f}" if getattr(t, "pnl", None) else "")
                 )
         return "\n".join(lines)
 

@@ -4066,7 +4066,13 @@ def test_memeclose_no_args() -> None:
     assert "Usage" in out
 
 
-def test_memewatch_no_positions() -> None:
+def test_memewatch_no_positions(tmp_path, monkeypatch) -> None:
+    import amms.execution.meme_portfolio as _mp_mod
+    fresh_path = tmp_path / "meme_fresh.json"
+    monkeypatch.setattr(
+        _mp_mod.MemePortfolio, "load",
+        classmethod(lambda cls, **kw: _mp_mod.MemePortfolio(state_path=fresh_path)),
+    )
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     out = h["memewatch"]([])
