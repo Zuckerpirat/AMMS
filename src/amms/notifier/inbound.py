@@ -13298,6 +13298,85 @@ def build_command_handlers(
         lines.append(mp.status_summary().split("\n")[0])  # just the header value line
         return "\n".join(lines)
 
+    def _signalhistory_cmd(args: list[str]) -> str:
+        """Show recent Decision Engine signal history.
+
+        Usage: /signalhistory [N] [SYM] [mode=MODE] [action=ACTION]
+        Shows the last N DE signals (default 20) from the history log.
+        Filters: symbol, mode (swing/meme/conservative/event),
+        action (buy/sell/strong_buy/strong_sell/hold).
+
+        Requires: database connection (conn) and migration 003 applied.
+
+        Examples:
+          /signalhistory 10
+          /signalhistory AAPL
+          /signalhistory mode=meme action=buy
+        """
+        if conn is None:
+            return "Database not connected — signal history unavailable."
+
+        limit = 20
+        symbol: str | None = None
+        mode: str | None = None
+        action: str | None = None
+        for a in args:
+            if a.isdigit():
+                limit = max(1, min(int(a), 100))
+            elif a.startswith("mode="):
+                mode = a[5:].lower()
+            elif a.startswith("action="):
+                action = a[7:].lower()
+            elif not a.startswith("-"):
+                symbol = a.upper()
+
+        # Ensure table exists
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS de_signal_history ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, "
+                "symbol TEXT NOT NULL, mode TEXT NOT NULL, action TEXT NOT NULL, "
+                "score REAL NOT NULL, confidence REAL NOT NULL, horizon TEXT, "
+                "price REAL, macro_level TEXT)"
+            )
+        except Exception:
+            pass
+
+        from amms.data.signal_history import fetch_recent, signal_accuracy_by_mode
+        records = fetch_recent(conn, limit=limit, symbol=symbol, mode=mode, action=action)
+
+        if not records:
+            return "No signal history found (filters: " + repr({"symbol": symbol, "mode": mode, "action": action}) + ")"
+
+        lines = [f"── DE Signal History (last {len(records)}) ──", ""]
+        action_abbr = {
+            "strong_buy": "🟢 S.BUY", "buy": "🟩 BUY  ",
+            "hold": "⬜ HOLD ", "sell": "🟥 SELL ", "strong_sell": "🔴 S.SELL",
+        }
+        for r in records:
+            ts_short = r.ts[:16].replace("T", " ")
+            abbr = action_abbr.get(r.action, r.action)
+            horizon_str = f" [{r.horizon}]" if r.horizon else ""
+            lines.append(
+                f"  {ts_short}  {r.symbol:<8} {abbr}  "
+                f"score {r.score:>+6.0f}  conf {r.confidence:.0%}"
+                f"  mode={r.mode}{horizon_str}"
+            )
+
+        # Mode summary
+        if symbol is None and mode is None and action is None:
+            try:
+                stats = signal_accuracy_by_mode(conn)
+                if stats:
+                    lines += ["", "── Signal count by mode ──"]
+                    for m, actions in sorted(stats.items()):
+                        action_parts = ", ".join(f"{a}:{c}" for a, c in sorted(actions.items(), key=lambda x: -x[1]))
+                        lines.append(f"  {m:<14}  {action_parts}")
+            except Exception:
+                pass
+
+        return "\n".join(lines)
+
     def _modecompare_cmd(args: list[str]) -> str:
         """Backtest all four trading modes on one symbol — which mode fits best?
 
@@ -14153,4 +14232,7 @@ def build_command_handlers(
         "modecompare": _modecompare_cmd,
         "mcomp": _modecompare_cmd,
         "bestmode": _modecompare_cmd,
+        "signalhistory": _signalhistory_cmd,
+        "sighist": _signalhistory_cmd,
+        "signals_log": _signalhistory_cmd,
     }

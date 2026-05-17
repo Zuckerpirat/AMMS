@@ -58,12 +58,13 @@ class AutoTrader:
     """Runs decisions for a list of symbols, executes paper trades."""
 
     def __init__(self, paper_trader, data_client, config: AutoTraderConfig | None = None,
-                 state_path: Path = _COOLDOWN_FILE, risk_guard=None):
+                 state_path: Path = _COOLDOWN_FILE, risk_guard=None, signal_db=None):
         self.trader = paper_trader
         self.data = data_client
         self.config = config or AutoTraderConfig()
         self.state_path = state_path
         self.risk_guard = risk_guard           # optional RiskGuard instance
+        self.signal_db = signal_db             # optional SQLite conn for signal history
         self._cooldowns: dict[str, str] = self._load_state()  # symbol → ISO timestamp
         # Prevent concurrent processing of the same symbol (manual + scheduler)
         self._process_lock = threading.Lock()
@@ -173,6 +174,25 @@ class AutoTrader:
         price = float(bars[-1].close)
         cur_pos = self.trader.position(symbol)
         snap = self.trader.snapshot()
+
+        # Record signal to history (best-effort — never blocks trading)
+        if self.signal_db is not None:
+            try:
+                from amms.data.signal_history import record_signal
+                macro_level = getattr(macro_regime, "level", "calm") if macro_regime else "calm"
+                record_signal(
+                    self.signal_db,
+                    symbol=symbol,
+                    mode=self.config.mode,
+                    action=decision.action,
+                    score=decision.composite_score,
+                    confidence=decision.confidence,
+                    horizon=getattr(decision, "holding_horizon", ""),
+                    price=price,
+                    macro_level=macro_level,
+                )
+            except Exception:
+                pass  # signal history failure never blocks trading
 
         # 4. Filter on signal strength
         if abs(decision.composite_score) < self.config.min_score:
