@@ -75,6 +75,9 @@ class DecisionReport:
 
     bars_used: int
 
+    # Estimated holding period (based on mode and signal strength)
+    holding_horizon: str = ""    # e.g. "1-3 days", "1-2 weeks", "1-3 months"
+
 
 # Category weights (must sum to 1.0) — default (swing / balanced)
 _CATEGORY_WEIGHTS = {
@@ -390,6 +393,20 @@ def analyze(
         f"| {len(results)} modules ({failed} failed)"
     )
 
+    # ── Holding horizon estimate ──────────────────────────────────
+    # Based on trading mode and signal strength — purely indicative.
+    _horizons: dict[str, dict[str, str]] = {
+        "conservative": {"strong_buy": "1-3 months", "buy": "2-6 weeks",
+                         "hold": "watching", "sell": "reducing", "strong_sell": "exiting"},
+        "swing":        {"strong_buy": "1-3 weeks", "buy": "5-15 days",
+                         "hold": "watching", "sell": "reducing", "strong_sell": "exiting"},
+        "meme":         {"strong_buy": "1-4 days", "buy": "1-3 days",
+                         "hold": "watching", "sell": "reducing", "strong_sell": "exiting"},
+        "event":        {"strong_buy": "1-5 days", "buy": "1-3 days",
+                         "hold": "watching", "sell": "reducing", "strong_sell": "exiting"},
+    }
+    holding_horizon = _horizons.get(mode, _horizons["swing"]).get(action, "")
+
     return DecisionReport(
         symbol=symbol,
         action=action,
@@ -404,4 +421,5 @@ def analyze(
         reasoning=reasoning,
         verdict=verdict,
         bars_used=len(bars),
+        holding_horizon=holding_horizon,
     )

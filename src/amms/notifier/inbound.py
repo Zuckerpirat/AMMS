@@ -7501,12 +7501,17 @@ def build_command_handlers(
 
         conf_pct = f"{result.confidence:.0%}"
 
+        horizon_str = f"  Horizon:    {result.holding_horizon}" if result.holding_horizon else ""
         lines = [
             f"══ Decision Engine: {result.symbol} ({result.bars_used} bars, mode={current_mode}) ══",
             "",
             f"  {action_str}",
             f"  Score:      {result.composite_score:+.0f}/100  [{score_bar}]",
             f"  Confidence: {conf_pct}  ({result.modules_run} modules)",
+        ]
+        if horizon_str:
+            lines.append(horizon_str)
+        lines += [
             "",
             "  Category breakdown:",
         ]
@@ -7608,9 +7613,11 @@ def build_command_handlers(
             lines.append("  Daily  (1D): insufficient data")
         else:
             daily_action = daily_report.action
+            horizon = f"  [{daily_report.holding_horizon}]" if daily_report.holding_horizon else ""
             lines.append(
                 f"  Daily  (1D): {action_labels.get(daily_action, daily_action):<20}"
                 f"  score {daily_report.composite_score:+.0f}  conf {daily_report.confidence:.0%}"
+                f"{horizon}"
             )
 
         # Weekly
