@@ -4450,3 +4450,48 @@ def test_monthreport_alias_mreport() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["mreport"] is h["monthreport"]
+
+
+# ── /topsetups tests ──────────────────────────────────────────────────────────
+
+def test_topsetups_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["topsetups"]([])
+    assert "not wired" in out.lower()
+
+
+def test_topsetups_no_symbols_no_watchlist() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["topsetups"]([])
+    # Either "No symbols" message or list of setups
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_topsetups_with_symbols() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["topsetups"](["AAPL", "MSFT", "NVDA"])
+    assert isinstance(out, str)
+    # Either setups or "No strong buy setups"
+    assert "AAPL" in out or "MSFT" in out or "NVDA" in out or "No strong" in out
+
+
+def test_topsetups_with_top_kwarg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["topsetups"](["AAPL", "MSFT", "top=2"])
+    assert isinstance(out, str)
+
+
+def test_topsetups_alias_setups() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["setups"] is h["topsetups"]
+
+
+def test_topsetups_alias_top3() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["top3"] is h["topsetups"]

@@ -13465,6 +13465,117 @@ def build_command_handlers(
         footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
         return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
 
+    def _topsetups_cmd(args: list[str]) -> str:
+        """Rank watchlist by combined DE + confluence score: best trade setups.
+
+        Usage: /topsetups [SYM SYM ...] [top=N] [mode=MODE]
+        Scans symbols, computes a composite setup score = 70% DE score + 30%
+        confluence score, and ranks by the result. Only shows buy signals.
+
+        top=5  : show top N results (default 5, max 20)
+        mode=  : trading mode for DE weight selection (default: current mode)
+
+        Example: /topsetups AAPL MSFT NVDA TSLA AMD top=3
+        """
+        if data is None:
+            return "Data client not wired."
+
+        symbols: list[str] = []
+        top_n = 5
+        mode = "swing"
+        for a in args:
+            if a.startswith("top="):
+                try:
+                    top_n = max(1, min(int(a[4:]), 20))
+                except ValueError:
+                    pass
+            elif a.startswith("mode="):
+                mode = a[5:].lower()
+            else:
+                symbols.append(a.upper())
+
+        if not symbols:
+            symbols = list(static_watchlist)[:20]
+        if not symbols:
+            return "No symbols. Pass tickers: /topsetups AAPL MSFT NVDA"
+
+        if conn is not None and not any(a.startswith("mode=") for a in args):
+            try:
+                from amms.runtime_overrides import get_overrides
+                mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        from amms.engine.decision import analyze as de_analyze
+        from amms.analysis.confluence import analyze as conf_analyze
+
+        rows: list[tuple[float, str, str, float, float, float]] = []
+        # (composite, symbol, de_action, de_score, conf_score, de_confidence)
+        errors = []
+
+        for sym in symbols:
+            try:
+                bars = data.get_bars(sym, limit=200)
+            except Exception:
+                errors.append(sym)
+                continue
+            if not bars or len(bars) < 120:
+                errors.append(sym)
+                continue
+
+            # DE signal
+            de_report = de_analyze(bars, symbol=sym, mode=mode)
+            if de_report is None or de_report.action not in {"buy", "strong_buy"}:
+                continue  # only buy setups
+            if de_report.risk_blocked:
+                continue
+
+            de_norm = max(0.0, min(de_report.composite_score, 100.0)) / 100.0
+
+            # Confluence score
+            try:
+                conf_result = conf_analyze(bars[-80:] if len(bars) > 80 else bars)
+                conf_norm = max(0.0, (conf_result.score + 1.0) / 2.0)  # -1..+1 → 0..1
+            except Exception:
+                conf_norm = 0.5  # neutral if unavailable
+
+            composite = 0.70 * de_norm + 0.30 * conf_norm
+            rows.append((
+                composite, sym, de_report.action,
+                de_report.composite_score, conf_norm, de_report.confidence,
+            ))
+
+        rows.sort(reverse=True)
+        top = rows[:top_n]
+
+        if not top:
+            held = set()
+            try:
+                held = set(trader_pos.keys()) if (trader_pos := _get_paper_trader().positions) else set()
+            except Exception:
+                pass
+            msg = "No strong buy setups found in watchlist."
+            if errors:
+                msg += f" ({len(errors)} symbols had insufficient data)"
+            return msg
+
+        lines = [f"══ Top {len(top)} Trade Setups (mode={mode}) ══", ""]
+        for i, (comp, sym, action, de_sc, cf_n, de_conf) in enumerate(top, 1):
+            action_icon = "🟢🟢" if action == "strong_buy" else "🟢"
+            lines.append(
+                f"  {i}. {action_icon} {sym:<6}  "
+                f"composite {comp*100:.0f}  "
+                f"DE {de_sc:>+.0f}  conf {de_conf:.0%}"
+            )
+
+        lines += [
+            "",
+            f"Scoring: 70% DE score + 30% confluence  |  {len(symbols)} symbols scanned",
+        ]
+        if errors:
+            lines.append(f"({len(errors)} symbols skipped: insufficient data)")
+        return "\n".join(lines)
+
     def _monthreport_cmd(args: list[str]) -> str:
         """Monthly performance report: return, trades, positions, signals.
 
@@ -14900,6 +15011,7 @@ def build_command_handlers(
             "/dailyreport [SYM ...] — daily portfolio + DE signals + macro report\n"
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
             "/sigoutcome [days=N] [age=N] — DE signal directional accuracy vs actual price outcomes\n"
+            "/topsetups [SYM ...] [top=N] — rank watchlist by DE + confluence score: best buy setups\n"
             "/monthreport [DAYS] — comprehensive monthly performance report\n"
             "/morning [SYM ...] — morning briefing: macro + risk + positions + top opportunities\n"
             "/equitycurve [DAYS] — ASCII equity sparkline + Sharpe/CAGR/drawdown from history\n"
@@ -15398,6 +15510,9 @@ def build_command_handlers(
         "sigoutcome": _sigoutcome_cmd,
         "sigaccuracy": _sigoutcome_cmd,
         "outcome": _sigoutcome_cmd,
+        "topsetups": _topsetups_cmd,
+        "top3": _topsetups_cmd,
+        "setups": _topsetups_cmd,
         "monthreport": _monthreport_cmd,
         "monthly": _monthreport_cmd,
         "mreport": _monthreport_cmd,
