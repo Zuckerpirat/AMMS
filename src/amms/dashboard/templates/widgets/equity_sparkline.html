@@ -1,0 +1,8 @@
+{% if sparkline %}
+    <svg class="sparkline" viewBox="0 0 280 60" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points="{{ sparkline }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+    </svg>
+    <div class="metric-sub muted">letzte 30 Tage</div>
+{% else %}
+    <div class="muted">Noch keine Equity-Historie. Lass den Bot laufen, dann füllt sich die Kurve.</div>
+{% endif %}

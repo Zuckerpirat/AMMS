@@ -1,0 +1,4 @@
+<div class="metric metric--{% if portfolio.unrealized_pl >= 0 %}positive{% else %}negative{% endif %}">
+    <div class="metric-value">{{ portfolio.unrealized_pl | signed }} $</div>
+    <div class="metric-label">unrealisiert</div>
+</div>

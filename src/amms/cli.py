@@ -1208,6 +1208,38 @@ def wsb_scan(
         console.print("[dim]Telegram notification sent.[/dim]")
 
 
+@app.command()
+def dashboard(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host-Adresse für das Dashboard."),
+    port: int = typer.Option(8787, "--port", help="Port für das Dashboard."),
+    layout_file: Path = typer.Option(
+        Path.home() / ".amms" / "dashboard_layout.json",  # noqa: B008  (Typer default)
+        "--layout-file",
+        help="Speicherort für das benutzerdefinierte Widget-Layout.",
+    ),
+    db_path: Path = typer.Option(
+        Path.home() / ".amms" / "amms.db",  # noqa: B008  (Typer default)
+        "--db",
+        help="Pfad zur AMMS-SQLite-Datenbank (für Equity-Historie).",
+    ),
+) -> None:
+    """Startet das lokale Web-Dashboard im Browser."""
+    try:
+        from amms.dashboard import run as run_dashboard
+    except ImportError as e:
+        console.print(
+            "[red]Dashboard-Abhängigkeiten fehlen.[/red] "
+            "Installiere sie mit:  uv pip install -e '.[dashboard]'"
+        )
+        console.print(f"[dim]{e}[/dim]")
+        raise typer.Exit(code=2) from e
+    console.print(
+        f"[green]Dashboard läuft auf[/green] http://{host}:{port}  "
+        f"[dim](Layout: {layout_file})[/dim]"
+    )
+    run_dashboard(host=host, port=port, layout_path=layout_file, db_path=db_path)
+
+
 def main() -> None:
     app()
 

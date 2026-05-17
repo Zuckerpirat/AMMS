@@ -1,0 +1,4 @@
+<div class="metric metric--{% if portfolio.day_change_abs >= 0 %}positive{% else %}negative{% endif %}">
+    <div class="metric-value">{{ portfolio.day_change_abs | signed }} $</div>
+    <div class="metric-sub">{{ portfolio.day_change_pct | pct }} heute</div>
+</div>

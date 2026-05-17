@@ -1,0 +1,136 @@
+"""FastAPI server for the AMMS dashboard."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from amms.dashboard.data import get_portfolio
+from amms.dashboard.layout import (
+    add_widget,
+    load_layout,
+    move_widget,
+    remove_widget,
+    resize_widget,
+    save_layout,
+)
+from amms.dashboard.widgets import SIZES, WIDGET_REGISTRY
+
+PKG_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = PKG_DIR / "templates"
+STATIC_DIR = PKG_DIR / "static"
+
+
+def _sparkline_points(history: list[tuple[str, float]], width: int = 280, height: int = 60) -> str:
+    if len(history) < 2:
+        return ""
+    values = [v for _, v in history]
+    lo, hi = min(values), max(values)
+    span = hi - lo if hi > lo else 1.0
+    n = len(values)
+    pts: list[str] = []
+    for i, v in enumerate(values):
+        x = (i / (n - 1)) * width
+        y = height - ((v - lo) / span) * height
+        pts.append(f"{x:.1f},{y:.1f}")
+    return " ".join(pts)
+
+
+def _format_currency(value: float) -> str:
+    return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _format_signed(value: float) -> str:
+    sign = "+" if value >= 0 else "−"
+    return f"{sign}{_format_currency(abs(value))}"
+
+
+def _format_pct(value: float) -> str:
+    sign = "+" if value >= 0 else "−"
+    return f"{sign}{abs(value):.2f}%".replace(".", ",")
+
+
+def create_app(layout_path: Path, db_path: Path) -> FastAPI:
+    app = FastAPI(title="AMMS Dashboard", docs_url=None, redoc_url=None)
+    templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    templates.env.filters["currency"] = _format_currency
+    templates.env.filters["signed"] = _format_signed
+    templates.env.filters["pct"] = _format_pct
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    def render_dashboard(request: Request, edit: bool = False):
+        layout = load_layout(layout_path)
+        portfolio = get_portfolio(db_path)
+        available = list(WIDGET_REGISTRY.values())
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {
+                "layout": layout,
+                "portfolio": portfolio,
+                "registry": WIDGET_REGISTRY,
+                "available_widgets": available,
+                "edit_mode": edit,
+                "sizes": SIZES,
+                "sparkline": _sparkline_points(portfolio.equity_history),
+            },
+        )
+
+    @app.get("/")
+    def index(request: Request, edit: int = 0):
+        return render_dashboard(request, edit=bool(edit))
+
+    @app.post("/layout/add")
+    def layout_add(widget_type: str = Form(...)):
+        layout = load_layout(layout_path)
+        add_widget(layout, widget_type)
+        save_layout(layout_path, layout)
+        return RedirectResponse("/?edit=1", status_code=303)
+
+    @app.post("/layout/remove")
+    def layout_remove(widget_id: str = Form(...)):
+        layout = load_layout(layout_path)
+        remove_widget(layout, widget_id)
+        save_layout(layout_path, layout)
+        return RedirectResponse("/?edit=1", status_code=303)
+
+    @app.post("/layout/move")
+    def layout_move(widget_id: str = Form(...), direction: int = Form(...)):
+        layout = load_layout(layout_path)
+        move_widget(layout, widget_id, direction)
+        save_layout(layout_path, layout)
+        return RedirectResponse("/?edit=1", status_code=303)
+
+    @app.post("/layout/resize")
+    def layout_resize(widget_id: str = Form(...), size: str = Form(...)):
+        layout = load_layout(layout_path)
+        resize_widget(layout, widget_id, size)
+        save_layout(layout_path, layout)
+        return RedirectResponse("/?edit=1", status_code=303)
+
+    @app.post("/layout/reset")
+    def layout_reset():
+        from amms.dashboard.layout import default_layout
+        save_layout(layout_path, default_layout())
+        return RedirectResponse("/", status_code=303)
+
+    return app
+
+
+def run(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    layout_path: Path | None = None,
+    db_path: Path | None = None,
+) -> None:
+    import uvicorn
+
+    layout_path = layout_path or (Path.home() / ".amms" / "dashboard_layout.json")
+    db_path = db_path or (Path.home() / ".amms" / "amms.db")
+    app = create_app(layout_path=layout_path, db_path=db_path)
+    uvicorn.run(app, host=host, port=port, log_level="info")

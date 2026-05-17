@@ -1,0 +1,9 @@
+{% set p = portfolio.top_winner %}
+{% if p %}
+    <div class="metric metric--positive">
+        <div class="metric-value">{{ p.symbol }}</div>
+        <div class="metric-sub">{{ p.unrealized_pl | signed }} $ · {{ p.unrealized_pl_pct | pct }}</div>
+    </div>
+{% else %}
+    <div class="metric muted"><div class="metric-value">—</div><div class="metric-sub">keine Gewinner</div></div>
+{% endif %}
