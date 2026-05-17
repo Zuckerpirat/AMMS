@@ -7,6 +7,7 @@ from amms.strategy.base import (
 )
 from amms.strategy.breakout import Breakout
 from amms.strategy.composite import CompositeStrategy
+from amms.strategy.decision_engine_strategy import DecisionEngineStrategy
 from amms.strategy.mean_reversion import MeanReversion
 from amms.strategy.rsi_reversal import RsiReversal
 from amms.strategy.sma_cross import SmaCross
@@ -14,6 +15,7 @@ from amms.strategy.vwap_strategy import VwapStrategy
 
 register_strategy("sma_cross", SmaCross)
 register_strategy("composite", CompositeStrategy)
+register_strategy("decision_engine", DecisionEngineStrategy)
 register_strategy("mean_reversion", MeanReversion)
 register_strategy("breakout", Breakout)
 register_strategy("rsi_reversal", RsiReversal)
@@ -22,6 +24,7 @@ register_strategy("vwap", VwapStrategy)
 __all__ = [
     "Breakout",
     "CompositeStrategy",
+    "DecisionEngineStrategy",
     "MeanReversion",
     "RsiReversal",
     "Signal",

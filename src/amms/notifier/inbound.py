@@ -12557,6 +12557,52 @@ def build_command_handlers(
             lines.append(f"  {format_report_summary(r)}")
         return "\n".join(lines)
 
+    def _debacktest_cmd(args: list[str]) -> str:
+        """In-memory Decision Engine backtest from live bar data.
+
+        Usage: /debacktest SYM [BARS]
+        Fetches up to BARS daily bars (default 400, max 1000) for SYM,
+        then simulates the Decision Engine strategy with signal-at-close /
+        fill-at-next-open logic. No SQLite pre-loading required.
+
+        Example: /debacktest AAPL 500
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /debacktest SYM [BARS]  e.g. /debacktest AAPL 400"
+        symbol = args[0].upper()
+        try:
+            limit = int(args[1]) if len(args) > 1 else 400
+            limit = max(210, min(limit, 1000))
+        except ValueError:
+            return "Usage: /debacktest SYM [BARS]  — BARS must be a number"
+
+        try:
+            bars = data.get_bars(symbol, limit=limit)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 210:
+            return (
+                f"Not enough bars for {symbol}: need at least 210, "
+                f"got {len(bars) if bars else 0}"
+            )
+
+        from amms.engine.backtest import DEBacktestConfig, run_de_backtest
+        cfg = DEBacktestConfig(
+            starting_cash=100_000.0,
+            position_pct=0.10,
+            commission_pct=0.001,
+            min_confidence=0.60,
+            min_score=35.0,
+        )
+        try:
+            result = run_de_backtest(bars, symbol=symbol, config=cfg)
+        except Exception as exc:
+            return f"Backtest failed: {exc!r}"
+
+        return result.summary()
+
     def _help(_args: list[str]) -> str:
         return (
             "/status — equity + positions + flags\n"
@@ -12642,6 +12688,7 @@ def build_command_handlers(
             "/gaps [SYM] — gap analysis: recent price gaps, fill status, gap S/R levels\n"
             "/sectorheat — sector momentum heatmap: 5d/20d/60d ranked by composite score\n"
             "/btstats [DAYS] — extended backtest stats: Calmar, Sortino, recovery, streaks\n"
+            "/debacktest SYM [BARS] — Decision Engine backtest from live data (no DB needed)\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
@@ -13110,4 +13157,6 @@ def build_command_handlers(
         "sched": _schedstatus_cmd,
         "livestatus": _live_status_cmd,
         "live": _live_status_cmd,
+        "debacktest": _debacktest_cmd,
+        "debt": _debacktest_cmd,
     }
