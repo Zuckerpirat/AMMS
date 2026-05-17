@@ -13156,6 +13156,95 @@ def build_command_handlers(
         lines.append(mp.status_summary().split("\n")[0])  # just the header value line
         return "\n".join(lines)
 
+    def _systemdash_cmd(_args: list[str]) -> str:
+        """Consolidated system dashboard (paper + meme + macro + risk).
+
+        Usage: /systemdash
+        Shows main paper portfolio + meme sandbox summary + macro regime
+        + risk guard status in one message. Quick overall health check.
+        """
+        sections: list[str] = []
+
+        # ── Main paper portfolio ──
+        trader = _get_paper_trader()
+        prices_main: dict[str, float] = {}
+        if data is not None:
+            for sym in list(trader.positions.keys()):
+                try:
+                    b = data.get_bars(sym, limit=2)
+                    if b:
+                        prices_main[sym] = float(b[-1].close)
+                except Exception:
+                    pass
+        snap_main = trader.snapshot(prices_main)
+        ret_arrow = "▲" if snap_main.total_return_pct >= 0 else "▼"
+        sections.append(
+            "══ Main Paper Portfolio ══\n"
+            f"  Value:  ${snap_main.portfolio_value:>12,.2f}  "
+            f"Return: {ret_arrow} {snap_main.total_return_pct:+.2f}%\n"
+            f"  Cash:   ${snap_main.cash:>12,.2f}  "
+            f"Positions: {len(snap_main.positions)}\n"
+            f"  P&L:    ${snap_main.total_realized_pnl:>+12,.2f} realized  "
+            f"${snap_main.total_unrealized_pnl:>+,.2f} unrealized"
+        )
+
+        # ── Meme sandbox ──
+        mp = _get_meme_portfolio()
+        snap_meme = mp.snapshot()
+        meme_combined = mp._combined_value()
+        meme_alloc = snap_meme.portfolio_value / meme_combined * 100 if meme_combined > 0 else 0.0
+        meme_arrow = "▲" if snap_meme.total_return_pct >= 0 else "▼"
+        sections.append(
+            "══ Meme Sandbox ══\n"
+            f"  Value:  ${snap_meme.portfolio_value:>12,.2f}  "
+            f"Return: {meme_arrow} {snap_meme.total_return_pct:+.2f}%\n"
+            f"  Alloc:  {meme_alloc:.1f}% of combined  "
+            f"(limit {mp.config.max_allocation_pct:.0%})\n"
+            f"  Positions: {len(snap_meme.positions)} / {mp.config.max_positions}"
+        )
+
+        # ── Combined totals ──
+        combined_value = snap_main.portfolio_value + snap_meme.portfolio_value
+        combined_start = trader.starting_cash + mp.config.starting_cash
+        combined_ret = (combined_value / combined_start - 1) * 100 if combined_start > 0 else 0.0
+        combined_arrow = "▲" if combined_ret >= 0 else "▼"
+        sections.append(
+            "══ Combined ══\n"
+            f"  Total value:  ${combined_value:>12,.2f}\n"
+            f"  Total return: {combined_arrow} {combined_ret:+.2f}%"
+        )
+
+        # ── Macro regime ──
+        if data is not None:
+            try:
+                from amms.data.macro import compute_regime
+                regime = compute_regime(data)
+                level = getattr(regime, "level", "unknown")
+                reason = getattr(regime, "reason", "")
+                sections.append(
+                    f"══ Macro Regime ══\n  Level: {level.upper()}\n  {reason}"
+                )
+            except Exception:
+                pass
+
+        # ── Risk guard ──
+        if risk_guard is not None:
+            ks = risk_guard.state.killswitch_armed
+            ks_str = f"ARMED ({risk_guard.state.killswitch_reason})" if ks else "disarmed"
+            sections.append(f"══ Risk Guard ══\n  Killswitch: {ks_str}")
+
+        # ── Trading mode ──
+        current_mode = "swing"
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                current_mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+        sections.append(f"══ Trading Mode: {current_mode.upper()} ══")
+
+        return "\n\n".join(sections)
+
     def _debatch_cmd(args: list[str]) -> str:
         """Batch DE backtest across multiple symbols.
 
@@ -13826,4 +13915,7 @@ def build_command_handlers(
         "mmc": _memeclose_cmd,
         "memewatch": _memewatch_cmd,
         "mmw": _memewatch_cmd,
+        "systemdash": _systemdash_cmd,
+        "sysdash": _systemdash_cmd,
+        "overview": _systemdash_cmd,
     }
