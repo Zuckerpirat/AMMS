@@ -4298,3 +4298,38 @@ def test_poscheck_with_mode_kwarg() -> None:
     # No position → helpful message
     assert isinstance(out, str)
     assert len(out) > 5
+
+
+# ── /sigoutcome tests ─────────────────────────────────────────────────────────
+
+def test_sigoutcome_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["sigoutcome"]([])
+    assert "not wired" in out.lower()
+
+
+def test_sigoutcome_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["sigoutcome"]([])
+    assert "not available" in out.lower() or "database" in out.lower()
+
+
+def test_sigoutcome_alias_sigaccuracy() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["sigaccuracy"] is h["sigoutcome"]
+
+
+def test_sigoutcome_alias_outcome() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["outcome"] is h["sigoutcome"]
+
+
+def test_sigoutcome_returns_str() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    result = h["sigoutcome"](["days=5"])
+    assert isinstance(result, str)

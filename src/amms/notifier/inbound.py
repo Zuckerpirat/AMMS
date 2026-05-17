@@ -13464,6 +13464,46 @@ def build_command_handlers(
         footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
         return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
 
+    def _sigoutcome_cmd(args: list[str]) -> str:
+        """Signal outcome accuracy: did DE signals predict price direction?
+
+        Usage: /sigoutcome [days=N] [age=N]
+        Evaluates recorded DE signals against actual price movement N days
+        later. Shows directional accuracy per mode and action type.
+
+        days=5  : look N days after signal for outcome price (default 5)
+        age=2   : skip signals newer than this many days (not played out yet)
+
+        Example: /sigoutcome days=10 age=3
+        """
+        if data is None:
+            return "Data client not wired."
+        if conn is None:
+            return "Signal history not available (no database connection)."
+
+        lookback = 5
+        min_age = 2
+        for a in args:
+            if a.startswith("days="):
+                try:
+                    lookback = max(1, min(int(a[5:]), 60))
+                except ValueError:
+                    pass
+            elif a.startswith("age="):
+                try:
+                    min_age = max(1, int(a[4:]))
+                except ValueError:
+                    pass
+
+        from amms.analysis.signal_outcome import compute_signal_outcomes, format_outcome_report
+        report = compute_signal_outcomes(
+            conn, data,
+            lookback_days=lookback,
+            min_age_days=min_age,
+            limit=200,
+        )
+        return format_outcome_report(report)
+
     def _signalhistory_cmd(args: list[str]) -> str:
         """Show recent Decision Engine signal history.
 
@@ -14530,6 +14570,7 @@ def build_command_handlers(
             "/systemdash — consolidated view: main+meme+macro+risk+mode in one message\n"
             "/dailyreport [SYM ...] — daily portfolio + DE signals + macro report\n"
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
+            "/sigoutcome [days=N] [age=N] — DE signal directional accuracy vs actual price outcomes\n"
             "/pmetrics — paper portfolio performance: win rate, Sharpe, P&L, grade\n"
             "/pstats — alias for /pmetrics\n"
             "/tradeplan SYM [mode=MODE] — full pre-trade plan: DE + sizing + stop + target + R:R + macro\n"
@@ -15021,4 +15062,7 @@ def build_command_handlers(
         "signalhistory": _signalhistory_cmd,
         "sighist": _signalhistory_cmd,
         "signals_log": _signalhistory_cmd,
+        "sigoutcome": _sigoutcome_cmd,
+        "sigaccuracy": _sigoutcome_cmd,
+        "outcome": _sigoutcome_cmd,
     }
