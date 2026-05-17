@@ -4414,3 +4414,39 @@ def test_morning_with_mode_kwarg() -> None:
     h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
     out = h["morning"](["AAPL", "mode=conservative"])
     assert isinstance(out, str)
+
+
+# ── /monthreport tests ────────────────────────────────────────────────────────
+
+def test_monthreport_returns_str() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["monthreport"]([])
+    assert isinstance(out, str)
+    assert len(out) > 20
+
+
+def test_monthreport_contains_portfolio_section() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["monthreport"]([])
+    assert "Portfolio" in out or "Equity" in out
+
+
+def test_monthreport_with_days_arg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["monthreport"](["60"])
+    assert "60" in out or "Performance" in out
+
+
+def test_monthreport_alias_monthly() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["monthly"] is h["monthreport"]
+
+
+def test_monthreport_alias_mreport() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["mreport"] is h["monthreport"]

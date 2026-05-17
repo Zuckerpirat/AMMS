@@ -13464,6 +13464,127 @@ def build_command_handlers(
         footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
         return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
 
+    def _monthreport_cmd(args: list[str]) -> str:
+        """Monthly performance report: return, trades, positions, signals.
+
+        Usage: /monthreport [DAYS]
+        Generates a comprehensive performance summary covering up to DAYS
+        days (default 30). Shows return, win rate, trade count, best/worst
+        positions, signal distribution, and equity trend.
+
+        Example: /monthreport 30
+        """
+        days = 30
+        if args:
+            try:
+                days = max(1, min(int(args[0]), 365))
+            except ValueError:
+                pass
+
+        trader = _get_paper_trader()
+        snap = trader.snapshot()
+        lines = [f"══ {days}-Day Performance Report ══", ""]
+
+        # ── Portfolio state ───────────────────────────────────────────────
+        lines.append("▸ Current Portfolio")
+        lines.append(f"  Equity:     ${snap.portfolio_value:>12,.2f}")
+        lines.append(f"  Cash:       ${snap.cash:>12,.2f}")
+        lines.append(f"  Positions:  {len(snap.positions)}")
+        lines.append(f"  Market val: ${snap.total_market_value:>12,.2f}")
+
+        # ── Trade statistics from closed trades ───────────────────────────
+        trades = getattr(trader, "trades", [])
+        if trades:
+            from datetime import datetime, timezone, timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            recent = [t for t in trades if hasattr(t, "ts") and t.ts >= cutoff]
+            if not recent:
+                recent = trades  # fallback: all trades
+
+            buys = [t for t in recent if getattr(t, "side", "") == "buy"]
+            sells = [t for t in recent if getattr(t, "side", "") in {"sell", "close"}]
+
+            lines += ["", "▸ Trade Activity"]
+            lines.append(f"  Total trades: {len(recent)}")
+            lines.append(f"  Buys:  {len(buys)}")
+            lines.append(f"  Sells: {len(sells)}")
+        else:
+            lines += ["", "▸ Trade Activity", "  No trade history available."]
+
+        # ── Realized P&L from journal ─────────────────────────────────────
+        try:
+            from amms.analysis.journal_stats import compute_journal_stats
+            jstats = compute_journal_stats(trader)
+            if jstats and jstats.total_trades > 0:
+                lines += ["", "▸ Trade Journal Stats"]
+                lines.append(f"  Closed trades: {jstats.total_trades}")
+                lines.append(f"  Win rate:      {jstats.win_rate:.1%}")
+                lines.append(f"  Avg win:       ${jstats.avg_win:>+,.2f}")
+                lines.append(f"  Avg loss:      ${jstats.avg_loss:>+,.2f}")
+                if hasattr(jstats, "profit_factor") and jstats.profit_factor is not None:
+                    lines.append(f"  Profit factor: {jstats.profit_factor:.2f}")
+                lines.append(f"  Net realized:  ${jstats.total_pnl:>+,.2f}")
+        except Exception:
+            pass
+
+        # ── Open position P&L ─────────────────────────────────────────────
+        if trader.positions:
+            lines += ["", "▸ Open Positions"]
+            for sym in sorted(trader.positions.keys()):
+                pos = trader.positions[sym]
+                lines.append(f"  {sym:<8}  {pos.qty:.4f} shares @ ${pos.avg_cost:.2f}")
+
+        # ── Signal history summary ────────────────────────────────────────
+        if conn is not None:
+            try:
+                from amms.data.signal_history import signal_accuracy_by_mode
+                sig_counts = signal_accuracy_by_mode(conn)
+                if sig_counts:
+                    lines += ["", "▸ DE Signal History (all time)"]
+                    for mode_name, actions in sorted(sig_counts.items()):
+                        total = sum(actions.values())
+                        parts = ", ".join(f"{a}: {n}" for a, n in sorted(actions.items()))
+                        lines.append(f"  {mode_name:<14} {total:>3} total  ({parts})")
+            except Exception:
+                pass
+
+        # ── Equity curve stats ────────────────────────────────────────────
+        if conn is not None:
+            try:
+                from amms.data.equity_history import fetch_history, compute_stats
+                snapshots = fetch_history(conn, days=days)
+                if len(snapshots) >= 2:
+                    stats = compute_stats(snapshots)
+                    if stats:
+                        lines += ["", "▸ Equity Curve Stats"]
+                        lines.append(f"  Return:      {stats.total_return_pct:>+.2f}%")
+                        lines.append(f"  CAGR:        {stats.cagr_pct:>+.2f}%")
+                        lines.append(f"  Max drawdown:{stats.max_drawdown_pct:>6.2f}%")
+                        if stats.sharpe_ratio is not None:
+                            lines.append(f"  Sharpe:      {stats.sharpe_ratio:>+.2f}")
+            except Exception:
+                pass
+
+        # ── Signal outcome accuracy ───────────────────────────────────────
+        if conn is not None and data is not None:
+            try:
+                from amms.analysis.signal_outcome import compute_signal_outcomes
+                outcome = compute_signal_outcomes(
+                    conn, data, lookback_days=5, min_age_days=2, limit=100
+                )
+                if outcome.total_evaluated > 0:
+                    lines += ["", "▸ Signal Accuracy (5-day outcome)"]
+                    for s in outcome.stats:
+                        bar = "█" * int(s.accuracy_pct / 20)
+                        lines.append(
+                            f"  {s.mode:<12} {s.action:<12} "
+                            f"{s.accuracy_pct:.0f}% acc  n={s.total}  {bar}"
+                        )
+            except Exception:
+                pass
+
+        return "\n".join(lines)
+
     def _morning_cmd(args: list[str]) -> str:
         """Morning briefing: actionable summary of what to do today.
 
@@ -14778,6 +14899,7 @@ def build_command_handlers(
             "/dailyreport [SYM ...] — daily portfolio + DE signals + macro report\n"
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
             "/sigoutcome [days=N] [age=N] — DE signal directional accuracy vs actual price outcomes\n"
+            "/monthreport [DAYS] — comprehensive monthly performance report\n"
             "/morning [SYM ...] — morning briefing: macro + risk + positions + top opportunities\n"
             "/equitycurve [DAYS] — ASCII equity sparkline + Sharpe/CAGR/drawdown from history\n"
             "/equitysnap — record current portfolio value to equity history\n"
@@ -15275,6 +15397,9 @@ def build_command_handlers(
         "sigoutcome": _sigoutcome_cmd,
         "sigaccuracy": _sigoutcome_cmd,
         "outcome": _sigoutcome_cmd,
+        "monthreport": _monthreport_cmd,
+        "monthly": _monthreport_cmd,
+        "mreport": _monthreport_cmd,
         "morning": _morning_cmd,
         "mb": _morning_cmd,
         "briefing": _morning_cmd,
