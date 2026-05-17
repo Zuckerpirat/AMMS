@@ -285,3 +285,59 @@ def run_de_backtest(
         equity_curve=equity_curve,
         trades=trades,
     )
+
+
+# ── Multi-symbol batch backtest ───────────────────────────────────────────────
+
+def run_batch_de_backtest(
+    data_client,
+    symbols: list[str],
+    *,
+    limit: int = 400,
+    config: DEBacktestConfig | None = None,
+) -> list[DEBacktestResult]:
+    """Run `run_de_backtest` for each symbol using `data_client.get_bars()`.
+
+    Symbols that fail to fetch or have too few bars are silently skipped.
+    Returns results sorted by annualized return (best first).
+    """
+    results: list[DEBacktestResult] = []
+    cfg = config or DEBacktestConfig()
+    for sym in symbols:
+        try:
+            bars = data_client.get_bars(sym, limit=limit)
+        except Exception:
+            continue
+        if not bars or len(bars) < 210:
+            continue
+        try:
+            r = run_de_backtest(bars, symbol=sym, config=cfg)
+        except Exception:
+            continue
+        results.append(r)
+    results.sort(key=lambda r: r.annualized_return_pct, reverse=True)
+    return results
+
+
+def format_batch_summary(results: list[DEBacktestResult], *, top_n: int = 10) -> str:
+    """Compact leaderboard table for a batch backtest run."""
+    if not results:
+        return "No backtest results to display."
+
+    lines = [
+        f"── DE Batch Backtest ({len(results)} symbols) ──",
+        f"{'Symbol':<8}  {'Return':>8}  {'AnnRet':>8}  {'MaxDD':>7}  "
+        f"{'Sharpe':>7}  {'WR':>5}  {'Trades':>6}",
+    ]
+    for r in results[:top_n]:
+        lines.append(
+            f"{r.symbol:<8}  {r.total_return_pct:>+7.2f}%  "
+            f"{r.annualized_return_pct:>+7.2f}%  "
+            f"{r.max_drawdown_pct:>6.2f}%  "
+            f"{r.sharpe_ratio:>7.2f}  "
+            f"{r.win_rate:>4.0%}  "
+            f"{r.num_round_trips:>6}"
+        )
+    if len(results) > top_n:
+        lines.append(f"  … and {len(results) - top_n} more")
+    return "\n".join(lines)

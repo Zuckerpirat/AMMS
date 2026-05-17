@@ -12557,6 +12557,45 @@ def build_command_handlers(
             lines.append(f"  {format_report_summary(r)}")
         return "\n".join(lines)
 
+    def _debatch_cmd(args: list[str]) -> str:
+        """Batch DE backtest across multiple symbols.
+
+        Usage: /debatch [SYM SYM ...] [BARS]
+        If no symbols given, uses static watchlist (up to 10 symbols).
+        BARS defaults to 400 (1-1000).
+
+        Runs Decision Engine backtest on each symbol and ranks by
+        annualized return. Shows top 10 results as a leaderboard.
+
+        Example: /debatch AAPL MSFT NVDA TSLA 500
+        """
+        if data is None:
+            return "Data client not wired."
+
+        symbols: list[str] = []
+        limit = 400
+        for a in args:
+            if a.isdigit():
+                limit = max(210, min(int(a), 1000))
+            else:
+                symbols.append(a.upper())
+
+        if not symbols:
+            symbols = list(static_watchlist)[:10]
+        if not symbols:
+            return "No symbols. Pass tickers: /debatch AAPL MSFT NVDA"
+
+        from amms.engine.backtest import DEBacktestConfig, format_batch_summary, run_batch_de_backtest
+        cfg = DEBacktestConfig(
+            starting_cash=100_000.0,
+            position_pct=0.10,
+            commission_pct=0.001,
+            min_confidence=0.60,
+            min_score=35.0,
+        )
+        results = run_batch_de_backtest(data, symbols, limit=limit, config=cfg)
+        return format_batch_summary(results)
+
     def _debacktest_cmd(args: list[str]) -> str:
         """In-memory Decision Engine backtest from live bar data.
 
@@ -12689,6 +12728,7 @@ def build_command_handlers(
             "/sectorheat — sector momentum heatmap: 5d/20d/60d ranked by composite score\n"
             "/btstats [DAYS] — extended backtest stats: Calmar, Sortino, recovery, streaks\n"
             "/debacktest SYM [BARS] — Decision Engine backtest from live data (no DB needed)\n"
+            "/debatch [SYM ...] [BARS] — batch DE backtest leaderboard across symbols\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
@@ -13159,4 +13199,6 @@ def build_command_handlers(
         "live": _live_status_cmd,
         "debacktest": _debacktest_cmd,
         "debt": _debacktest_cmd,
+        "debatch": _debatch_cmd,
+        "deb": _debatch_cmd,
     }
