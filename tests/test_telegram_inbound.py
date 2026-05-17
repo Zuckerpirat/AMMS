@@ -4554,3 +4554,25 @@ def test_deexplain_returns_str() -> None:
     result = h["deexplain"](["NVDA"])
     assert isinstance(result, str)
     assert len(result) > 20
+
+
+# ── /cooldowns tests ──────────────────────────────────────────────────────────
+
+def test_cooldowns_no_active() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["cooldowns"]([])
+    assert "No active cooldowns" in out or "expired" in out.lower()
+
+
+def test_cooldowns_returns_str() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    result = h["cooldowns"]([])
+    assert isinstance(result, str) and len(result) > 5
+
+
+def test_cooldowns_alias_cd() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["cd"] is h["cooldowns"]

@@ -13478,6 +13478,52 @@ def build_command_handlers(
         footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
         return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
 
+    def _cooldowns_cmd(_args: list[str]) -> str:
+        """Show Auto-Trader cooldown status for each watchlist symbol.
+
+        Usage: /cooldowns
+        Lists all symbols currently in cooldown (recently traded, buy-blocked)
+        and when their cooldown expires. Sells are never blocked by cooldown.
+
+        Cooldown duration is configured via /autoconfig cooldown_minutes=N.
+        """
+        at = _get_auto_trader()
+        cooldowns = getattr(at, "_cooldowns", {})
+        cfg = at.config
+
+        if not cooldowns:
+            return "No active cooldowns — all symbols can be bought freely."
+
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        rows: list[tuple[str, str, str]] = []  # (symbol, expires_at, remaining)
+
+        for sym, ts_str in sorted(cooldowns.items()):
+            try:
+                last = datetime.fromisoformat(ts_str)
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                expires = last + timedelta(minutes=cfg.cooldown_minutes)
+                remaining = expires - now
+                if remaining.total_seconds() > 0:
+                    mins = int(remaining.total_seconds() / 60)
+                    rows.append((sym, expires.strftime("%H:%M UTC"), f"{mins} min"))
+                # else cooldown already expired — skip
+            except Exception:
+                continue
+
+        if not rows:
+            return "All cooldowns have expired — symbols are tradeable."
+
+        lines = [f"── Auto-Trader Cooldowns ({cfg.cooldown_minutes} min) ──", ""]
+        lines.append(f"  {'Symbol':<8}  {'Expires':<12}  {'Remaining'}")
+        lines.append("  " + "─" * 35)
+        for sym, exp, rem in rows:
+            lines.append(f"  {sym:<8}  {exp:<12}  {rem}")
+        lines.append("")
+        lines.append("Note: sells bypass cooldown — only new buys are blocked.")
+        return "\n".join(lines)
+
     def _deexplain_cmd(args: list[str]) -> str:
         """Full DE signal explanation: which indicators drove the signal.
 
@@ -15159,6 +15205,7 @@ def build_command_handlers(
             "/dailyreport [SYM ...] — daily portfolio + DE signals + macro report\n"
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
             "/sigoutcome [days=N] [age=N] — DE signal directional accuracy vs actual price outcomes\n"
+            "/cooldowns — show Auto-Trader buy cooldown status (which symbols are locked)\n"
             "/deexplain SYM [mode=MODE] — full DE signal explanation: categories, reasoning, macro, risk\n"
             "/topsetups [SYM ...] [top=N] — rank watchlist by DE + confluence score: best buy setups\n"
             "/monthreport [DAYS] — comprehensive monthly performance report\n"
@@ -15659,6 +15706,9 @@ def build_command_handlers(
         "sigoutcome": _sigoutcome_cmd,
         "sigaccuracy": _sigoutcome_cmd,
         "outcome": _sigoutcome_cmd,
+        "cooldowns": _cooldowns_cmd,
+        "cd": _cooldowns_cmd,
+        "nocool": _cooldowns_cmd,
         "deexplain": _deexplain_cmd,
         "explain2": _deexplain_cmd,
         "why": _deexplain_cmd,
