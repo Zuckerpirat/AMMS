@@ -13464,6 +13464,161 @@ def build_command_handlers(
         footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
         return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
 
+    def _morning_cmd(args: list[str]) -> str:
+        """Morning briefing: actionable summary of what to do today.
+
+        Usage: /morning [SYM SYM ...] [mode=MODE]
+        Combines macro regime, risk guard, open position alerts, and top
+        watchlist opportunities into one concise action plan.
+
+        Sections:
+          1. Market conditions (macro regime + risk guard)
+          2. Positions needing attention (DE says sell/watch)
+          3. Top 3 opportunities from watchlist (DE says buy)
+          4. Bottom line recommendation
+
+        Example: /morning AAPL MSFT NVDA TSLA
+        """
+        if data is None:
+            return "Data client not wired."
+
+        mode = "swing"
+        wl_symbols: list[str] = []
+        for a in args:
+            if a.startswith("mode="):
+                mode = a[5:].lower()
+            else:
+                wl_symbols.append(a.upper())
+
+        if not wl_symbols:
+            wl_symbols = list(static_watchlist)[:15]
+
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                if not any(a.startswith("mode=") for a in args):
+                    mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        from amms.engine.decision import analyze as de_analyze
+
+        # Macro regime
+        macro_regime = None
+        macro_level = "calm"
+        try:
+            from amms.data.macro import compute_regime
+            macro_regime = compute_regime(data)
+            macro_level = getattr(macro_regime, "level", "calm")
+        except Exception:
+            pass
+
+        # Risk guard
+        rg_status = "unknown"
+        rg_block: str | None = None
+        try:
+            rg = _get_risk_guard()
+            rg_status = rg.status()
+            rg_block = rg.check(side="buy")
+        except Exception:
+            pass
+
+        macro_icons = {"calm": "🟢", "elevated": "🟡", "stressed": "🔴"}
+        lines = ["══ Morning Briefing ══", ""]
+
+        # ── Section 1: Market conditions ─────────────────────────────────
+        lines.append("▸ Market Conditions")
+        lines.append(f"  Macro:      {macro_icons.get(macro_level, '?')} {macro_level.upper()}")
+        if isinstance(rg_status, dict):
+            ks_icon = "🔴" if rg_status.get("killswitch") else "🟢"
+            lines.append(f"  Killswitch: {ks_icon} {'ARMED' if rg_status.get('killswitch') else 'disarmed'}")
+            dd = rg_status.get("drawdown_pct", 0.0)
+            lines.append(f"  Drawdown:   {dd:.1f}% from peak")
+        if rg_block:
+            lines.append(f"  ⛔ Trading blocked: {rg_block}")
+        lines.append("")
+
+        # ── Section 2: Positions needing attention ────────────────────────
+        trader = _get_paper_trader()
+        positions = trader.positions
+        attention: list[tuple[str, str, str]] = []  # (symbol, signal, reason)
+
+        if positions:
+            lines.append("▸ Positions to Watch")
+            for sym in sorted(positions.keys()):
+                pos = positions[sym]
+                try:
+                    bars = data.get_bars(sym, limit=200)
+                    if not bars or len(bars) < 120:
+                        continue
+                    cur_price = float(bars[-1].close)
+                    report = de_analyze(bars, symbol=sym, mode=mode)
+                    if report is None:
+                        continue
+                    action = report.action
+                    pnl_pct = (cur_price / pos.avg_cost - 1.0) * 100.0 if pos.avg_cost > 0 else 0.0
+
+                    if action in {"sell", "strong_sell"}:
+                        icon = "🔴"
+                        reason = f"DE says {action} (score {report.composite_score:+.0f})"
+                        lines.append(f"  {icon} {sym:<6}  {pnl_pct:>+.1f}%  → {reason}")
+                    elif action == "hold" and pnl_pct >= 15.0:
+                        lines.append(f"  🟡 {sym:<6}  {pnl_pct:>+.1f}%  → consider taking profits")
+                    else:
+                        lines.append(f"  🟢 {sym:<6}  {pnl_pct:>+.1f}%  → {action}")
+                except Exception:
+                    continue
+            lines.append("")
+        else:
+            lines.append("▸ Positions: none open")
+            lines.append("")
+
+        # ── Section 3: Top opportunities ──────────────────────────────────
+        lines.append("▸ Watchlist Opportunities")
+        if not wl_symbols:
+            lines.append("  No watchlist configured.")
+        elif rg_block:
+            lines.append(f"  ⛔ Skipped (trading blocked by risk guard)")
+        else:
+            opportunities: list[tuple[float, str, str]] = []  # (score, sym, action)
+            for sym in wl_symbols:
+                if sym in positions:
+                    continue  # already holding
+                try:
+                    bars = data.get_bars(sym, limit=200)
+                    if not bars or len(bars) < 120:
+                        continue
+                    report = de_analyze(bars, symbol=sym, mode=mode)
+                    if report is None:
+                        continue
+                    if report.action in {"buy", "strong_buy"}:
+                        opportunities.append((report.composite_score, sym, report.action))
+                except Exception:
+                    continue
+
+            opportunities.sort(reverse=True)
+            if opportunities:
+                for score, sym, action in opportunities[:3]:
+                    lines.append(f"  🟢 {sym:<6}  score {score:>+.0f}  → {action}")
+            else:
+                lines.append("  No strong buy signals in watchlist.")
+        lines.append("")
+
+        # ── Section 4: Bottom line ────────────────────────────────────────
+        lines.append("▸ Bottom Line")
+        if rg_block:
+            lines.append("  ⛔ Risk guard blocking — monitor only, no new buys.")
+        elif macro_level == "stressed":
+            lines.append("  🔴 Stressed macro — no new buys, consider reducing exposure.")
+        elif macro_level == "elevated":
+            lines.append("  🟡 Elevated macro — size down, favor high-confidence signals only.")
+        else:
+            sell_alerts = sum(1 for sym in positions
+                              if True)  # counted above — approximate
+            lines.append("  🟢 Market conditions normal — follow signals as planned.")
+
+        return "\n".join(lines)
+
     def _equitycurve_cmd(args: list[str]) -> str:
         """Portfolio equity curve and performance stats from history snapshots.
 
@@ -14623,6 +14778,7 @@ def build_command_handlers(
             "/dailyreport [SYM ...] — daily portfolio + DE signals + macro report\n"
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
             "/sigoutcome [days=N] [age=N] — DE signal directional accuracy vs actual price outcomes\n"
+            "/morning [SYM ...] — morning briefing: macro + risk + positions + top opportunities\n"
             "/equitycurve [DAYS] — ASCII equity sparkline + Sharpe/CAGR/drawdown from history\n"
             "/equitysnap — record current portfolio value to equity history\n"
             "/pmetrics — paper portfolio performance: win rate, Sharpe, P&L, grade\n"
@@ -15119,6 +15275,9 @@ def build_command_handlers(
         "sigoutcome": _sigoutcome_cmd,
         "sigaccuracy": _sigoutcome_cmd,
         "outcome": _sigoutcome_cmd,
+        "morning": _morning_cmd,
+        "mb": _morning_cmd,
+        "briefing": _morning_cmd,
         "equitycurve": _equitycurve_cmd,
         "ecurve": _equitycurve_cmd,
         "eqcurve": _equitycurve_cmd,

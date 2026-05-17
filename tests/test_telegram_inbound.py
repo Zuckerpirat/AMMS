@@ -4369,3 +4369,48 @@ def test_equitycurve_returns_str() -> None:
     result = h["equitycurve"](["30"])
     assert isinstance(result, str)
     assert len(result) > 5
+
+
+# ── /morning tests ────────────────────────────────────────────────────────────
+
+def test_morning_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["morning"]([])
+    assert "not wired" in out.lower()
+
+
+def test_morning_returns_sections() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["morning"]([])
+    assert "Morning Briefing" in out
+    assert "Market Conditions" in out or "Macro" in out
+
+
+def test_morning_with_symbols() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["morning"](["AAPL", "MSFT"])
+    assert isinstance(out, str)
+    assert len(out) > 20
+
+
+def test_morning_alias_briefing() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["briefing"] is h["morning"]
+
+
+def test_morning_shows_bottom_line() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["morning"]([])
+    assert "Bottom Line" in out or "bottom" in out.lower()
+
+
+def test_morning_with_mode_kwarg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["morning"](["AAPL", "mode=conservative"])
+    assert isinstance(out, str)
