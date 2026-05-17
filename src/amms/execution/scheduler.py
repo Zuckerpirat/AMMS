@@ -311,7 +311,7 @@ class TraderScheduler:
                 # Calculate P&L if position existed
                 pnl_str = ""
                 try:
-                    hist = trader.trade_history
+                    hist = getattr(trader, "trade_history", None) or getattr(trader, "trades", [])
                     # Find most recent buy for this symbol
                     buys = [t for t in hist if t.symbol == r.symbol and t.side == "buy"]
                     if buys:
@@ -479,8 +479,8 @@ class TraderScheduler:
             today_str = date.today().isoformat()
             today_trades = []
             try:
-                hist = trader.trade_history
-                today_trades = [t for t in hist if str(t.ts)[:10] == today_str]
+                hist = getattr(trader, "trade_history", None) or getattr(trader, "trades", [])
+                today_trades = [t for t in hist if str(getattr(t, "timestamp", getattr(t, "ts", "")))[:10] == today_str]
             except Exception:
                 pass
 
