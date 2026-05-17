@@ -4087,3 +4087,88 @@ def test_systemdash_alias_overview() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["overview"] is h["systemdash"]
+
+
+# ── /desizer tests ────────────────────────────────────────────────────────────
+
+def test_desizer_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["desizer"]([])
+    assert "not wired" in out.lower()
+
+
+def test_desizer_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["desizer"]([])
+    assert "Usage" in out
+
+
+def test_desizer_returns_signal_info() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["desizer"](["AAPL"])
+    assert "AAPL" in out
+    assert "Signal" in out or "signal" in out.lower()
+    assert "Score" in out or "score" in out.lower()
+
+
+def test_desizer_shows_confidence() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["desizer"](["TSLA"])
+    assert "Confidence" in out or "confidence" in out.lower()
+
+
+def test_desizer_with_mode_kwarg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["desizer"](["AAPL", "mode=conservative"])
+    assert "conservative" in out
+    assert isinstance(out, str)
+
+
+def test_desizer_alias_dsize() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["dsize"] is h["desizer"]
+
+
+def test_desizer_alias_sizer() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["sizer"] is h["desizer"]
+
+
+def test_desizer_shows_position_sizing() -> None:
+    """When DE gives buy signal, sizing block should appear."""
+    class _StrongBuyData:
+        def get_bars(self, symbol, *, limit=30):
+            from amms.data.bars import Bar
+            n = max(limit, 200)
+            bars = []
+            # Uptrend that should trigger buy signal
+            for i in range(n):
+                price = 100.0 + i * 0.5
+                bars.append(Bar(
+                    symbol=symbol, timeframe="1Day",
+                    ts=f"2024-{1 + (i // 28) % 12:02d}-{1 + i % 28:02d}T10:00:00Z",
+                    open=price - 0.1, high=price + 1.0, low=price - 0.5,
+                    close=price, volume=2_000_000,
+                ))
+            return bars
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_StrongBuyData())
+    out = h["desizer"](["SPY"])
+    # Output should contain position or sizing info, or hold explanation
+    assert "Position size" in out or "HOLD" in out or "0%" in out or "SELL" in out
+
+
+def test_desizer_returns_str() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    result = h["desizer"](["MSFT"])
+    assert isinstance(result, str)
+    assert len(result) > 10

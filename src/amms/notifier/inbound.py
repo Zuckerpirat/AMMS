@@ -13543,6 +13543,144 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _desizer_cmd(args: list[str]) -> str:
+        """DE signal + position sizing recommendation.
+
+        Usage: /desizer SYM [mode=MODE]
+        Runs the Decision Engine, then computes the recommended position
+        size using ATR-based stop-loss and the DE confidence to scale
+        position size. High-confidence signals → full size; low-confidence
+        → reduced size (half or none).
+
+        Size scaling:
+          confidence >= 0.75 and score >= 60 → 100% of max position
+          confidence >= 0.60 and score >= 35  → 75% of max position
+          confidence >= 0.50                  → 50% of max position
+          below threshold                     → 0% (no position recommended)
+
+        Example: /desizer AAPL mode=swing
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /desizer SYM [mode=MODE]  e.g. /desizer AAPL"
+
+        symbol = args[0].upper()
+        mode = "swing"
+        for a in args[1:]:
+            if a.startswith("mode="):
+                mode = a[5:].lower()
+
+        # Read current mode from DB if not explicitly given
+        if len(args) == 1 and conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        try:
+            bars = data.get_bars(symbol, limit=220)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 120:
+            return f"Not enough bars for {symbol}"
+
+        from amms.engine.decision import analyze as de_analyze
+        price = float(bars[-1].close)
+        report = de_analyze(bars, symbol=symbol, min_confidence=0.40, mode=mode)
+
+        # Get paper portfolio value for sizing
+        trader = _get_paper_trader()
+        snap = trader.snapshot()
+        portfolio_value = snap.portfolio_value
+        max_pos_pct = 0.10  # 10% default — same as AutoTrader default
+
+        # ATR for stop distance
+        atr_val: float | None = None
+        try:
+            from amms.features.volatility import atr as compute_atr
+            atr_val = compute_atr(bars, 14)
+        except Exception:
+            pass
+
+        lines = [f"── DE Position Sizer: {symbol} @ ${price:.2f} (mode={mode}) ──", ""]
+
+        if report is None:
+            lines.append("  DE signal: insufficient data")
+            return "\n".join(lines)
+
+        action = report.action
+        score = report.composite_score
+        conf = report.confidence
+
+        # Action icon
+        action_icons = {
+            "strong_buy": "🟢 STRONG BUY", "buy": "🟩 BUY",
+            "hold": "⬜ HOLD", "sell": "🟥 SELL", "strong_sell": "🔴 STRONG SELL",
+        }
+        lines.append(f"  Signal:     {action_icons.get(action, action)}")
+        lines.append(f"  Score:      {score:>+.0f}/100")
+        lines.append(f"  Confidence: {conf:.0%}")
+        if report.holding_horizon:
+            lines.append(f"  Horizon:    {report.holding_horizon}")
+
+        # Sizing
+        if action in {"buy", "strong_buy"} and not report.risk_blocked:
+            if conf >= 0.75 and abs(score) >= 60:
+                scale = 1.00
+                scale_label = "100% (strong signal)"
+            elif conf >= 0.60 and abs(score) >= 35:
+                scale = 0.75
+                scale_label = "75% (moderate signal)"
+            elif conf >= 0.50:
+                scale = 0.50
+                scale_label = "50% (weak signal)"
+            else:
+                scale = 0.0
+                scale_label = "0% (below threshold)"
+
+            max_dollar = portfolio_value * max_pos_pct * scale
+            qty = round(max_dollar / price, 4) if price > 0 and scale > 0 else 0.0
+
+            lines += [
+                "",
+                f"  Position size ({max_pos_pct:.0%} of ${portfolio_value:,.0f}):",
+                f"    Scale:     {scale_label}",
+                f"    Max $:     ${max_dollar:,.2f}",
+                f"    Quantity:  {qty:.4f} shares",
+                f"    Notional:  ${qty * price:,.2f}",
+            ]
+
+            if atr_val:
+                stop_distance = atr_val * 1.5  # 1.5× ATR stop
+                stop_price = price - stop_distance
+                risk_per_share = stop_distance
+                risk_dollar = qty * risk_per_share
+                lines += [
+                    f"    ATR-14:    ${atr_val:.2f}",
+                    f"    Stop:      ${stop_price:.2f}  (-{stop_distance/price*100:.1f}%)",
+                    f"    Risk $:    ${risk_dollar:.2f}  ({risk_dollar/portfolio_value*100:.2f}% of portfolio)",
+                ]
+        elif action in {"sell", "strong_sell"}:
+            pos = trader.position(symbol)
+            if pos is not None:
+                lines += [
+                    "",
+                    f"  SELL signal: consider closing position",
+                    f"    Current qty: {pos.qty:.4f}  avg cost ${pos.avg_cost:.2f}",
+                    f"    Unrealized P&L: ${(price - pos.avg_cost) * pos.qty:>+,.2f}",
+                ]
+            else:
+                lines.append("\n  SELL signal but no position held.")
+        else:
+            lines.append("\n  Signal is HOLD — no new position recommended.")
+
+        if report.risk_blocked:
+            lines.append(f"\n  ⚠ RISK GATE: {report.risk_reason}")
+
+        return "\n".join(lines)
+
     def _dewalkforward_cmd(args: list[str]) -> str:
         """Walk-forward validation: test DE consistency across time periods.
 
@@ -14525,6 +14663,9 @@ def build_command_handlers(
         "dewalkforward": _dewalkforward_cmd,
         "dewf": _dewalkforward_cmd,
         "wf": _dewalkforward_cmd,
+        "desizer": _desizer_cmd,
+        "dsize": _desizer_cmd,
+        "sizer": _desizer_cmd,
         "signalhistory": _signalhistory_cmd,
         "sighist": _signalhistory_cmd,
         "signals_log": _signalhistory_cmd,
