@@ -13291,6 +13291,37 @@ def build_command_handlers(
         lines.append(mp.status_summary().split("\n")[0])  # just the header value line
         return "\n".join(lines)
 
+    def _dailyreport_cmd(args: list[str]) -> str:
+        """Generate a daily portfolio + signal report.
+
+        Usage: /dailyreport [SYM SYM ...]
+        If no symbols given, uses the static watchlist.
+        Includes main portfolio, meme sandbox, top DE signals, and
+        macro regime in one consolidated message.
+
+        Example: /dailyreport AAPL MSFT NVDA TSLA
+        """
+        syms = [a.upper() for a in args] if args else list(static_watchlist)[:10]
+
+        current_mode = "swing"
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                current_mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        from amms.reporting.daily_report import generate_daily_report
+        trader = _get_paper_trader()
+        mp = _get_meme_portfolio()
+        return generate_daily_report(
+            trader,
+            meme_portfolio=mp,
+            data=data,
+            symbols=syms,
+            mode=current_mode,
+        )
+
     def _systemdash_cmd(_args: list[str]) -> str:
         """Consolidated system dashboard (paper + meme + macro + risk).
 
@@ -14059,4 +14090,7 @@ def build_command_handlers(
         "systemdash": _systemdash_cmd,
         "sysdash": _systemdash_cmd,
         "overview": _systemdash_cmd,
+        "dailyreport": _dailyreport_cmd,
+        "report": _dailyreport_cmd,
+        "nightly": _dailyreport_cmd,
     }
