@@ -54,7 +54,7 @@ def _format_pct(value: float) -> str:
     return f"{sign}{abs(value):.2f}%".replace(".", ",")
 
 
-def create_app(layout_path: Path, db_path: Path) -> FastAPI:
+def create_app(layout_path: Path, db_path: Path, refresh_ms: int = 5000) -> FastAPI:
     app = FastAPI(title="AMMS Dashboard", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["currency"] = _format_currency
@@ -62,27 +62,27 @@ def create_app(layout_path: Path, db_path: Path) -> FastAPI:
     templates.env.filters["pct"] = _format_pct
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    def render_dashboard(request: Request, edit: bool = False):
+    def _context(edit: bool) -> dict:
         layout = load_layout(layout_path)
         portfolio = get_portfolio(db_path)
-        available = list(WIDGET_REGISTRY.values())
-        return templates.TemplateResponse(
-            request,
-            "index.html",
-            {
-                "layout": layout,
-                "portfolio": portfolio,
-                "registry": WIDGET_REGISTRY,
-                "available_widgets": available,
-                "edit_mode": edit,
-                "sizes": SIZES,
-                "sparkline": _sparkline_points(portfolio.equity_history),
-            },
-        )
+        return {
+            "layout": layout,
+            "portfolio": portfolio,
+            "registry": WIDGET_REGISTRY,
+            "available_widgets": list(WIDGET_REGISTRY.values()),
+            "edit_mode": edit,
+            "sizes": SIZES,
+            "sparkline": _sparkline_points(portfolio.equity_history),
+            "refresh_ms": refresh_ms,
+        }
 
     @app.get("/")
     def index(request: Request, edit: int = 0):
-        return render_dashboard(request, edit=bool(edit))
+        return templates.TemplateResponse(request, "index.html", _context(bool(edit)))
+
+    @app.get("/api/grid")
+    def api_grid(request: Request, edit: int = 0):
+        return templates.TemplateResponse(request, "_grid.html", _context(bool(edit)))
 
     @app.post("/layout/add")
     def layout_add(widget_type: str = Form(...)):
@@ -127,10 +127,11 @@ def run(
     port: int = 8787,
     layout_path: Path | None = None,
     db_path: Path | None = None,
+    refresh_ms: int = 5000,
 ) -> None:
     import uvicorn
 
     layout_path = layout_path or (Path.home() / ".amms" / "dashboard_layout.json")
     db_path = db_path or (Path.home() / ".amms" / "amms.db")
-    app = create_app(layout_path=layout_path, db_path=db_path)
+    app = create_app(layout_path=layout_path, db_path=db_path, refresh_ms=refresh_ms)
     uvicorn.run(app, host=host, port=port, log_level="info")

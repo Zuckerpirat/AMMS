@@ -23,6 +23,10 @@
             <span class="brand-tag">Paper Trading</span>
         </div>
         <div class="topbar-actions">
+            <div id="live-indicator" class="live" title="Echtzeit-Aktualisierung aktiv">
+                <span class="live-dot"></span>
+                <span class="live-text">Live</span>
+            </div>
             <div class="theme-switcher" role="group" aria-label="Farbthema">
                 <button class="swatch swatch--claude" data-theme-set="claude" title="Claude — warm cremig"></button>
                 <button class="swatch swatch--mocha" data-theme-set="mocha" title="Mocha — dunkel & warm"></button>
@@ -43,61 +47,8 @@
         </div>
     {% endif %}
 
-    <main class="grid">
-        {% for widget in layout.widgets %}
-            <article class="widget widget--{{ widget.size }}" data-widget-type="{{ widget.type }}">
-                <header class="widget-head">
-                    <h2 class="widget-title">{{ registry[widget.type].title }}</h2>
-                    {% if edit_mode %}
-                        <div class="widget-controls">
-                            <form method="post" action="/layout/move">
-                                <input type="hidden" name="widget_id" value="{{ widget.id }}">
-                                <input type="hidden" name="direction" value="-1">
-                                <button type="submit" title="Nach oben">↑</button>
-                            </form>
-                            <form method="post" action="/layout/move">
-                                <input type="hidden" name="widget_id" value="{{ widget.id }}">
-                                <input type="hidden" name="direction" value="1">
-                                <button type="submit" title="Nach unten">↓</button>
-                            </form>
-                            <form method="post" action="/layout/resize">
-                                <input type="hidden" name="widget_id" value="{{ widget.id }}">
-                                <select name="size" onchange="this.form.submit()" title="Größe">
-                                    {% for s in sizes %}
-                                        <option value="{{ s }}" {% if s == widget.size %}selected{% endif %}>{{ s|upper }}</option>
-                                    {% endfor %}
-                                </select>
-                            </form>
-                            <form method="post" action="/layout/remove">
-                                <input type="hidden" name="widget_id" value="{{ widget.id }}">
-                                <button type="submit" class="widget-remove" title="Entfernen">×</button>
-                            </form>
-                        </div>
-                    {% endif %}
-                </header>
-                <div class="widget-body">
-                    {% include "widgets/" + widget.type + ".html" %}
-                </div>
-            </article>
-        {% endfor %}
-
-        {% if edit_mode %}
-            <article class="widget widget--md add-tile">
-                <h2 class="widget-title">Widget hinzufügen</h2>
-                <p class="muted">Wähle eine Kennzahl aus.</p>
-                <form method="post" action="/layout/add" class="add-form">
-                    <select name="widget_type" required>
-                        {% for w in available_widgets %}
-                            <option value="{{ w.type }}">{{ w.title }} — {{ w.description }}</option>
-                        {% endfor %}
-                    </select>
-                    <button type="submit" class="btn btn--primary">Hinzufügen</button>
-                </form>
-                <form method="post" action="/layout/reset" class="reset-form">
-                    <button type="submit" class="btn btn--ghost">Layout zurücksetzen</button>
-                </form>
-            </article>
-        {% endif %}
+    <main id="grid" class="grid" data-edit="{{ '1' if edit_mode else '0' }}" data-refresh-ms="{{ refresh_ms }}">
+        {% include "_grid.html" %}
     </main>
 
     <footer class="footer">

@@ -1222,6 +1222,11 @@ def dashboard(
         "--db",
         help="Pfad zur AMMS-SQLite-Datenbank (für Equity-Historie).",
     ),
+    refresh: float = typer.Option(
+        5.0,
+        "--refresh",
+        help="Aktualisierungsintervall in Sekunden (0 deaktiviert Auto-Refresh).",
+    ),
 ) -> None:
     """Startet das lokale Web-Dashboard im Browser."""
     try:
@@ -1233,11 +1238,18 @@ def dashboard(
         )
         console.print(f"[dim]{e}[/dim]")
         raise typer.Exit(code=2) from e
+    refresh_ms = max(0, int(refresh * 1000))
     console.print(
         f"[green]Dashboard läuft auf[/green] http://{host}:{port}  "
-        f"[dim](Layout: {layout_file})[/dim]"
+        f"[dim](Layout: {layout_file}, Refresh: {refresh}s)[/dim]"
     )
-    run_dashboard(host=host, port=port, layout_path=layout_file, db_path=db_path)
+    run_dashboard(
+        host=host,
+        port=port,
+        layout_path=layout_file,
+        db_path=db_path,
+        refresh_ms=refresh_ms,
+    )
 
 
 def main() -> None:

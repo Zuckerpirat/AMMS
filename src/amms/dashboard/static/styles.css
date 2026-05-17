@@ -153,6 +153,60 @@ a {
     gap: 14px;
 }
 
+/* ---------- live indicator ---------- */
+
+.live {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 6px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    box-shadow: var(--shadow-sm);
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--positive);
+    box-shadow: 0 0 0 0 var(--positive);
+    animation: live-pulse 2s ease-out infinite;
+}
+
+@keyframes live-pulse {
+    0% {
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--positive) 60%, transparent);
+    }
+    70% {
+        box-shadow: 0 0 0 8px color-mix(in srgb, var(--positive) 0%, transparent);
+    }
+    100% {
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--positive) 0%, transparent);
+    }
+}
+
+.live--syncing .live-dot {
+    background: var(--accent);
+    animation-duration: 1s;
+}
+
+.live--error .live-dot {
+    background: var(--negative);
+    animation: none;
+}
+
+.live--paused .live-dot {
+    background: var(--text-muted);
+    animation: none;
+}
+
 /* ---------- theme switcher ---------- */
 
 .theme-switcher {
