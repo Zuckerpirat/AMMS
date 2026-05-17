@@ -365,13 +365,15 @@ class TraderScheduler:
             return
         try:
             from amms.data.alerts import check_alerts
-            # Collect current prices from broker snapshots
+            # get_snapshots returns dict[str, dict] with "price" key
             prices: dict[str, float] = {}
             try:
                 snaps = self.auto_trader.data.get_snapshots(symbols)
                 for sym, snap in (snaps or {}).items():
                     try:
-                        prices[sym.upper()] = float(snap.latest_trade_price or snap.latest_quote_ask or 0)
+                        p = snap.get("price") or snap.get("latest_price") or 0
+                        if p:
+                            prices[sym.upper()] = float(p)
                     except Exception:
                         pass
             except Exception:
@@ -399,6 +401,15 @@ class TraderScheduler:
         if self.notifier is None:
             return
         try:
+            # Mark session start for accurate daily-loss tracking
+            if self.risk_guard is not None:
+                try:
+                    self.risk_guard.mark_session_start()
+                    logger.info("Session start equity marked: $%.2f",
+                                self.risk_guard.state.session_start_equity)
+                except Exception as exc:
+                    logger.debug("mark_session_start failed: %s", exc)
+
             trader = self.auto_trader.trader
             snap = trader.snapshot()
             n_pos = len(snap.positions)

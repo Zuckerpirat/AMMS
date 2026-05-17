@@ -2438,7 +2438,18 @@ def build_command_handlers(
         else:
             checks.append(("ℹ️", "Auto-Scanner", "deaktiviert (noscan)"))
 
-        # 8. Scheduler
+        # 8. Broker mode — local simulation vs real Alpaca paper trading
+        broker_mode = _broker_choice[0]
+        if broker_mode == "alpaca":
+            try:
+                acc = _get_broker().get_account()
+                checks.append(("✅", "Broker", f"Alpaca Paper — equity ${acc.equity:,.2f}"))
+            except Exception as exc:
+                checks.append(("❌", "Broker", f"Alpaca nicht erreichbar: {exc!r}"))
+        else:
+            checks.append(("⚠️", "Broker", "LOCAL (Simulation) — für Alpaca Paper Trading: /usebroker alpaca"))
+
+        # 9. Scheduler
         if _scheduler_instance and _scheduler_instance[0].is_running():
             s = _scheduler_instance[0].status()
             checks.append(("✅", "Scheduler", f"läuft | Tick {s.tick_seconds}s | {s.tick_count} Ticks"))
@@ -2473,6 +2484,8 @@ def build_command_handlers(
             lines.append(f"❌ {errors} kritische Fehler — bitte vor dem Trading beheben.")
         elif warns:
             lines.append(f"⚠️  {warns} Warnungen — Trading möglich, aber prüfe die Punkte.")
+            if _broker_choice[0] == "local":
+                lines.append("  → /usebroker alpaca  dann  /schedstart marketonly")
         else:
             lines.append("✅ Alles bereit — starte mit /schedstart marketonly")
 
@@ -16072,6 +16085,7 @@ def build_command_handlers(
             "/deregime SYM [BARS] — DE performance by market regime (trending/ranging)\n"
             "/setup — show configuration status (API keys, broker, risk guard, scheduler)\n"
             "/preflight — Pre-Flight-Check vor dem Trading-Tag: API, Markt, Makro, Risiko\n"
+            "/usebroker [local|alpaca] — Broker wechseln: local=Simulation, alpaca=echtes Paper Trading\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
