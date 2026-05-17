@@ -4854,3 +4854,63 @@ def test_listkeys_alias_keys() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["keys"] is h["listkeys"]
+
+
+# ── /forecast / /marketforecast tests ────────────────────────────────────────
+
+def test_forecast_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["forecast"](["NVDA"])
+    assert "nicht konfiguriert" in out.lower() or "not wired" in out.lower()
+
+
+def test_forecast_no_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["forecast"](["NVDA"])
+    # Should return a forecast (unknown direction, confidence=0) gracefully
+    assert isinstance(out, str) and len(out) > 10
+    assert "NVDA" in out
+
+
+def test_forecast_no_args_no_crash(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["forecast"]([])
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_forecast_alias_fc() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["fc"] is h["forecast"]
+
+
+def test_forecast_alias_predict() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["predict"] is h["forecast"]
+
+
+def test_marketforecast_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["marketforecast"]([])
+    assert "nicht konfiguriert" in out.lower() or "not wired" in out.lower()
+
+
+def test_marketforecast_with_data(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["marketforecast"]([])
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_marketforecast_alias_mf() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["mf"] is h["marketforecast"]

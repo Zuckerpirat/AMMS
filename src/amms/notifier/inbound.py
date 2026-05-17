@@ -1419,6 +1419,137 @@ def build_command_handlers(
 
         return "\n\n".join(parts)
 
+    def _forecast_cmd(args: list[str]) -> str:
+        """News-basierte Kursprognose für eine Aktie via KI.
+
+        Usage: /forecast SYM [SYM ...]
+               /forecast NVDA
+               /forecast AAPL MSFT TSLA
+
+        Liest aktuelle Nachrichten für jede Aktie und erstellt eine
+        KI-gestützte Prognose:
+          - Richtung (Anstieg / Rückgang / Seitwärts)
+          - Erwartete Bewegung in %
+          - Zeithorizont (1 Tag / 1 Woche / 1 Monat)
+          - Konkrete Treiber aus den Nachrichten
+          - Risikofaktoren die die Prognose widerlegen könnten
+          - Konfidenz-Score (0–100%)
+
+        Beispiel: NVDA → "Anstieg ~7% (1 Woche), Treiber: KI-Chip-Nachfrage..."
+
+        Erfordert ANTHROPIC_API_KEY (setze ihn mit /setkey anthropic_key ...).
+        Ergebnisse werden pro Aktie/Tag zwischengespeichert.
+        """
+        if data is None:
+            return "Market data client nicht konfiguriert."
+
+        if args:
+            syms = [a.upper() for a in args[:4]]
+        else:
+            try:
+                trader = _get_paper_trader()
+                syms = list(trader.positions.keys())[:3]
+            except Exception:
+                syms = []
+        if not syms:
+            return "Gib mindestens eine Aktie an: /forecast NVDA AAPL TSLA"
+
+        from amms.analysis.news_forecast import forecast_from_news, format_forecast
+
+        parts = []
+        for sym in syms:
+            articles = data.get_news([sym], limit=6)
+            fc = forecast_from_news(sym, articles, conn=conn)
+            parts.append(format_forecast(fc))
+
+        return "\n\n".join(parts)
+
+    def _marketforecast_cmd(args: list[str]) -> str:
+        """News-Prognosen für alle Positionen und Watchlist-Aktien.
+
+        Usage: /marketforecast [top=N]
+               /mf                  — alle Positionen + Watchlist, Top 5
+               /mf top=10           — bis zu 10 Prognosen
+
+        Wie /forecast aber für das ganze Portfolio auf einen Blick.
+        Sortiert nach Konfidenz (stärkste Prognosen zuerst).
+        """
+        if data is None:
+            return "Market data client nicht konfiguriert."
+
+        top_n = 5
+        for a in args:
+            if a.lower().startswith("top="):
+                try:
+                    top_n = int(a.split("=", 1)[1])
+                except ValueError:
+                    pass
+
+        syms: list[str] = []
+        try:
+            trader = _get_paper_trader()
+            syms.extend(list(trader.positions.keys())[:5])
+        except Exception:
+            pass
+        try:
+            from amms.data.watchlist import load_watchlist
+            wl = load_watchlist(conn) if conn is not None else []
+            for s in wl:
+                if s not in syms:
+                    syms.append(s)
+                if len(syms) >= 10:
+                    break
+        except Exception:
+            pass
+
+        if not syms:
+            return "Keine Aktien gefunden. Verwende: /forecast NVDA AAPL"
+
+        from amms.analysis.news_forecast import forecast_from_news, format_forecast
+
+        # Collect forecasts; sort by confidence × magnitude (strongest signal first)
+        forecasts = []
+        for sym in syms:
+            articles = data.get_news([sym], limit=5)
+            fc = forecast_from_news(sym, articles, conn=conn)
+            forecasts.append((fc.confidence * fc.magnitude, fc))
+
+        forecasts.sort(reverse=True)
+
+        lines = [f"══ Markt-Prognosen ({len(forecasts)} Aktien) ══\n"]
+
+        for _, fc in forecasts[:top_n]:
+            if fc.direction == "up":
+                icon = "📈"
+                move = f"▲ +{fc.magnitude:.1f}%"
+            elif fc.direction == "down":
+                icon = "📉"
+                move = f"▼ -{fc.magnitude:.1f}%"
+            elif fc.direction == "sideways":
+                icon = "➡️"
+                move = "→ ~0%"
+            else:
+                icon = "❓"
+                move = "?"
+
+            horizon_map = {"1d": "1T", "1w": "1W", "1m": "1M"}
+            hor = horizon_map.get(fc.horizon, fc.horizon)
+
+            lines.append(
+                f"{icon} {fc.symbol:<6} {move}  ({hor})  "
+                f"Konfidenz: {fc.confidence:.0%}"
+            )
+            lines.append(f"   {fc.summary}")
+            if fc.catalysts:
+                lines.append(f"   ✦ {fc.catalysts[0]}")
+            lines.append("")
+
+        if len(forecasts) > top_n:
+            lines.append(f"(+{len(forecasts)-top_n} weitere — /marketforecast top={top_n+5})")
+
+        lines.append("⚠️  KI-Prognosen — kein Anlageberater.")
+        return "\n".join(lines)
+
     def _marketnews_cmd(args: list[str]) -> str:
         """Aktuelle Nachrichten mit KI-Auswirkungsanalyse — sortiert nach Relevanz.
 
@@ -15663,6 +15794,8 @@ def build_command_handlers(
             "/news [SYM] — recent news headlines for a ticker (or open positions)\n"
             "/newsanalysis [SYM ...] — AI news analysis: Claude reads headlines and draws conclusions\n"
             "/marketnews [SYM ...] [top=N] — alle aktuellen News mit KI-Auswirkung, sortiert nach Stärke\n"
+            "/forecast [SYM ...] — KI-Kursprognose aus News: Richtung, % Bewegung, Zeithorizont, Treiber\n"
+            "/marketforecast [top=N] — Prognosen für alle Positionen und Watchlist auf einen Blick\n"
             "/export [N] — export last N filled orders as CSV text\n"
             "/fees [BPS] — estimate simulated transaction cost (default 5 bps)\n"
             "/summary — AI-generated narrative of the current portfolio state\n"
@@ -15747,6 +15880,12 @@ def build_command_handlers(
         "marketnews": _marketnews_cmd,
         "mn": _marketnews_cmd,
         "newsscan": _marketnews_cmd,
+        "forecast": _forecast_cmd,
+        "fc": _forecast_cmd,
+        "predict": _forecast_cmd,
+        "marketforecast": _marketforecast_cmd,
+        "mf": _marketforecast_cmd,
+        "allforecast": _marketforecast_cmd,
         "journal": _journal,
         "budget": _budget,
         "corr": _corr,
