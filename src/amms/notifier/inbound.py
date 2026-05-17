@@ -13543,6 +13543,57 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _dewalkforward_cmd(args: list[str]) -> str:
+        """Walk-forward validation: test DE consistency across time periods.
+
+        Usage: /dewalkforward SYM [BARS] [splits=N] [mode=MODE]
+        Splits bar history into N windows and tests out-of-sample performance
+        in each. Shows if the DE strategy is consistent or only works in certain
+        market conditions.
+
+        Stability score 80+: consistent performance across periods.
+        Stability score <50: strategy may be regime-specific or curve-fit.
+
+        Example: /dewalkforward AAPL 600 splits=5 mode=swing
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /dewalkforward SYM [BARS] [splits=N]  e.g. /dewalkforward AAPL 600"
+
+        symbol = args[0].upper()
+        limit = 600
+        n_splits = 5
+        mode = "swing"
+        for a in args[1:]:
+            if a.isdigit():
+                limit = max(210, min(int(a), 1000))
+            elif a.startswith("splits="):
+                try:
+                    n_splits = max(2, min(int(a[7:]), 10))
+                except ValueError:
+                    pass
+            elif a.startswith("mode="):
+                mode = a[5:].lower()
+
+        try:
+            bars = data.get_bars(symbol, limit=limit)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 210:
+            return f"Not enough bars for {symbol} (need 210+)"
+
+        from amms.engine.backtest import DEBacktestConfig, run_de_walk_forward
+        cfg = DEBacktestConfig(starting_cash=100_000.0, position_pct=0.10,
+                               commission_pct=0.001, min_confidence=0.60, min_score=35.0)
+        try:
+            result = run_de_walk_forward(bars, symbol=symbol, config=cfg,
+                                          n_splits=n_splits, mode=mode)
+        except Exception as exc:
+            return f"Walk-forward failed: {exc!r}"
+
+        return result["summary"]
+
     def _deparamopt_cmd(args: list[str]) -> str:
         """Optimize DE parameters (min_score, min_confidence) for a symbol.
 
@@ -14471,6 +14522,9 @@ def build_command_handlers(
         "deparamopt": _deparamopt_cmd,
         "deopt": _deparamopt_cmd,
         "paramopt": _deparamopt_cmd,
+        "dewalkforward": _dewalkforward_cmd,
+        "dewf": _dewalkforward_cmd,
+        "wf": _dewalkforward_cmd,
         "signalhistory": _signalhistory_cmd,
         "sighist": _signalhistory_cmd,
         "signals_log": _signalhistory_cmd,

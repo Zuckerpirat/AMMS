@@ -648,3 +648,119 @@ def optimize_de_params(
         "all_results": all_results,
         "summary": "\n".join(lines),
     }
+
+
+def run_de_walk_forward(
+    bars: list,
+    symbol: str,
+    *,
+    n_splits: int = 5,
+    config: DEBacktestConfig | None = None,
+    mode: str = "swing",
+) -> dict:
+    """Walk-forward validation for the Decision Engine.
+
+    Splits the bar history into n_splits chunks and runs an expanding
+    walk-forward test: each chunk is used as out-of-sample, with all
+    prior bars as (unused) training context.
+
+    This tests whether DE performance is consistent across different
+    market periods, exposing strategies that only worked in-sample.
+
+    Returns dict:
+      - "windows": list of dicts {window, start_bar, end_bar, result: DEBacktestResult}
+      - "consistent": bool — all windows profitable
+      - "avg_return_pct": average out-of-sample return
+      - "avg_sharpe": average Sharpe ratio
+      - "stability_score": 0-100 (100 = perfectly consistent returns)
+      - "summary": formatted table
+    """
+    cfg = config or DEBacktestConfig()
+    n = len(bars)
+
+    if n < _WARMUP_BARS * 2:
+        empty_result = run_de_backtest(bars, symbol=symbol, config=cfg, mode=mode)
+        return {
+            "windows": [],
+            "consistent": False,
+            "avg_return_pct": empty_result.total_return_pct,
+            "avg_sharpe": empty_result.sharpe_ratio,
+            "stability_score": 0.0,
+            "summary": f"Insufficient bars for walk-forward ({n} bars, need {_WARMUP_BARS * 2}+)",
+        }
+
+    n_splits = max(2, min(n_splits, 10))
+    chunk = (n - _WARMUP_BARS) // n_splits
+    if chunk < 20:
+        chunk = 20
+
+    windows: list[dict] = []
+    for i in range(n_splits):
+        start = _WARMUP_BARS + i * chunk
+        end = min(start + chunk + _WARMUP_BARS, n)
+        if end - start < _WARMUP_BARS + 5:
+            break
+        window_bars = bars[: end]  # expanding window — all bars up to end
+        result = run_de_backtest(window_bars, symbol=symbol, config=cfg, mode=mode)
+        windows.append({
+            "window": i + 1,
+            "start_bar": start,
+            "end_bar": end,
+            "bars": end - start,
+            "result": result,
+        })
+
+    if not windows:
+        return {
+            "windows": [],
+            "consistent": False,
+            "avg_return_pct": 0.0,
+            "avg_sharpe": 0.0,
+            "stability_score": 0.0,
+            "summary": "No walk-forward windows generated.",
+        }
+
+    returns = [w["result"].total_return_pct for w in windows]
+    sharpes = [w["result"].sharpe_ratio for w in windows]
+    avg_return = sum(returns) / len(returns)
+    avg_sharpe = sum(sharpes) / len(sharpes)
+    consistent = all(r > 0 for r in returns)
+
+    # Stability score: 100 if all returns are equal (low variance), 0 if all over the place
+    if len(returns) >= 2:
+        import statistics
+        try:
+            sd = statistics.stdev(returns)
+            mean_abs = abs(avg_return)
+            cv = sd / (mean_abs + 1e-9)  # coefficient of variation
+            stability = max(0.0, 100.0 - cv * 20.0)
+        except Exception:
+            stability = 50.0
+    else:
+        stability = 50.0
+
+    lines = [
+        f"── DE Walk-Forward Validation: {symbol} ({n_splits} splits, mode={mode}) ──",
+        f"  {'Win':>4}  {'Bars':>5}  {'Return':>8}  {'Sharpe':>7}  {'Trades':>6}  {'WR':>5}",
+    ]
+    for w in windows:
+        r = w["result"]
+        lines.append(
+            f"  {w['window']:>4}  {w['bars']:>5}  {r.total_return_pct:>+7.2f}%  "
+            f"{r.sharpe_ratio:>7.2f}  {r.num_round_trips:>6}  {r.win_rate:>4.0%}"
+        )
+    lines += [
+        "",
+        f"  Avg return: {avg_return:+.2f}%   Avg Sharpe: {avg_sharpe:.2f}",
+        f"  Consistent (all +): {'YES' if consistent else 'NO'}",
+        f"  Stability score:    {stability:.0f}/100",
+    ]
+
+    return {
+        "windows": windows,
+        "consistent": consistent,
+        "avg_return_pct": avg_return,
+        "avg_sharpe": avg_sharpe,
+        "stability_score": stability,
+        "summary": "\n".join(lines),
+    }

@@ -340,3 +340,45 @@ def test_param_opt_too_few_bars_does_not_crash() -> None:
                                 min_score_range=(30.0, 40.0, 10.0),
                                 min_confidence_range=(0.50, 0.60, 0.10))
     assert isinstance(result, dict)
+
+
+# ── Walk-forward validation tests ─────────────────────────────────────────────
+
+def test_walk_forward_returns_dict() -> None:
+    bars = _bars(500)
+    from amms.engine.backtest import run_de_walk_forward
+    result = run_de_walk_forward(bars, symbol="SIM", n_splits=3)
+    assert isinstance(result, dict)
+    for key in ("windows", "consistent", "avg_return_pct", "avg_sharpe",
+                 "stability_score", "summary"):
+        assert key in result
+
+
+def test_walk_forward_windows_count() -> None:
+    bars = _bars(500)
+    from amms.engine.backtest import run_de_walk_forward
+    result = run_de_walk_forward(bars, symbol="SIM", n_splits=3)
+    assert len(result["windows"]) > 0
+    assert len(result["windows"]) <= 3
+
+
+def test_walk_forward_stability_score_range() -> None:
+    bars = _bars(500)
+    from amms.engine.backtest import run_de_walk_forward
+    result = run_de_walk_forward(bars, symbol="SIM", n_splits=3)
+    assert 0.0 <= result["stability_score"] <= 100.0
+
+
+def test_walk_forward_summary_contains_symbol() -> None:
+    bars = _bars(500)
+    from amms.engine.backtest import run_de_walk_forward
+    result = run_de_walk_forward(bars, symbol="SIM", n_splits=3)
+    assert "SIM" in result["summary"]
+
+
+def test_walk_forward_too_few_bars_no_crash() -> None:
+    bars = _bars(100)
+    from amms.engine.backtest import run_de_walk_forward
+    result = run_de_walk_forward(bars, symbol="SIM", n_splits=3)
+    assert isinstance(result, dict)
+    assert "summary" in result
