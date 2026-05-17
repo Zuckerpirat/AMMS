@@ -451,7 +451,7 @@ class TraderScheduler:
                 lines.append("  Offene Positionen:")
                 pos_list = list(snap.positions.items())
                 for sym, pos in pos_list[:6]:
-                    pnl_pct = pos.get("unrealized_pnl_pct", 0.0) if isinstance(pos, dict) else 0.0
+                    pnl_pct = pos.get("pnl_pct", 0.0) if isinstance(pos, dict) else 0.0
                     mv = pos.get("market_value", 0.0) if isinstance(pos, dict) else 0.0
                     sign = "+" if pnl_pct >= 0 else ""
                     lines.append(f"    {sym:<6}  {sign}{pnl_pct:.1f}%  MV ${mv:,.0f}")
@@ -506,7 +506,7 @@ class TraderScheduler:
             if snap.positions:
                 pos_with_pnl = []
                 for sym, pos in snap.positions.items():
-                    pct = pos.get("unrealized_pnl_pct", 0.0) if isinstance(pos, dict) else 0.0
+                    pct = pos.get("pnl_pct", 0.0) if isinstance(pos, dict) else 0.0
                     pos_with_pnl.append((sym, pct))
                 pos_with_pnl.sort(key=lambda x: x[1])
                 worst = pos_with_pnl[0] if pos_with_pnl else None

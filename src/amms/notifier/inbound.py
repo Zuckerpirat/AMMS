@@ -2426,7 +2426,7 @@ def build_command_handlers(
             pos_str = f"{n_pos} offene Position{'en' if n_pos != 1 else ''}"
             if n_pos:
                 top = sorted(snap.positions.items(),
-                             key=lambda kv: abs(kv[1].get("unrealized_pnl_pct", 0) if isinstance(kv[1], dict) else 0),
+                             key=lambda kv: abs(kv[1].get("pnl_pct", 0) if isinstance(kv[1], dict) else 0),
                              reverse=True)[:3]
                 pos_str += ": " + ", ".join(s for s, _ in top)
             checks.append(("✅", "Paper-Portfolio", f"${snap.portfolio_value:,.2f} | {pos_str}"))
