@@ -1411,6 +1411,122 @@ def build_command_handlers(
 
         return "\n\n".join(parts)
 
+    def _marketnews_cmd(args: list[str]) -> str:
+        """Aktuelle Nachrichten mit KI-Auswirkungsanalyse — sortiert nach Relevanz.
+
+        Usage: /marketnews [SYM ...] [top=N]
+               /mn                     — alle Positionen + Watchlist, Top 5
+               /mn AAPL NVDA TSLA      — spezifische Aktien
+               /mn top=10              — Top 10 statt Top 5
+
+        Zeigt für jede Aktie:
+          - Aktuelle Headlines (letzte 24h)
+          - KI-Sentiment-Score (−1..+1)
+          - Ein-Satz-Fazit was die Nachrichten für die Aktie bedeuten
+          - Bullish/Bearish/Neutral Einschätzung
+
+        Sortiert die Aktien nach Nachrichtenauswirkung (stärkstes Signal zuerst).
+        Erfordert ANTHROPIC_API_KEY für KI-Analyse. Ohne Key: nur Headlines.
+        """
+        if data is None:
+            return "Market data client nicht konfiguriert."
+
+        # Parse top=N argument
+        top_n = 5
+        syms_raw = []
+        for a in args:
+            if a.lower().startswith("top="):
+                try:
+                    top_n = int(a.split("=", 1)[1])
+                except ValueError:
+                    pass
+            else:
+                syms_raw.append(a.upper())
+
+        # Collect symbols: explicit args > open positions > watchlist
+        if syms_raw:
+            syms = syms_raw[:10]
+        else:
+            syms = []
+            # Open positions first
+            try:
+                trader = _get_paper_trader()
+                syms.extend(list(trader.positions.keys())[:5])
+            except Exception:
+                pass
+            # Fill from watchlist
+            try:
+                from amms.data.watchlist import load_watchlist
+                wl = load_watchlist(conn) if conn is not None else []
+                for s in wl:
+                    if s not in syms:
+                        syms.append(s)
+                    if len(syms) >= 10:
+                        break
+            except Exception:
+                pass
+
+        if not syms:
+            return (
+                "Keine Aktien gefunden. Verwende: /marketnews AAPL NVDA TSLA\n"
+                "Oder starte zuerst den Scheduler mit /schedstart."
+            )
+
+        from amms.analysis.news_sentiment import analyze_news, format_news_sentiment
+
+        results = []
+        no_news = []
+
+        for sym in syms:
+            articles = data.get_news([sym], limit=5)
+            if not articles:
+                no_news.append(sym)
+                continue
+            sentiment = analyze_news(sym, articles, conn=conn)
+            results.append((abs(sentiment.score) * sentiment.confidence, sym, sentiment, articles))
+
+        # Sort by |score| × confidence (most impactful first)
+        results.sort(reverse=True)
+
+        if not results and not no_news:
+            return "Keine Nachrichten für die konfigurierten Aktien gefunden."
+
+        lines = [f"══ Market News — KI-Analyse ══  ({len(results)} Aktien mit News)"]
+
+        for i, (_, sym, sentiment, articles) in enumerate(results[:top_n]):
+            # Direction emoji
+            if sentiment.score > 0.2:
+                icon = "🟢"
+            elif sentiment.score < -0.2:
+                icon = "🔴"
+            else:
+                icon = "🟡"
+
+            sign = "+" if sentiment.score >= 0 else ""
+            conf_str = f"{sentiment.confidence:.0%}" if sentiment.confidence > 0 else "—"
+
+            lines.append(f"\n{icon} {sym}  Score: {sign}{sentiment.score:.2f}  (Konfidenz {conf_str})")
+            lines.append(f"   {sentiment.conclusion}")
+
+            if sentiment.reasoning:
+                for r in sentiment.reasoning[:2]:
+                    lines.append(f"   • {r}")
+
+            # Show top 2 headlines
+            for a in articles[:2]:
+                hl = (a.get("headline") or "").strip()
+                date = str(a.get("created_at") or "")[:10]
+                if hl:
+                    lines.append(f"   [{date}] {hl[:100]}")
+
+        if no_news:
+            lines.append(f"\n⚪ Keine News: {', '.join(no_news)}")
+
+        if len(results) > top_n:
+            lines.append(f"\n(+{len(results)-top_n} weitere Aktien — /marketnews top={top_n+5} für mehr)")
+
+        return "\n".join(lines)
+
     def _streak(_args: list[str]) -> str:
         """Show the current win/loss streak from completed round-trip trades."""
         if conn is None:
@@ -15448,6 +15564,7 @@ def build_command_handlers(
             "/top — best and worst open positions by unrealized P&L %%\n"
             "/news [SYM] — recent news headlines for a ticker (or open positions)\n"
             "/newsanalysis [SYM ...] — AI news analysis: Claude reads headlines and draws conclusions\n"
+            "/marketnews [SYM ...] [top=N] — alle aktuellen News mit KI-Auswirkung, sortiert nach Stärke\n"
             "/export [N] — export last N filled orders as CSV text\n"
             "/fees [BPS] — estimate simulated transaction cost (default 5 bps)\n"
             "/summary — AI-generated narrative of the current portfolio state\n"
@@ -15526,6 +15643,9 @@ def build_command_handlers(
         "newsanalysis": _newsanalysis_cmd,
         "na": _newsanalysis_cmd,
         "aianalysis": _newsanalysis_cmd,
+        "marketnews": _marketnews_cmd,
+        "mn": _marketnews_cmd,
+        "newsscan": _marketnews_cmd,
         "journal": _journal,
         "budget": _budget,
         "corr": _corr,

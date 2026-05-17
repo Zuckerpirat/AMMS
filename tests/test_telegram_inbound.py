@@ -1646,6 +1646,20 @@ class _FakeDataClient:
             ))
         return bars
 
+    def get_news(self, symbols, *, limit=5):
+        return [
+            {
+                "headline": f"Fake news for {symbols[0] if symbols else 'MKT'}",
+                "summary": "Nothing happened.",
+                "url": "https://example.com/1",
+                "created_at": "2026-05-17T09:00:00Z",
+                "symbols": symbols[:1],
+            }
+        ]
+
+    def get_snapshots(self, symbols):
+        return {}  # no snapshot data in tests
+
 
 def test_vol_no_data_client() -> None:
     p = PauseFlag()
@@ -4672,3 +4686,72 @@ def test_nextsell_alias_urgentsell() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["urgentsell"] is h["nextsell"]
+
+
+# ── /marketnews tests ─────────────────────────────────────────────────────────
+
+def test_marketnews_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["marketnews"]([])
+    assert "nicht konfiguriert" in out.lower() or "not wired" in out.lower()
+
+
+def test_marketnews_with_symbols(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["marketnews"](["AAPL", "NVDA"])
+    assert isinstance(out, str) and len(out) > 10
+    # Should contain the symbols or a news section header
+    assert "AAPL" in out or "NVDA" in out or "Market" in out
+
+
+def test_marketnews_no_symbols_falls_back_to_positions(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["marketnews"]([])
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_marketnews_top_n_arg(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["marketnews"](["AAPL", "NVDA", "top=2"])
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_marketnews_alias_mn() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["mn"] is h["marketnews"]
+
+
+def test_marketnews_alias_newsscan() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["newsscan"] is h["marketnews"]
+
+
+def test_newsanalysis_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["newsanalysis"](["AAPL"])
+    assert "not wired" in out.lower()
+
+
+def test_newsanalysis_with_symbol(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["newsanalysis"](["AAPL"])
+    assert isinstance(out, str) and len(out) > 10
+    assert "AAPL" in out
+
+
+def test_newsanalysis_alias_na() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["na"] is h["newsanalysis"]
