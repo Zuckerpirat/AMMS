@@ -13464,6 +13464,58 @@ def build_command_handlers(
         footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
         return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
 
+    def _equitycurve_cmd(args: list[str]) -> str:
+        """Portfolio equity curve and performance stats from history snapshots.
+
+        Usage: /equitycurve [DAYS]
+        Shows an ASCII sparkline of portfolio value over time, plus:
+        total return, CAGR, max drawdown, Sharpe ratio, best/worst day.
+
+        Snapshots are recorded automatically whenever /equitysnap is called
+        (or by the scheduler if integrated). You can also call /equitysnap
+        manually to record the current value.
+
+        Example: /equitycurve 30
+        """
+        if conn is None:
+            return "Database not connected — equity history unavailable."
+
+        days = 30
+        if args:
+            try:
+                days = max(1, min(int(args[0]), 3650))
+            except ValueError:
+                pass
+
+        from amms.data.equity_history import fetch_history, compute_stats, format_equity_curve
+        snapshots = fetch_history(conn, days=days, limit=2000)
+        stats = compute_stats(snapshots) if len(snapshots) >= 2 else None
+        return format_equity_curve(snapshots, stats)
+
+    def _equitysnap_cmd(_args: list[str]) -> str:
+        """Record a snapshot of current portfolio equity to the history log.
+
+        Usage: /equitysnap
+        Saves the current portfolio value, cash, and position total to the
+        database. Call this regularly (or let the scheduler do it) to build
+        an equity curve for /equitycurve.
+        """
+        if conn is None:
+            return "Database not connected — cannot record snapshot."
+
+        from amms.data.equity_history import record_snapshot
+        trader = _get_paper_trader()
+        ok = record_snapshot(conn, trader)
+        if ok:
+            snap = trader.snapshot()
+            return (
+                f"Equity snapshot recorded: ${snap.portfolio_value:,.2f}  "
+                f"(cash ${snap.cash:,.2f}, "
+                f"positions ${snap.total_market_value:,.2f}, "
+                f"n={len(snap.positions)})"
+            )
+        return "Failed to record equity snapshot."
+
     def _sigoutcome_cmd(args: list[str]) -> str:
         """Signal outcome accuracy: did DE signals predict price direction?
 
@@ -14571,6 +14623,8 @@ def build_command_handlers(
             "/dailyreport [SYM ...] — daily portfolio + DE signals + macro report\n"
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
             "/sigoutcome [days=N] [age=N] — DE signal directional accuracy vs actual price outcomes\n"
+            "/equitycurve [DAYS] — ASCII equity sparkline + Sharpe/CAGR/drawdown from history\n"
+            "/equitysnap — record current portfolio value to equity history\n"
             "/pmetrics — paper portfolio performance: win rate, Sharpe, P&L, grade\n"
             "/pstats — alias for /pmetrics\n"
             "/tradeplan SYM [mode=MODE] — full pre-trade plan: DE + sizing + stop + target + R:R + macro\n"
@@ -15065,4 +15119,9 @@ def build_command_handlers(
         "sigoutcome": _sigoutcome_cmd,
         "sigaccuracy": _sigoutcome_cmd,
         "outcome": _sigoutcome_cmd,
+        "equitycurve": _equitycurve_cmd,
+        "ecurve": _equitycurve_cmd,
+        "eqcurve": _equitycurve_cmd,
+        "equitysnap": _equitysnap_cmd,
+        "esnap": _equitysnap_cmd,
     }

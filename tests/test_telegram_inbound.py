@@ -4333,3 +4333,39 @@ def test_sigoutcome_returns_str() -> None:
     h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
     result = h["sigoutcome"](["days=5"])
     assert isinstance(result, str)
+
+
+# ── /equitycurve and /equitysnap tests ───────────────────────────────────────
+
+def test_equitycurve_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["equitycurve"]([])
+    assert "not connected" in out.lower() or "unavailable" in out.lower()
+
+
+def test_equitysnap_no_db() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["equitysnap"]([])
+    assert "not connected" in out.lower()
+
+
+def test_equitycurve_alias_ecurve() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["ecurve"] is h["equitycurve"]
+
+
+def test_equitysnap_alias_esnap() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["esnap"] is h["equitysnap"]
+
+
+def test_equitycurve_returns_str() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    result = h["equitycurve"](["30"])
+    assert isinstance(result, str)
+    assert len(result) > 5
