@@ -1,84 +1,40 @@
-# Copy to config.yaml and edit. Watchlist is small on purpose for the MVP.
+# AMMS — Paper Trading Configuration
+# Angepasst für Paper Trading. Alle Einstellungen konservativ gewählt.
+# Ändere die Watchlist nach deinen Präferenzen.
 
+# ── Watchlist ──────────────────────────────────────────────────────────────
+# Symbole die der Bot beobachtet und traden darf.
+# Der Auto-Scanner kann zusätzlich Symbole aus dem DEFAULT_UNIVERSE hinzufügen.
 watchlist:
   - AAPL
   - MSFT
   - NVDA
-  - AMD
-  - TSLA
-  - META
-  - GOOGL
   - AMZN
+  - GOOGL
+  - META
+  - TSLA
+  - AMD
+  - JPM
+  - V
 
+# ── Strategie ──────────────────────────────────────────────────────────────
 strategy:
-  name: sma_cross
-  # 1Day for swing/positions, 5Min or 15Min for day trading. Whatever you
-  # pick here is fetched live and used in the backtest, so the two stay
-  # in lockstep.
-  timeframe: 1Day
+  name: decision_engine        # Nutzt den zentralen Decision Engine (empfohlen)
+  timeframe: 1Day              # Tages-Bars (stabiler als Intraday)
   params:
-    fast: 10
-    slow: 30
+    min_score: 35              # Mindest-Score für Kauf-Signal (-100..+100)
+    min_confidence: 0.60       # Mindest-Konfidenz (0..1)
+    mode: swing                # Trading-Modus: conservative / swing / meme / event
 
+# ── Risiko-Management ──────────────────────────────────────────────────────
 risk:
-  max_open_positions: 5
-  max_position_pct: 0.02
-  daily_loss_pct: -0.03
-  blackout_minutes_after_open: 5
-  blackout_minutes_before_close: 5
-  # Optional. Caps how many buys a single tick may submit. With the composite
-  # strategy, the highest-scoring signals win. Comment out to disable.
-  # max_buys_per_tick: 3
-  # Optional. Refuse to act on sell signals before a position has been held
-  # this many days. 0 (default) = exit as soon as the strategy says so. Use
-  # ~2 for swing trading so small dips don't shake you out.
-  min_hold_days: 0
-  # Pattern Day Trader guard. Below pdt_min_equity, refuse sells that would
-  # create the (pdt_max_day_trades + 1)-th day-trade in a rolling 5-day window.
-  pdt_min_equity: 25000
-  pdt_max_day_trades: 3
-  # Day-trading profile: flatten ALL positions this many minutes before
-  # market close. 0 (default) = off; use ~15 for an intraday profile.
-  force_close_minutes_before_close: 0
-  # Per-position stop-loss as a positive fraction. Force-sell when the
-  # unrealized loss vs entry exceeds this. Bypasses min_hold_days.
-  # 0.0 (default) = disabled; 0.05 = sell at 5% loss; common: 0.03 - 0.10.
-  # stop_loss_pct: 0.05
-  # Per-position trailing stop. Sell when price drops this fraction below the
-  # high-water mark since entry. Locks in gains. 0 (default) = disabled.
-  # trailing_stop_pct: 0.10
+  max_open_positions: 8        # Maximal 8 gleichzeitige Positionen
+  max_position_pct: 0.10       # Max 10% des Portfolios pro Symbol
+  daily_loss_pct: -0.03        # Stop-All bei -3% Tagesverlust
+  max_buys_per_tick: 2         # Max 2 Käufe pro Tick (verhindert Overtrading)
 
+# ── Scheduler ──────────────────────────────────────────────────────────────
 scheduler:
-  tick_seconds: 60
+  tick_seconds: 300            # Alle 5 Minuten einen Tick
   timezone: America/New_York
-  # Per-tick Telegram verbosity. One of:
-  #   orders_only — message only when an order is actually placed (quietest;
-  #                 nothing in dry-run since no orders ever fire)
-  #   decisions   — message when there are buy/sell signals OR orders. Best
-  #                 setting for dry-run: you see what the bot WOULD do.
-  #   always      — message every tick, even when nothing fired
-  #   never       — silent (only daily summary + errors get through)
-  tick_notify: decisions
-
-# WSB Auto-Discovery: periodically scan r/wallstreetbets and add the top
-# trending tickers to the active watchlist for as long as they trend.
-# Disabled by default. Requires REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET in
-# .env, otherwise it silently does nothing.
-wsb_discovery:
-  enabled: false              # set true to turn on
-  top_n: 5                    # how many trending tickers to add
-  min_mentions: 5             # minimum mention count to be considered
-  min_sentiment: 0.0          # require non-bearish chatter (-1..1)
-  refresh_hours: 24           # rescan at most this often
-  subreddits:
-    - wallstreetbets
-  time_filter: day            # hour | day | week | month | year | all
-
-# Pre-trade gate: BUY signals are blocked unless the symbol clears these
-# thresholds. SELL signals are never filtered so you can always exit. All
-# defaults are inert; uncomment values to activate.
-universe:
-  # min_price: 1.00            # block sub-$1 names (penny-stock floor)
-  # max_price: 500.00          # optional upper bound
-  # min_avg_dollar_volume: 1000000   # 20-day average close*volume in USD
-  adv_lookback: 20
+  tick_notify: orders_only     # Telegram nur bei echten Orders (kein Spam)

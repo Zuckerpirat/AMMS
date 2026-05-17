@@ -2347,6 +2347,137 @@ def build_command_handlers(
         lines.append("Run /help for all commands.")
         return "\n".join(lines)
 
+    def _preflight_cmd(_args: list[str]) -> str:
+        """Umfassender Pre-Flight-Check vor dem Trading-Tag.
+
+        Prüft: API-Verbindung, Portfolio-Stand, Marktzeiten, Makro-Regime,
+        Risiko-Guard, Paper-Trader-Balance, Watchlist, Auto-Scanner-Bereitschaft.
+        """
+        import os
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        checks: list[tuple[str, str, str]] = []  # (icon, label, detail)
+
+        # 1. Alpaca API
+        try:
+            acc = broker.get_account()
+            checks.append(("✅", "Alpaca API", f"equity ${acc.equity:,.2f} | cash ${acc.cash:,.2f} | status {acc.status}"))
+        except Exception as exc:
+            checks.append(("❌", "Alpaca API", f"Verbindung fehlgeschlagen: {exc!r}"))
+
+        # 2. Market clock
+        try:
+            clock = broker.get_clock()
+            is_open = getattr(clock, "is_open", None)
+            next_open = getattr(clock, "next_open", None)
+            if is_open:
+                next_close = getattr(clock, "next_close", "?")
+                checks.append(("🟢", "Markt", f"GEÖFFNET — schließt um {next_close}"))
+            else:
+                checks.append(("🟡", "Markt", f"geschlossen — öffnet {next_open}"))
+        except Exception:
+            checks.append(("⚠️", "Markt-Uhr", "nicht verfügbar (Alpaca-Uhr-API)"))
+
+        # 3. Paper trader balance
+        try:
+            pt = _get_paper_trader()
+            snap = pt.snapshot()
+            n_pos = len(snap.positions)
+            pos_str = f"{n_pos} offene Position{'en' if n_pos != 1 else ''}"
+            if n_pos:
+                top = sorted(snap.positions.items(),
+                             key=lambda kv: abs(kv[1].get("unrealized_pnl_pct", 0) if isinstance(kv[1], dict) else 0),
+                             reverse=True)[:3]
+                pos_str += ": " + ", ".join(s for s, _ in top)
+            checks.append(("✅", "Paper-Portfolio", f"${snap.portfolio_value:,.2f} | {pos_str}"))
+        except Exception as exc:
+            checks.append(("❌", "Paper-Portfolio", str(exc)))
+
+        # 4. Macro regime
+        try:
+            from amms.data.macro import compute_regime
+            if data is not None:
+                regime = compute_regime(data)
+                icon = "🔴" if regime.is_stressed else ("🟡" if regime.level == "elevated" else "🟢")
+                checks.append((icon, "Makro-Regime", f"{regime.level.upper()} — {regime.reason[:80]}"))
+            else:
+                checks.append(("⚠️", "Makro-Regime", "Data-Client nicht verfügbar"))
+        except Exception as exc:
+            checks.append(("⚠️", "Makro-Regime", f"Fehler: {exc!r}"))
+
+        # 5. Risk guard
+        try:
+            rg = _get_risk_guard()
+            if rg.state.killswitch_armed:
+                checks.append(("🛑", "Risiko-Guard", f"KILLSWITCH AKTIV — {rg.state.killswitch_reason}"))
+            else:
+                peak = rg.state.peak_equity
+                try:
+                    eq = _get_paper_trader().snapshot().portfolio_value
+                    dd = (peak - eq) / peak * 100.0 if peak > 0 else 0.0
+                    checks.append(("✅", "Risiko-Guard", f"OK | Peak ${peak:,.2f} | Drawdown {dd:.1f}%"))
+                except Exception:
+                    checks.append(("✅", "Risiko-Guard", "OK"))
+        except Exception as exc:
+            checks.append(("⚠️", "Risiko-Guard", str(exc)))
+
+        # 6. Watchlist
+        wl = list(static_watchlist)
+        if wl:
+            checks.append(("✅", "Watchlist", f"{len(wl)} Symbole: {', '.join(wl[:8])}{'...' if len(wl) > 8 else ''}"))
+        else:
+            checks.append(("⚠️", "Watchlist", "Leer — trage Symbole in config.yaml ein oder nutze /add"))
+
+        # 7. Auto-scanner readiness
+        if _scheduler_instance and _scheduler_instance[0].auto_scanner is not None:
+            sc = _scheduler_instance[0].auto_scanner
+            checks.append(("✅", "Auto-Scanner", f"aktiv | {len(sc.universe)} Symbole | min-score {sc.min_score}"))
+        elif not _scheduler_instance:
+            checks.append(("ℹ️", "Auto-Scanner", "startet mit /schedstart marketonly"))
+        else:
+            checks.append(("ℹ️", "Auto-Scanner", "deaktiviert (noscan)"))
+
+        # 8. Scheduler
+        if _scheduler_instance and _scheduler_instance[0].is_running():
+            s = _scheduler_instance[0].status()
+            checks.append(("✅", "Scheduler", f"läuft | Tick {s.tick_seconds}s | {s.tick_count} Ticks"))
+        else:
+            checks.append(("⏸", "Scheduler", "gestoppt — starte mit /schedstart marketonly"))
+
+        # 9. Telegram notifier
+        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+        if token and chat:
+            checks.append(("✅", "Telegram", "konfiguriert — du bekommst alle Trade-Nachrichten"))
+        else:
+            checks.append(("⚠️", "Telegram", "nicht konfiguriert — /setkey telegram_token TOKEN"))
+
+        # 10. Anthropic (KI-Analyse)
+        anthro = os.environ.get("ANTHROPIC_API_KEY", "")
+        if anthro and len(anthro) > 10:
+            checks.append(("✅", "KI-Analyse", "Anthropic Key gesetzt — /newsanalysis, /deepforecast verfügbar"))
+        else:
+            checks.append(("⚠️", "KI-Analyse", "kein Key — /setkey anthropic_key sk-ant-..."))
+
+        # Render
+        lines = [f"🛫 Pre-Flight Check — {now.strftime('%Y-%m-%d %H:%M UTC')}", ""]
+        for icon, label, detail in checks:
+            lines.append(f"  {icon} {label:<16} {detail}")
+
+        # Summary verdict
+        errors = sum(1 for icon, _, _ in checks if icon == "❌")
+        warns = sum(1 for icon, _, _ in checks if icon in ("⚠️", "🛑"))
+        lines.append("")
+        if errors:
+            lines.append(f"❌ {errors} kritische Fehler — bitte vor dem Trading beheben.")
+        elif warns:
+            lines.append(f"⚠️  {warns} Warnungen — Trading möglich, aber prüfe die Punkte.")
+        else:
+            lines.append("✅ Alles bereit — starte mit /schedstart marketonly")
+
+        return "\n".join(lines)
+
     def _version(_args: list[str]) -> str:
         import subprocess
 
@@ -7577,11 +7708,12 @@ def build_command_handlers(
     def _schedstart_cmd(args: list[str]) -> str:
         """Start the background scheduler with proactive Telegram notifications.
 
-        Usage: /schedstart [SECONDS] [SYMBOL ...]
-               /schedstart                 — Watchlist, 5-Minuten-Takt
+        Usage: /schedstart [SECONDS] [FLAGS] [SYMBOL ...]
+               /schedstart                 — Watchlist aus config.yaml, 5-min-Takt
                /schedstart 600             — 10-Minuten-Takt
-               /schedstart AAPL NVDA TSLA  — spezifische Symbole
+               /schedstart marketonly      — nur während Marktzeiten (09:30–16:00 ET)
                /schedstart noscan          — Auto-Scanner deaktivieren
+               /schedstart AAPL NVDA TSLA  — spezifische Symbole
 
         Automatische Nachrichten die du bekommst:
           🟢 Scheduler gestartet/gestoppt
@@ -7590,7 +7722,7 @@ def build_command_handlers(
           ⚠️ Drawdown-Alarm (>5% unter Peak)
           🌅 Morgen-Briefing (Marktöffnung)
           🌆 Tagesabschluss-Zusammenfassung
-          🔍 Auto-Scanner: neue Symbole entdeckt
+          🔍 Auto-Scanner: neue Symbole entdeckt / entfernt
         """
         from amms.execution.scheduler import TraderScheduler
         from amms.notifier.telegram import build_notifier
@@ -7598,9 +7730,12 @@ def build_command_handlers(
         tick = 300
         syms: list[str] = []
         use_scanner = True
+        market_hours_only = False
         for a in args:
             if a.lower() == "noscan":
                 use_scanner = False
+            elif a.lower() in ("marketonly", "market", "markethours"):
+                market_hours_only = True
             elif a.isdigit() and not syms:
                 tick = max(10, min(int(a), 3600))
             else:
@@ -7625,6 +7760,14 @@ def build_command_handlers(
         # Wire proactive Telegram notifier
         notifier = build_notifier()
 
+        # Wire Alpaca clock for market-hours gating
+        clock_fn = None
+        if market_hours_only:
+            try:
+                clock_fn = broker.get_clock
+            except Exception:
+                pass
+
         # Wire auto-scanner
         scanner = None
         if use_scanner and data is not None:
@@ -7640,6 +7783,8 @@ def build_command_handlers(
         sched = TraderScheduler(
             _get_auto_trader(), syms,
             tick_seconds=tick,
+            market_hours_only=market_hours_only,
+            clock_fn=clock_fn,
             db_conn=conn,
             risk_guard=rg,
             notifier=notifier,
@@ -7656,6 +7801,8 @@ def build_command_handlers(
             notes.append("🛡️ Risiko-Tracking")
         if scanner:
             notes.append("🔍 Auto-Scanner")
+        if market_hours_only:
+            notes.append("🕘 Nur Marktzeiten (09:30–16:00 ET)")
         from amms.notifier.telegram import TelegramNotifier
         if isinstance(notifier, TelegramNotifier):
             notes.append("📢 Proaktive Benachrichtigungen")
@@ -15924,6 +16071,7 @@ def build_command_handlers(
             "/dewatch — paper positions monitor with current DE signal (hold/sell?)\n"
             "/deregime SYM [BARS] — DE performance by market regime (trending/ranging)\n"
             "/setup — show configuration status (API keys, broker, risk guard, scheduler)\n"
+            "/preflight — Pre-Flight-Check vor dem Trading-Tag: API, Markt, Makro, Risiko\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
@@ -16474,6 +16622,9 @@ def build_command_handlers(
         "regime_perf": _deregime_cmd,
         "setup": _setup_cmd,
         "check": _setup_cmd,
+        "preflight": _preflight_cmd,
+        "pf": _preflight_cmd,
+        "ready": _preflight_cmd,
         "memeportfolio": _memeportfolio_cmd,
         "memep": _memeportfolio_cmd,
         "meme": _memeportfolio_cmd,
