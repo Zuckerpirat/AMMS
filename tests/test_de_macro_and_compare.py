@@ -238,3 +238,55 @@ def test_unknown_mode_falls_back_gracefully() -> None:
     report = analyze(bars, symbol="SIM", min_confidence=0.0, mode="unknown_mode_xyz")
     # Should not raise — just returns a report or None
     assert report is None or hasattr(report, "composite_score")
+
+
+# ── Mode comparison tests ─────────────────────────────────────────────────────
+
+def test_mode_comparison_returns_all_modes() -> None:
+    bars = _bars(300)
+    from amms.engine.backtest import run_mode_comparison
+    result = run_mode_comparison(bars, symbol="SIM")
+    assert "results" in result
+    for mode in ("conservative", "swing", "meme", "event"):
+        assert mode in result["results"]
+
+
+def test_mode_comparison_has_ranking() -> None:
+    bars = _bars(300)
+    from amms.engine.backtest import run_mode_comparison
+    result = run_mode_comparison(bars, symbol="SIM")
+    assert "ranking" in result
+    assert len(result["ranking"]) == 4
+
+
+def test_mode_comparison_best_mode_in_ranking() -> None:
+    bars = _bars(300)
+    from amms.engine.backtest import run_mode_comparison
+    result = run_mode_comparison(bars, symbol="SIM")
+    assert result["best_mode"] == result["ranking"][0]
+
+
+def test_mode_comparison_summary_contains_all_modes() -> None:
+    bars = _bars(300)
+    from amms.engine.backtest import run_mode_comparison
+    result = run_mode_comparison(bars, symbol="SIM")
+    s = result["summary"]
+    for mode in ("conservative", "swing", "meme", "event"):
+        assert mode in s
+    assert "Buy & Hold" in s
+
+
+def test_mode_comparison_bnh_in_result() -> None:
+    bars = _bars(300)
+    from amms.engine.backtest import run_mode_comparison
+    result = run_mode_comparison(bars, symbol="SIM")
+    assert "bnh_return_pct" in result
+    assert isinstance(result["bnh_return_pct"], float)
+
+
+def test_mode_comparison_does_not_crash_with_few_bars() -> None:
+    bars = _bars(100)  # below warmup
+    from amms.engine.backtest import run_mode_comparison
+    result = run_mode_comparison(bars, symbol="SIM")
+    assert isinstance(result, dict)
+    assert "summary" in result

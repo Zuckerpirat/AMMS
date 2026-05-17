@@ -13291,6 +13291,56 @@ def build_command_handlers(
         lines.append(mp.status_summary().split("\n")[0])  # just the header value line
         return "\n".join(lines)
 
+    def _modecompare_cmd(args: list[str]) -> str:
+        """Backtest all four trading modes on one symbol — which mode fits best?
+
+        Usage: /modecompare SYM [BARS]
+        Runs the Decision Engine in conservative / swing / meme / event mode
+        on the same bar history and ranks them by return. Helps decide which
+        mode to set for a given symbol.
+
+        Example: /modecompare AAPL 500
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /modecompare SYM [BARS]  e.g. /modecompare AAPL 500"
+
+        symbol = args[0].upper()
+        try:
+            limit = int(args[1]) if len(args) > 1 else 400
+            limit = max(210, min(limit, 1000))
+        except ValueError:
+            return "BARS must be a number."
+
+        try:
+            bars = data.get_bars(symbol, limit=limit)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 210:
+            return f"Not enough bars for {symbol} (need 210+, got {len(bars) if bars else 0})"
+
+        from amms.engine.backtest import DEBacktestConfig, run_mode_comparison
+        cfg = DEBacktestConfig(
+            starting_cash=100_000.0,
+            position_pct=0.10,
+            commission_pct=0.001,
+            min_confidence=0.60,
+            min_score=35.0,
+        )
+        try:
+            result = run_mode_comparison(bars, symbol=symbol, config=cfg)
+        except Exception as exc:
+            return f"Mode comparison failed: {exc!r}"
+
+        best = result["best_mode"]
+        summary = result["summary"]
+        bnh = result["bnh_return_pct"]
+        de_best = result["results"][best].total_return_pct
+        alpha = de_best - bnh
+        alpha_str = f"  Best mode ({best}) alpha vs B&H: {alpha:+.2f}%"
+        return summary + "\n" + alpha_str
+
     def _dailyreport_cmd(args: list[str]) -> str:
         """Generate a daily portfolio + signal report.
 
@@ -14093,4 +14143,7 @@ def build_command_handlers(
         "dailyreport": _dailyreport_cmd,
         "report": _dailyreport_cmd,
         "nightly": _dailyreport_cmd,
+        "modecompare": _modecompare_cmd,
+        "mcomp": _modecompare_cmd,
+        "bestmode": _modecompare_cmd,
     }

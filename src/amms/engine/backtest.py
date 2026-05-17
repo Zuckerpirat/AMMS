@@ -103,6 +103,7 @@ def run_de_backtest(
     bars: list[Any],
     symbol: str = "",
     config: DEBacktestConfig | None = None,
+    mode: str = "swing",
 ) -> DEBacktestResult:
     """Simulate the Decision Engine on `bars` and return performance metrics.
 
@@ -173,6 +174,7 @@ def run_de_backtest(
             bars[: i + 1],
             symbol=symbol,
             min_confidence=cfg.min_confidence,
+            mode=mode,
         )
         if report is None or report.risk_blocked:
             continue
@@ -499,3 +501,67 @@ def format_batch_summary(results: list[DEBacktestResult], *, top_n: int = 10) ->
     if len(results) > top_n:
         lines.append(f"  … and {len(results) - top_n} more")
     return "\n".join(lines)
+
+
+_ALL_MODES = ("conservative", "swing", "meme", "event")
+
+
+def run_mode_comparison(
+    bars: list,
+    symbol: str,
+    config: DEBacktestConfig | None = None,
+) -> dict:
+    """Backtest the same symbol under all four trading modes.
+
+    Runs run_de_backtest() four times — once per mode — and ranks them
+    by total return. Also includes buy-and-hold for reference.
+
+    Returns dict with:
+      - "results": dict[mode_name, DEBacktestResult]
+      - "ranking": list of mode names sorted by total_return_pct desc
+      - "bnh_return_pct": buy-and-hold return over the same period
+      - "best_mode": mode with highest return
+      - "summary": formatted text table
+    """
+    cfg = config or DEBacktestConfig()
+
+    results: dict[str, DEBacktestResult] = {}
+    for mode in _ALL_MODES:
+        results[mode] = run_de_backtest(bars, symbol=symbol, config=cfg, mode=mode)
+
+    # Buy-and-hold
+    bnh = run_de_vs_buyhold(bars, symbol=symbol, config=DEBacktestConfig(min_score=999_999.0))
+    bnh_return = bnh.get("bnh_return_pct", 0.0)
+
+    ranking = sorted(_ALL_MODES, key=lambda m: results[m].total_return_pct, reverse=True)
+    best_mode = ranking[0]
+
+    lines = [
+        f"── DE Mode Comparison: {symbol} ──",
+        f"{'Mode':<14}  {'Return':>8}  {'AnnRet':>8}  {'MaxDD':>7}  "
+        f"{'Sharpe':>7}  {'WR':>5}  {'Trades':>6}",
+    ]
+    for mode in ranking:
+        r = results[mode]
+        best_marker = " ←" if mode == best_mode else ""
+        lines.append(
+            f"{mode:<14}  {r.total_return_pct:>+7.2f}%  "
+            f"{r.annualized_return_pct:>+7.2f}%  "
+            f"{r.max_drawdown_pct:>6.2f}%  "
+            f"{r.sharpe_ratio:>7.2f}  "
+            f"{r.win_rate:>4.0%}  "
+            f"{r.num_round_trips:>6}"
+            f"{best_marker}"
+        )
+    lines.append(
+        f"{'Buy & Hold':<14}  {bnh_return:>+7.2f}%  "
+        f"{'n/a':>8}  {'n/a':>7}  {'n/a':>7}  {'n/a':>5}  {'n/a':>6}"
+    )
+
+    return {
+        "results": results,
+        "ranking": ranking,
+        "bnh_return_pct": bnh_return,
+        "best_mode": best_mode,
+        "summary": "\n".join(lines),
+    }
