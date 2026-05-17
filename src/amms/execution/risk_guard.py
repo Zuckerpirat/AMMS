@@ -228,6 +228,34 @@ class RiskGuard:
 
     # ── Status ────────────────────────────────────────────────────────────
 
+    def macro_check(self, macro_regime, side: str = "buy") -> str | None:
+        """Additional veto based on macro regime.
+
+        When the macro regime is stressed, new buys are blocked entirely.
+        When elevated, the effective exposure cap is tightened from 95% → 60%.
+        Sells are never blocked by macro regime (risk reduction always allowed).
+
+        Args:
+            macro_regime: MacroRegime object with .level attribute, or None.
+            side: "buy" | "sell"
+
+        Returns veto reason string if blocked, else None.
+        """
+        if macro_regime is None or side == "sell":
+            return None
+        level = getattr(macro_regime, "level", "calm")
+        if level == "stressed":
+            return "macro regime STRESSED — new buys blocked"
+        if level == "elevated":
+            # Check exposure with tightened cap (60% instead of 95%)
+            snap = self.trader.snapshot()
+            equity = snap.portfolio_value
+            if equity > 0:
+                exposure = snap.total_market_value / equity
+                if exposure >= 0.60:
+                    return f"macro regime ELEVATED — exposure {exposure:.0%} above 60% cap"
+        return None
+
     def status(self) -> dict:
         snap = self.trader.snapshot()
         equity = snap.portfolio_value

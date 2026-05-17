@@ -150,7 +150,6 @@ class AutoTrader:
 
         # 3. Run Decision Engine with risk veto + macro regime wired in
         from amms.engine.decision import analyze as decide_analyze
-        risk_veto = self.risk_guard.make_veto() if self.risk_guard is not None else None
 
         macro_regime = None
         try:
@@ -158,6 +157,21 @@ class AutoTrader:
             macro_regime = compute_regime(self.data)
         except Exception:
             pass  # macro data unavailable — proceed without regime adjustment
+
+        # Combined risk veto: standard guard + macro-regime check
+        if self.risk_guard is not None:
+            _base_veto = self.risk_guard.make_veto()
+            _rg = self.risk_guard
+            _mr = macro_regime
+
+            def risk_veto(score: float, confidence: float) -> str | None:
+                base = _base_veto(score, confidence)
+                if base:
+                    return base
+                side = "buy" if score >= 0 else "sell"
+                return _rg.macro_check(_mr, side=side)
+        else:
+            risk_veto = None
 
         decision = decide_analyze(
             bars,

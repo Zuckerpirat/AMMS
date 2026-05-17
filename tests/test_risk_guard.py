@@ -136,3 +136,54 @@ class TestConfigDisabled:
                           state_path=tmp_path / "r.json")
         guard.arm_killswitch("should not matter")
         assert guard.check() is None
+
+
+# ── macro_check tests ─────────────────────────────────────────────────────────
+
+class _MacroRegime:
+    def __init__(self, level: str):
+        self.level = level
+        self.reason = f"test {level}"
+        self.vixy_1d_pct = 0.0
+        self.vixy_1w_pct = 0.0
+
+
+class TestMacroCheck:
+    def test_calm_regime_no_veto(self, guard):
+        calm = _MacroRegime("calm")
+        assert guard.macro_check(calm, side="buy") is None
+
+    def test_none_regime_no_veto(self, guard):
+        assert guard.macro_check(None, side="buy") is None
+
+    def test_stressed_regime_blocks_buy(self, guard):
+        stressed = _MacroRegime("stressed")
+        result = guard.macro_check(stressed, side="buy")
+        assert result is not None
+        assert "stressed" in result.lower() or "STRESSED" in result
+
+    def test_stressed_regime_does_not_block_sell(self, guard):
+        stressed = _MacroRegime("stressed")
+        result = guard.macro_check(stressed, side="sell")
+        assert result is None
+
+    def test_elevated_regime_blocks_buy_when_overexposed(self, guard):
+        # Buy a position to create exposure > 60% of $10,000 portfolio
+        # Buy 65 shares at $100 = $6,500 (65% of $10,000)
+        guard.trader.buy("SPY", qty=65, price=100.0, reason="test")
+        elevated = _MacroRegime("elevated")
+        result = guard.macro_check(elevated, side="buy")
+        assert result is not None
+        assert "ELEVATED" in result or "elevated" in result.lower()
+
+    def test_elevated_regime_allows_buy_when_underexposed(self, guard):
+        # No positions — exposure is 0%
+        elevated = _MacroRegime("elevated")
+        result = guard.macro_check(elevated, side="buy")
+        assert result is None
+
+    def test_elevated_regime_does_not_block_sell(self, guard):
+        guard.trader.buy("SPY", qty=600, price=100.0, reason="test")
+        elevated = _MacroRegime("elevated")
+        result = guard.macro_check(elevated, side="sell")
+        assert result is None
