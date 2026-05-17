@@ -7418,6 +7418,76 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _descan_cmd(args: list[str]) -> str:
+        """Scan watchlist with the Decision Engine — ranked signal table.
+
+        Usage: /descan [SYM SYM ...] [BARS]
+        If no symbols given, uses static watchlist (up to 20 symbols).
+        BARS defaults to 200 (120-500).
+
+        Shows all symbols sorted by composite score, highlighting
+        strong_buy / strong_sell signals at the top.
+
+        Example: /descan AAPL MSFT NVDA TSLA
+        """
+        if data is None:
+            return "Data client not wired."
+
+        symbols: list[str] = []
+        bar_count = 200
+        for a in args:
+            if a.isdigit():
+                bar_count = max(120, min(int(a), 500))
+            else:
+                symbols.append(a.upper())
+
+        if not symbols:
+            symbols = list(static_watchlist)[:20]
+        if not symbols:
+            return "No symbols. Pass tickers: /descan AAPL MSFT NVDA"
+
+        from amms.engine.decision import analyze as decide_analyze
+
+        action_icons = {
+            "strong_buy":  "🟢",
+            "buy":         "🟩",
+            "hold":        "⬜",
+            "sell":        "🟥",
+            "strong_sell": "🔴",
+        }
+
+        rows: list[tuple[float, str]] = []
+        errors: list[str] = []
+        for sym in symbols:
+            try:
+                bars = data.get_bars(sym, limit=bar_count)
+            except Exception as exc:
+                errors.append(f"{sym}: fetch error")
+                continue
+            if not bars or len(bars) < 120:
+                errors.append(f"{sym}: too few bars ({len(bars) if bars else 0})")
+                continue
+            report = decide_analyze(bars, symbol=sym)
+            if report is None:
+                errors.append(f"{sym}: insufficient data")
+                continue
+            icon = action_icons.get(report.action, "?")
+            row = (
+                f"{icon} {sym:<6}  {report.composite_score:>+6.0f}  "
+                f"conf {report.confidence:.0%}  "
+                f"{report.action.replace('_', ' ').upper()}"
+            )
+            rows.append((report.composite_score, row))
+
+        # Sort: strong_buy first (highest score), strong_sell last (lowest)
+        rows.sort(key=lambda x: x[0], reverse=True)
+
+        lines = [f"── DE Signal Scan ({len(rows)}/{len(symbols)} symbols) ──"]
+        lines += [r for _, r in rows]
+        if errors:
+            lines += ["", f"Skipped: {', '.join(errors[:5])}"]
+        return "\n".join(lines)
+
     # ── Paper Trading ──────────────────────────────────────────────────────
 
     # Singleton trader — loaded once per process, shared across commands
@@ -12729,6 +12799,7 @@ def build_command_handlers(
             "/btstats [DAYS] — extended backtest stats: Calmar, Sortino, recovery, streaks\n"
             "/debacktest SYM [BARS] — Decision Engine backtest from live data (no DB needed)\n"
             "/debatch [SYM ...] [BARS] — batch DE backtest leaderboard across symbols\n"
+            "/descan [SYM ...] [BARS] — scan watchlist with Decision Engine, ranked by score\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
@@ -13201,4 +13272,6 @@ def build_command_handlers(
         "debt": _debacktest_cmd,
         "debatch": _debatch_cmd,
         "deb": _debatch_cmd,
+        "descan": _descan_cmd,
+        "des": _descan_cmd,
     }
