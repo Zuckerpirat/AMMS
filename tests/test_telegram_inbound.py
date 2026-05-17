@@ -4591,3 +4591,41 @@ def test_cachestats_alias_cache() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["cache"] is h["cachestats"]
+
+
+# ── /nextbuy tests ────────────────────────────────────────────────────────────
+
+def test_nextbuy_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["nextbuy"]([])
+    assert "not wired" in out.lower()
+
+
+def test_nextbuy_no_symbols_no_watchlist() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["nextbuy"]([])
+    # Either "No symbols" or "No strong buy setups" or a trade plan
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_nextbuy_with_symbols() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["nextbuy"](["AAPL", "MSFT", "NVDA"])
+    assert isinstance(out, str)
+    # Either a trade plan, "No strong buy setups", or risk guard block
+    assert len(out) > 5
+
+
+def test_nextbuy_alias_nb() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["nb"] is h["nextbuy"]
+
+
+def test_nextbuy_alias_best() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["best"] is h["nextbuy"]

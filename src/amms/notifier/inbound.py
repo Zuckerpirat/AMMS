@@ -13478,6 +13478,104 @@ def build_command_handlers(
         footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
         return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
 
+    def _nextbuy_cmd(args: list[str]) -> str:
+        """Best buy opportunity in watchlist right now: full trade plan.
+
+        Usage: /nextbuy [SYM SYM ...] [mode=MODE]
+        Scans the watchlist (or given symbols) for the strongest buy setup,
+        then outputs the full /tradeplan for that symbol — sizing, stop,
+        target, macro, risk, go/no-go.
+
+        Skips symbols already held, in cooldown, or blocked by risk guard.
+
+        Example: /nextbuy AAPL MSFT NVDA TSLA AMD
+        """
+        if data is None:
+            return "Data client not wired."
+
+        symbols: list[str] = []
+        mode = "swing"
+        for a in args:
+            if a.startswith("mode="):
+                mode = a[5:].lower()
+            else:
+                symbols.append(a.upper())
+
+        if not symbols:
+            symbols = list(static_watchlist)[:20]
+        if not symbols:
+            return "No symbols. Pass tickers: /nextbuy AAPL MSFT NVDA"
+
+        if conn is not None and not any(a.startswith("mode=") for a in args):
+            try:
+                from amms.runtime_overrides import get_overrides
+                mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        # Quick risk check
+        rg_block: str | None = None
+        try:
+            rg = _get_risk_guard()
+            rg_block = rg.check(side="buy")
+        except Exception:
+            pass
+
+        if rg_block:
+            return f"⛔ Risk guard blocking all buys: {rg_block}\nUse /tradeplan SYM to check sell signals."
+
+        from amms.engine.decision import analyze as de_analyze
+        from amms.analysis.confluence import analyze as conf_analyze
+
+        trader = _get_paper_trader()
+        positions = trader.positions
+        at = _get_auto_trader()
+
+        best: tuple[float, str] | None = None  # (composite, symbol)
+
+        for sym in symbols:
+            if sym in positions:
+                continue  # already holding
+            if at._in_cooldown(sym):
+                continue  # buy-blocked
+
+            try:
+                bars = data.get_bars(sym, limit=200)
+            except Exception:
+                continue
+            if not bars or len(bars) < 120:
+                continue
+
+            report = de_analyze(bars, symbol=sym, mode=mode)
+            if report is None or report.action not in {"buy", "strong_buy"}:
+                continue
+            if report.risk_blocked:
+                continue
+
+            de_norm = max(0.0, min(report.composite_score, 100.0)) / 100.0
+            try:
+                cf = conf_analyze(bars[-80:] if len(bars) > 80 else bars)
+                cf_norm = max(0.0, (cf.score + 1.0) / 2.0)
+            except Exception:
+                cf_norm = 0.5
+
+            composite = 0.70 * de_norm + 0.30 * cf_norm
+            if best is None or composite > best[0]:
+                best = (composite, sym)
+
+        if best is None:
+            return (
+                "No strong buy setups found in watchlist right now.\n"
+                "Reasons: all held, in cooldown, or no buy signals.\n"
+                "Use /descan to see all signals, /cooldowns to check lockouts."
+            )
+
+        # Run full trade plan for the best symbol
+        _, best_sym = best
+        header = f"══ Best Opportunity: {best_sym} ══\n(from {len(symbols)} symbols scanned)\n\n"
+        plan_args = [best_sym, f"mode={mode}"]
+        return header + _tradeplan_cmd(plan_args)
+
     def _cachestats_cmd(args: list[str]) -> str:
         """Show bar data cache statistics.
 
@@ -15237,6 +15335,7 @@ def build_command_handlers(
             "/dailyreport [SYM ...] — daily portfolio + DE signals + macro report\n"
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
             "/sigoutcome [days=N] [age=N] — DE signal directional accuracy vs actual price outcomes\n"
+            "/nextbuy [SYM ...] — best buy opportunity in watchlist: full trade plan for #1 setup\n"
             "/cooldowns — show Auto-Trader buy cooldown status (which symbols are locked)\n"
             "/deexplain SYM [mode=MODE] — full DE signal explanation: categories, reasoning, macro, risk\n"
             "/topsetups [SYM ...] [top=N] — rank watchlist by DE + confluence score: best buy setups\n"
@@ -15738,6 +15837,9 @@ def build_command_handlers(
         "sigoutcome": _sigoutcome_cmd,
         "sigaccuracy": _sigoutcome_cmd,
         "outcome": _sigoutcome_cmd,
+        "nextbuy": _nextbuy_cmd,
+        "nb": _nextbuy_cmd,
+        "best": _nextbuy_cmd,
         "cachestats": _cachestats_cmd,
         "cache": _cachestats_cmd,
         "cooldowns": _cooldowns_cmd,
