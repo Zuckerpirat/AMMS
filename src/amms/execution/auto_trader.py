@@ -51,6 +51,7 @@ class AutoTraderConfig:
     allow_strong_only: bool = False       # if True, only act on strong_* signals
     # When sell triggered but no position is held, skip (no shorting in paper)
     enable_close_on_sell: bool = True     # close existing long if sell signal
+    mode: str = "swing"                   # trading mode for DE weight selection
 
 
 class AutoTrader:
@@ -154,6 +155,7 @@ class AutoTrader:
             symbol=symbol,
             min_confidence=self.config.min_confidence,
             risk_veto=risk_veto,
+            mode=self.config.mode,
         )
         if decision is None:
             return AutoTradeDecision(symbol, "skipped", 0.0, 0.0, 0.0, 0.0,

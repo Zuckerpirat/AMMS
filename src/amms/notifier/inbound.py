@@ -7305,7 +7305,8 @@ def build_command_handlers(
                 f"  min_confidence:    {cfg.min_confidence:.0%}\n"
                 f"  min_score:         {cfg.min_score:.0f}\n"
                 f"  allow_strong_only: {cfg.allow_strong_only}\n"
-                f"  enable_close_on_sell: {cfg.enable_close_on_sell}"
+                f"  enable_close_on_sell: {cfg.enable_close_on_sell}\n"
+                f"  mode:              {cfg.mode}"
             )
 
         updated = []
@@ -7324,6 +7325,11 @@ def build_command_handlers(
                     setattr(cfg, k, float(v))
                 elif k in {"allow_strong_only", "enable_close_on_sell"}:
                     setattr(cfg, k, v.lower() in {"1", "true", "yes", "on"})
+                elif k == "mode":
+                    valid = {"conservative", "swing", "meme", "event"}
+                    if v not in valid:
+                        return f"mode must be one of: {', '.join(sorted(valid))}"
+                    setattr(cfg, k, v)
                 else:
                     continue
                 updated.append(f"{k}={v}")
