@@ -7264,11 +7264,12 @@ def build_command_handlers(
             if old.is_running():
                 return f"Scheduler already running — stop with /schedstop first."
 
-        sched = TraderScheduler(_get_auto_trader(), syms, tick_seconds=tick)
+        sched = TraderScheduler(_get_auto_trader(), syms, tick_seconds=tick, db_conn=conn)
         _scheduler_instance.clear()
         _scheduler_instance.append(sched)
         sched.start()
-        return f"✓ Scheduler started — {len(syms)} symbols, tick every {tick}s"
+        snap_note = " (equity snapshots: on)" if conn else ""
+        return f"✓ Scheduler started — {len(syms)} symbols, tick every {tick}s{snap_note}"
 
     def _schedstop_cmd(args: list[str]) -> str:
         """Stop the background scheduler."""
