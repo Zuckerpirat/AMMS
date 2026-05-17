@@ -13576,6 +13576,101 @@ def build_command_handlers(
         plan_args = [best_sym, f"mode={mode}"]
         return header + _tradeplan_cmd(plan_args)
 
+    def _nextsell_cmd(_args: list[str]) -> str:
+        """Most urgent exit candidate: the position needing attention most.
+
+        Usage: /nextsell
+        Scans all open paper positions and ranks them by exit urgency:
+          - DE sell/strong_sell signal
+          - Approaching ATR stop
+          - Worst unrealized P&L
+
+        Outputs a full /poscheck report for the most urgent position.
+        """
+        if data is None:
+            return "Data client not wired."
+
+        trader = _get_paper_trader()
+        positions = trader.positions
+        if not positions:
+            return "No open positions — nothing to exit."
+
+        from amms.engine.decision import analyze as de_analyze
+
+        # Read mode
+        mode = "swing"
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        scored: list[tuple[float, str]] = []  # (urgency_score, symbol)
+
+        for sym in positions.keys():
+            pos = positions[sym]
+            urgency = 0.0
+
+            try:
+                bars = data.get_bars(sym, limit=200)
+                if not bars or len(bars) < 120:
+                    continue
+                cur_price = float(bars[-1].close)
+
+                # DE signal urgency
+                report = de_analyze(bars, symbol=sym, mode=mode)
+                if report is not None:
+                    if report.action == "strong_sell":
+                        urgency += 40.0
+                    elif report.action == "sell":
+                        urgency += 25.0
+                    elif report.action == "hold":
+                        urgency += 5.0
+                    # buy signal = low urgency (good)
+
+                # ATR stop proximity urgency
+                try:
+                    from amms.features.volatility import atr as compute_atr
+                    atr_val = compute_atr(bars, 14)
+                    if atr_val:
+                        stop_price = cur_price - atr_val * 1.5
+                        stop_pct = (cur_price - stop_price) / cur_price * 100.0
+                        if stop_pct < 2.0:
+                            urgency += 30.0  # very close to stop
+                        elif stop_pct < 5.0:
+                            urgency += 10.0  # near stop
+                except Exception:
+                    pass
+
+                # P&L urgency: negative P&L adds urgency
+                pnl_pct = (cur_price / pos.avg_cost - 1.0) * 100.0 if pos.avg_cost > 0 else 0.0
+                if pnl_pct < -10.0:
+                    urgency += 20.0
+                elif pnl_pct < -5.0:
+                    urgency += 10.0
+                elif pnl_pct < 0:
+                    urgency += 3.0
+                elif pnl_pct > 20.0:
+                    urgency += 5.0  # consider taking profits
+
+            except Exception:
+                urgency += 1.0  # data error — low urgency
+
+            scored.append((urgency, sym))
+
+        if not scored:
+            return "Could not evaluate any positions (data unavailable)."
+
+        scored.sort(reverse=True)
+        _, best_sym = scored[0]
+
+        header = (
+            f"══ Most Urgent Exit: {best_sym} ══\n"
+            f"(ranked #{1} of {len(scored)} positions by exit urgency)\n\n"
+        )
+        return header + _poscheck_cmd([best_sym, f"mode={mode}"])
+
     def _cachestats_cmd(args: list[str]) -> str:
         """Show bar data cache statistics.
 
@@ -15336,6 +15431,7 @@ def build_command_handlers(
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
             "/sigoutcome [days=N] [age=N] — DE signal directional accuracy vs actual price outcomes\n"
             "/nextbuy [SYM ...] — best buy opportunity in watchlist: full trade plan for #1 setup\n"
+            "/nextsell — most urgent exit candidate: urgency-scored position exit check\n"
             "/cooldowns — show Auto-Trader buy cooldown status (which symbols are locked)\n"
             "/deexplain SYM [mode=MODE] — full DE signal explanation: categories, reasoning, macro, risk\n"
             "/topsetups [SYM ...] [top=N] — rank watchlist by DE + confluence score: best buy setups\n"
@@ -15840,6 +15936,9 @@ def build_command_handlers(
         "nextbuy": _nextbuy_cmd,
         "nb": _nextbuy_cmd,
         "best": _nextbuy_cmd,
+        "nextsell": _nextsell_cmd,
+        "ns": _nextsell_cmd,
+        "urgentsell": _nextsell_cmd,
         "cachestats": _cachestats_cmd,
         "cache": _cachestats_cmd,
         "cooldowns": _cooldowns_cmd,

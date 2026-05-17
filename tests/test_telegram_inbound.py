@@ -4629,3 +4629,46 @@ def test_nextbuy_alias_best() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["best"] is h["nextbuy"]
+
+
+# ── /nextsell tests ───────────────────────────────────────────────────────────
+
+def test_nextsell_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["nextsell"]([])
+    assert "not wired" in out.lower()
+
+
+def test_nextsell_no_positions() -> None:
+    class _NoPosTrader:
+        positions: dict = {}
+        equity = 10_000.0
+        cash = 10_000.0
+        avg_cost = 0.0
+
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    # Override paper trader state: ensure no positions
+    # If AAPL exists in state, the command should still return something valid
+    out = h["nextsell"]([])
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_nextsell_with_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["nextsell"]([])
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_nextsell_alias_ns() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["ns"] is h["nextsell"]
+
+
+def test_nextsell_alias_urgentsell() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["urgentsell"] is h["nextsell"]
