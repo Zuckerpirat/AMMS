@@ -4576,3 +4576,18 @@ def test_cooldowns_alias_cd() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["cd"] is h["cooldowns"]
+
+
+# ── /cachestats tests ─────────────────────────────────────────────────────────
+
+def test_cachestats_no_cache_wrapper() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["cachestats"]([])
+    assert "not active" in out.lower() or "cache" in out.lower()
+
+
+def test_cachestats_alias_cache() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["cache"] is h["cachestats"]

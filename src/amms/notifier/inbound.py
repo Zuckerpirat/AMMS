@@ -13478,6 +13478,38 @@ def build_command_handlers(
         footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
         return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
 
+    def _cachestats_cmd(args: list[str]) -> str:
+        """Show bar data cache statistics.
+
+        Usage: /cachestats
+               /cachestats clear        — invalidate all cached bars
+               /cachestats clear SYM   — invalidate cache for one symbol
+
+        The bar cache avoids redundant API calls when multiple commands
+        run back-to-back for the same symbol.
+        """
+        if not hasattr(data, "stats"):
+            return "Bar cache not active (data client is not a BarCache wrapper)."
+
+        if args and args[0].lower() == "clear":
+            sym = args[1].upper() if len(args) > 1 else None
+            removed = data.invalidate(sym)
+            return (
+                f"Cache cleared: {removed} entries removed"
+                + (f" for {sym}" if sym else "")
+                + "."
+            )
+
+        s = data.stats()
+        return (
+            f"── Bar Cache Stats ──\n"
+            f"  Entries:    {s['entries']}\n"
+            f"  Hits:       {s['hits']}\n"
+            f"  Misses:     {s['misses']}\n"
+            f"  Hit rate:   {s['hit_rate_pct']:.1f}%\n"
+            f"  TTL:        {s['ttl_seconds']}s"
+        )
+
     def _cooldowns_cmd(_args: list[str]) -> str:
         """Show Auto-Trader cooldown status for each watchlist symbol.
 
@@ -15706,6 +15738,8 @@ def build_command_handlers(
         "sigoutcome": _sigoutcome_cmd,
         "sigaccuracy": _sigoutcome_cmd,
         "outcome": _sigoutcome_cmd,
+        "cachestats": _cachestats_cmd,
+        "cache": _cachestats_cmd,
         "cooldowns": _cooldowns_cmd,
         "cd": _cooldowns_cmd,
         "nocool": _cooldowns_cmd,
