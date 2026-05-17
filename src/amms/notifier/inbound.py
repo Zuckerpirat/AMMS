@@ -13543,6 +13543,57 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _deparamopt_cmd(args: list[str]) -> str:
+        """Optimize DE parameters (min_score, min_confidence) for a symbol.
+
+        Usage: /deparamopt SYM [BARS] [mode=MODE]
+        Grid-searches the best min_score (20-60) and min_confidence (50%-80%)
+        combination using the DE backtest. Ranks by Sharpe ratio.
+
+        This helps tune the DE for a specific symbol and trading style.
+        Use the best params with /autoconfig min_score=X min_confidence=Y.
+
+        Example: /deparamopt AAPL 500 mode=conservative
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /deparamopt SYM [BARS] [mode=MODE]  e.g. /deparamopt AAPL 500"
+
+        symbol = args[0].upper()
+        limit = 400
+        mode = "swing"
+        for a in args[1:]:
+            if a.isdigit():
+                limit = max(210, min(int(a), 1000))
+            elif a.startswith("mode="):
+                mode = a[5:].lower()
+
+        try:
+            bars = data.get_bars(symbol, limit=limit)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 210:
+            return f"Not enough bars for {symbol} (need 210+)"
+
+        from amms.engine.backtest import DEBacktestConfig, optimize_de_params
+        cfg = DEBacktestConfig(starting_cash=100_000.0, position_pct=0.10, commission_pct=0.001)
+        try:
+            result = optimize_de_params(bars, symbol=symbol, config=cfg, mode=mode)
+        except Exception as exc:
+            return f"Optimization failed: {exc!r}"
+
+        best = result["best_params"]
+        summary = result["summary"]
+        if best:
+            tip = (
+                f"\n  → Apply: /autoconfig min_score={best['min_score']:.0f} "
+                f"min_confidence={best['min_confidence']:.2f}"
+            )
+        else:
+            tip = ""
+        return summary + tip
+
     def _modecompare_cmd(args: list[str]) -> str:
         """Backtest all four trading modes on one symbol — which mode fits best?
 
@@ -14403,6 +14454,9 @@ def build_command_handlers(
         "modecompare": _modecompare_cmd,
         "mcomp": _modecompare_cmd,
         "bestmode": _modecompare_cmd,
+        "deparamopt": _deparamopt_cmd,
+        "deopt": _deparamopt_cmd,
+        "paramopt": _deparamopt_cmd,
         "signalhistory": _signalhistory_cmd,
         "sighist": _signalhistory_cmd,
         "signals_log": _signalhistory_cmd,

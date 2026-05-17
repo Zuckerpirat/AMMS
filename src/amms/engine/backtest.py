@@ -565,3 +565,86 @@ def run_mode_comparison(
         "best_mode": best_mode,
         "summary": "\n".join(lines),
     }
+
+
+def optimize_de_params(
+    bars: list,
+    symbol: str,
+    *,
+    min_score_range: tuple[float, float, float] = (20.0, 60.0, 10.0),   # start, stop, step
+    min_confidence_range: tuple[float, float, float] = (0.50, 0.80, 0.10),
+    config: DEBacktestConfig | None = None,
+    mode: str = "swing",
+) -> dict:
+    """Grid-search the best min_score and min_confidence for the DE.
+
+    Runs run_de_backtest() for each parameter combination and ranks by
+    Sharpe ratio (ties broken by total return).
+
+    Args:
+        bars: bar history (needs 200+ bars for meaningful results)
+        symbol: symbol name
+        min_score_range: (start, stop, step) for min_score grid
+        min_confidence_range: (start, stop, step) for min_confidence grid
+        config: base DEBacktestConfig (min_score/min_confidence overridden by grid)
+        mode: trading mode for DE weight selection
+
+    Returns dict:
+      - "best_params": {"min_score": float, "min_confidence": float}
+      - "best_result": DEBacktestResult
+      - "all_results": list of (min_score, min_confidence, DEBacktestResult)
+      - "summary": formatted text table
+    """
+    cfg = config or DEBacktestConfig()
+
+    ms_start, ms_stop, ms_step = min_score_range
+    mc_start, mc_stop, mc_step = min_confidence_range
+
+    grid: list[tuple[float, float]] = []
+    ms = ms_start
+    while ms <= ms_stop + 1e-9:
+        mc = mc_start
+        while mc <= mc_stop + 1e-9:
+            grid.append((round(ms, 2), round(mc, 2)))
+            mc += mc_step
+        ms += ms_step
+
+    all_results: list[tuple[float, float, DEBacktestResult]] = []
+    for min_score, min_confidence in grid:
+        trial_cfg = DEBacktestConfig(
+            starting_cash=cfg.starting_cash,
+            position_pct=cfg.position_pct,
+            commission_pct=cfg.commission_pct,
+            min_confidence=min_confidence,
+            min_score=min_score,
+            allow_strong_only=cfg.allow_strong_only,
+            cooldown_bars=cfg.cooldown_bars,
+        )
+        result = run_de_backtest(bars, symbol=symbol, config=trial_cfg, mode=mode)
+        all_results.append((min_score, min_confidence, result))
+
+    if not all_results:
+        return {"best_params": {}, "best_result": None, "all_results": [], "summary": "No results."}
+
+    # Sort by Sharpe, then total return
+    all_results.sort(key=lambda x: (x[2].sharpe_ratio, x[2].total_return_pct), reverse=True)
+    best_ms, best_mc, best_result = all_results[0]
+
+    lines = [
+        f"── DE Parameter Optimization: {symbol} (mode={mode}) ──",
+        f"  Grid: {len(grid)} combinations",
+        f"  Best: min_score={best_ms:.0f}  min_confidence={best_mc:.0%}",
+        f"  {'min_score':>9}  {'min_conf':>8}  {'Return':>8}  {'Sharpe':>7}  {'WR':>5}  {'Trades':>6}",
+    ]
+    for ms, mc, r in all_results[:10]:  # top 10
+        lines.append(
+            f"  {ms:>9.0f}  {mc:>8.0%}  {r.total_return_pct:>+7.2f}%  "
+            f"{r.sharpe_ratio:>7.2f}  {r.win_rate:>4.0%}  {r.num_round_trips:>6}"
+        )
+
+    return {
+        "best_params": {"min_score": best_ms, "min_confidence": best_mc},
+        "best_result": best_result,
+        "all_results": all_results,
+        "summary": "\n".join(lines),
+    }

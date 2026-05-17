@@ -290,3 +290,53 @@ def test_mode_comparison_does_not_crash_with_few_bars() -> None:
     result = run_mode_comparison(bars, symbol="SIM")
     assert isinstance(result, dict)
     assert "summary" in result
+
+
+# ── DE parameter optimization tests ──────────────────────────────────────────
+
+def test_param_opt_returns_best_params() -> None:
+    bars = _bars(300)
+    from amms.engine.backtest import optimize_de_params
+    result = optimize_de_params(bars, symbol="SIM",
+                                min_score_range=(30.0, 50.0, 10.0),
+                                min_confidence_range=(0.50, 0.70, 0.10))
+    assert "best_params" in result
+    assert "min_score" in result["best_params"]
+    assert "min_confidence" in result["best_params"]
+
+
+def test_param_opt_best_result_is_de_result() -> None:
+    bars = _bars(300)
+    from amms.engine.backtest import DEBacktestResult, optimize_de_params
+    result = optimize_de_params(bars, symbol="SIM",
+                                min_score_range=(30.0, 40.0, 10.0),
+                                min_confidence_range=(0.50, 0.60, 0.10))
+    assert isinstance(result["best_result"], DEBacktestResult)
+
+
+def test_param_opt_all_results_nonempty() -> None:
+    bars = _bars(300)
+    from amms.engine.backtest import optimize_de_params
+    result = optimize_de_params(bars, symbol="SIM",
+                                min_score_range=(30.0, 40.0, 10.0),
+                                min_confidence_range=(0.50, 0.60, 0.10))
+    assert len(result["all_results"]) > 0
+
+
+def test_param_opt_summary_contains_grid_info() -> None:
+    bars = _bars(300)
+    from amms.engine.backtest import optimize_de_params
+    result = optimize_de_params(bars, symbol="SIM",
+                                min_score_range=(30.0, 40.0, 10.0),
+                                min_confidence_range=(0.50, 0.60, 0.10))
+    assert "SIM" in result["summary"]
+    assert "Grid" in result["summary"]
+
+
+def test_param_opt_too_few_bars_does_not_crash() -> None:
+    bars = _bars(50)
+    from amms.engine.backtest import optimize_de_params
+    result = optimize_de_params(bars, symbol="SIM",
+                                min_score_range=(30.0, 40.0, 10.0),
+                                min_confidence_range=(0.50, 0.60, 0.10))
+    assert isinstance(result, dict)
