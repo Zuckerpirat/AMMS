@@ -398,7 +398,26 @@ def build_command_handlers(
 
         user_extras = load(db_path)
         wsb_extras = get_wsb_extras() if get_wsb_extras is not None else set()
-        return format_summary(static_watchlist, wsb_extras, user_extras)
+        lines = [format_summary(static_watchlist, wsb_extras, user_extras)]
+
+        # Show auto-scanner additions if scheduler is running
+        if _scheduler_instance:
+            sched = _scheduler_instance[0]
+            scanner = getattr(sched, "auto_scanner", None)
+            if scanner is not None:
+                added = list(scanner._added_symbols.keys())
+                sched_syms = sched.status().symbols
+                # Symbols in scheduler but not in static watchlist = scanner additions
+                scanner_syms = [s for s in sched_syms if s not in set(static_watchlist)
+                                and s not in user_extras and s not in wsb_extras]
+                if scanner_syms or added:
+                    tracked = sorted(set(scanner_syms) | set(added))
+                    lines.append(f"\nAuto-Scanner ({len(tracked)} aktiv): {', '.join(tracked)}")
+            # Show total active symbols
+            n = len(sched.status().symbols)
+            lines.append(f"\nAktiv im Scheduler: {n} Symbole gesamt")
+
+        return "\n".join(lines)
 
     def _performance(args: list[str]) -> str:
         if conn is None:
@@ -978,8 +997,30 @@ def build_command_handlers(
         today_iso = date.today().isoformat()
         lines: list[str] = [f"Daily snapshot — {today_iso}"]
 
-        # 1. Equity change today.
-        if conn is not None:
+        # 1. Equity change today — prefer risk guard session baseline (most accurate).
+        pnl_shown = False
+        try:
+            rg = _get_risk_guard()
+            start_eq = rg.state.session_start_equity
+            if start_eq > 0:
+                try:
+                    acc = broker.get_account()
+                    cur_eq = acc.equity
+                except Exception:
+                    cur_eq = 0.0
+                if cur_eq > 0:
+                    pnl = cur_eq - start_eq
+                    pct = pnl / start_eq * 100.0
+                    limit_pct = rg.config.max_daily_loss_pct * 100.0
+                    arrow = "▲" if pnl >= 0 else "▼"
+                    bar = "🔴" if pct < -limit_pct * 0.75 else ("🟡" if pct < -limit_pct * 0.40 else "🟢")
+                    lines.append(f"P&L heute: {bar} {arrow} ${pnl:+.2f} ({pct:+.2f}%)  "
+                                 f"[Session-Start: ${start_eq:,.2f}]")
+                    pnl_shown = True
+        except Exception:
+            pass
+
+        if not pnl_shown and conn is not None:
             first = conn.execute(
                 "SELECT equity FROM equity_snapshots "
                 "WHERE substr(ts, 1, 10) = ? ORDER BY ts LIMIT 1",
@@ -994,9 +1035,7 @@ def build_command_handlers(
                 pnl = last["equity"] - first["equity"]
                 pct = pnl / first["equity"] * 100
                 arrow = "▲" if pnl >= 0 else "▼"
-                lines.append(
-                    f"P&L today: {arrow} ${pnl:+.2f} ({pct:+.2f}%)"
-                )
+                lines.append(f"P&L today: {arrow} ${pnl:+.2f} ({pct:+.2f}%)")
             else:
                 lines.append("P&L today: no equity data yet")
         try:
@@ -7962,11 +8001,13 @@ def build_command_handlers(
             # CRITICAL: pass risk_guard so the killswitch and drawdown veto
             # actually gate every auto-trade decision.
             # Pass db_conn so /mode changes are picked up on every tick.
+            # Pass signal_db=conn so all DE signals are logged for /signalhistory.
             _auto_trader_instance.append(
                 AutoTrader(
                     _get_broker(), data, AutoTraderConfig(),
                     risk_guard=_get_risk_guard(),
                     db_conn=conn,
+                    signal_db=conn,
                 )
             )
         return _auto_trader_instance[0]
