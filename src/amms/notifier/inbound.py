@@ -7696,6 +7696,80 @@ def build_command_handlers(
         ]
         return "\n".join(lines)
 
+    def _autoscan_cmd(args: list[str]) -> str:
+        """Show auto-scanner state: last results, universe size, next scan countdown.
+
+        Usage: /autoscan          — show last scan results
+               /autoscan force    — force an immediate scan (ignores interval)
+               /autoscan universe — list full scan universe
+        """
+        from amms.execution.auto_scanner import format_scan_results
+
+        if not _scheduler_instance:
+            return (
+                "Auto-Scanner ist nicht aktiv — starte zuerst den Scheduler mit /schedstart.\n"
+                "Der Scanner läuft dann automatisch stündlich."
+            )
+
+        sched = _scheduler_instance[0]
+        scanner = sched.auto_scanner
+        if scanner is None:
+            return "Auto-Scanner ist deaktiviert (Scheduler wurde mit 'noscan' gestartet)."
+
+        sub = args[0].lower() if args else ""
+
+        if sub == "universe":
+            u = scanner.universe
+            return (
+                f"Auto-Scanner Universum: {len(u)} Symbole\n"
+                + "  " + ", ".join(u)
+            )
+
+        if sub == "force":
+            # Bypass interval: reset _last_scan to 0 then re-scan
+            import time as _time
+            scanner._last_scan = 0.0
+            syms = sched.status().symbols
+            new_syms = scanner.scan_and_update(syms)
+            # Add to scheduler if found
+            if new_syms:
+                import threading as _threading
+                with sched._lock:
+                    for s in new_syms:
+                        if s not in sched.symbols:
+                            sched.symbols.append(s)
+            results = scanner.last_scan_results()
+            header = f"Manueller Scan abgeschlossen — {len(new_syms)} neu hinzugefügt.\n\n"
+            return header + format_scan_results(results, top=10)
+
+        # Default: show last results
+        results = scanner.last_scan_results()
+        added = list(scanner._added_symbols.keys())
+
+        import time as _time
+        elapsed = _time.monotonic() - scanner._last_scan
+        from amms.execution.auto_scanner import _MIN_SCAN_INTERVAL
+        remaining = max(0.0, _MIN_SCAN_INTERVAL - elapsed)
+        mins = int(remaining // 60)
+        secs = int(remaining % 60)
+        countdown = f"{mins}m {secs}s" if remaining > 0 else "jetzt fällig"
+
+        lines = [
+            f"🔍 Auto-Scanner Status",
+            f"  Universum:   {len(scanner.universe)} Symbole",
+            f"  Min-Score:   {scanner.min_score}",
+            f"  Nächster:    in {countdown}",
+            f"  Verfolgt:    {', '.join(added) if added else '—'}",
+            "",
+        ]
+        if results:
+            lines.append(format_scan_results(results, top=8))
+        else:
+            lines.append("Noch keine Scan-Ergebnisse (erster Scan in ~1h nach /schedstart).")
+            lines.append("Mit /autoscan force erzwingst du einen sofortigen Scan.")
+
+        return "\n".join(lines)
+
     def _live_status_cmd(args: list[str]) -> str:
         """Show live-trading guard status."""
         from amms.execution.live_guard import check_live_allowed
@@ -15914,6 +15988,9 @@ def build_command_handlers(
             "/nextbuy [SYM ...] — best buy opportunity in watchlist: full trade plan for #1 setup\n"
             "/nextsell — most urgent exit candidate: urgency-scored position exit check\n"
             "/cooldowns — show Auto-Trader buy cooldown status (which symbols are locked)\n"
+            "/autoscan — auto-scanner status: last results, universe, countdown to next scan\n"
+            "/autoscan force — sofortiger manueller Scan (ignoriert 1h-Intervall)\n"
+            "/autoscan universe — zeigt alle Symbole im Scan-Universum\n"
             "/deexplain SYM [mode=MODE] — full DE signal explanation: categories, reasoning, macro, risk\n"
             "/topsetups [SYM ...] [top=N] — rank watchlist by DE + confluence score: best buy setups\n"
             "/monthreport [DAYS] — comprehensive monthly performance report\n"
@@ -16377,6 +16454,8 @@ def build_command_handlers(
         "schedstop": _schedstop_cmd,
         "schedstatus": _schedstatus_cmd,
         "sched": _schedstatus_cmd,
+        "autoscan": _autoscan_cmd,
+        "scanner": _autoscan_cmd,
         "livestatus": _live_status_cmd,
         "live": _live_status_cmd,
         "debacktest": _debacktest_cmd,

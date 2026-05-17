@@ -180,7 +180,7 @@ class TraderScheduler:
             self.last_tick_summary = "no symbols configured"
             return
 
-        # Auto-scanner: discover new symbols (best-effort, runs hourly)
+        # Auto-scanner: discover new symbols and remove decayed ones (runs hourly)
         if self.auto_scanner is not None:
             try:
                 new_syms = self.auto_scanner.scan_and_update(syms)
@@ -193,6 +193,19 @@ class TraderScheduler:
                     self._notify(
                         f"🔍 Auto-Scanner: {len(new_syms)} neue Symbole entdeckt\n"
                         + "\n".join(f"  + {s}" for s in new_syms[:8])
+                    )
+
+                # Remove symbols that have decayed (no signal for decay_ticks scans)
+                stale = self.auto_scanner.symbols_to_remove()
+                if stale:
+                    with self._lock:
+                        for s in stale:
+                            if s in self.symbols:
+                                self.symbols.remove(s)
+                        syms = list(self.symbols)
+                    self._notify(
+                        f"⏳ Auto-Scanner: {len(stale)} Symbole entfernt (kein Signal)\n"
+                        + "\n".join(f"  - {s}" for s in stale[:8])
                     )
             except Exception as exc:
                 logger.debug("Auto-scanner error: %s", exc)
