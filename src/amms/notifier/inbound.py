@@ -7671,6 +7671,84 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _dewatch_cmd(_args: list[str]) -> str:
+        """Portfolio monitor: shows paper positions + current DE signal.
+
+        For each open position, runs the Decision Engine and shows whether
+        the DE still says hold, or signals a sell — so you know which
+        positions you should exit proactively.
+
+        Usage: /dewatch
+        """
+        if data is None:
+            return "Data client not wired."
+
+        trader = _get_paper_trader()
+        if not trader.positions:
+            return "No open paper positions to monitor."
+
+        from amms.engine.decision import analyze as decide_analyze
+
+        # Read current trading mode
+        current_mode = "swing"
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                current_mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        action_icons = {
+            "strong_buy":  "🟢 STRONG BUY",
+            "buy":         "🟩 BUY",
+            "hold":        "⬜ HOLD",
+            "sell":        "🟥 SELL",
+            "strong_sell": "🔴 STRONG SELL",
+        }
+
+        lines = ["══ Portfolio Monitor (Paper + DE Signal) ══", ""]
+        for sym in sorted(trader.positions.keys()):
+            pos = trader.positions[sym]
+            # Fetch current price + DE signal
+            cur_price = pos.avg_cost
+            de_action = "n/a"
+            de_score = 0.0
+            try:
+                bars = data.get_bars(sym, limit=200)
+                if bars:
+                    cur_price = float(bars[-1].close)
+                    report = decide_analyze(bars, symbol=sym, mode=current_mode)
+                    if report is not None:
+                        de_action = action_icons.get(report.action, report.action)
+                        de_score = report.composite_score
+            except Exception:
+                pass
+
+            # P&L
+            pnl = (cur_price - pos.avg_cost) * pos.qty
+            pnl_pct = (cur_price / pos.avg_cost - 1) * 100 if pos.avg_cost > 0 else 0.0
+            pnl_arrow = "▲" if pnl >= 0 else "▼"
+
+            lines.append(
+                f"  {sym:<8}  {pos.qty:.4f} shares @ ${pos.avg_cost:.2f}  "
+                f"→ ${cur_price:.2f}  "
+                f"{pnl_arrow} ${pnl:>+,.2f} ({pnl_pct:>+.1f}%)"
+            )
+            lines.append(
+                f"            DE: {de_action}  score {de_score:>+.0f}/100"
+            )
+
+        # Overall snapshot
+        prices = {sym: float(data.get_bars(sym, limit=1)[-1].close)
+                  for sym in trader.positions if data is not None}
+        snap = trader.snapshot(prices)
+        lines += [
+            "",
+            f"  Cash: ${snap.cash:,.2f}  Total: ${snap.portfolio_value:,.2f}  "
+            f"Return: {snap.total_return_pct:+.2f}%",
+        ]
+        return "\n".join(lines)
+
     def _paper_cmd(args: list[str]) -> str:
         """Alias for /portfolio."""
         return _portfolio_cmd(args)
@@ -12970,6 +13048,7 @@ def build_command_handlers(
             "/debatch [SYM ...] [BARS] — batch DE backtest leaderboard across symbols\n"
             "/descan [SYM ...] [BARS] — scan watchlist with Decision Engine, ranked by score\n"
             "/decompare SYM [BARS] — DE strategy vs buy-and-hold: who wins?\n"
+            "/dewatch — paper positions monitor with current DE signal (hold/sell?)\n"
             "/setup — show configuration status (API keys, broker, risk guard, scheduler)\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
@@ -13447,6 +13526,8 @@ def build_command_handlers(
         "des": _descan_cmd,
         "decompare": _decompare_cmd,
         "devsbnh": _decompare_cmd,
+        "dewatch": _dewatch_cmd,
+        "pmonitor": _dewatch_cmd,
         "setup": _setup_cmd,
         "check": _setup_cmd,
     }
