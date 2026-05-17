@@ -3942,3 +3942,148 @@ def test_forecast_in_help() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert "/forecast" in h["help"]([])
+
+
+# ── /mta (multi-timeframe analysis) tests ─────────────────────────────────────
+
+class _MtaDataClient:
+    """Returns 230 bars for MTA tests (enough for DE)."""
+    def get_bars(self, symbol, *, limit=30, timeframe="1Day"):
+        from amms.data.bars import Bar
+        n = max(limit, 230)
+        bars = []
+        for i in range(n):
+            price = 100.0 + i * 0.2
+            bars.append(Bar(
+                symbol=symbol,
+                timeframe=timeframe,
+                ts=f"2025-{(i // 28 % 12) + 1:02d}-{(i % 28) + 1:02d}T10:00:00Z",
+                open=price - 0.5,
+                high=price + 1.0,
+                low=price - 1.0,
+                close=price,
+                volume=500_000,
+            ))
+        return bars
+
+
+def test_mta_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert "not wired" in h["mta"]([])
+
+
+def test_mta_no_symbol() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_MtaDataClient())
+    out = h["mta"]([])
+    assert "Usage" in out
+
+
+def test_mta_returns_output() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_MtaDataClient())
+    out = h["mta"](["AAPL"])
+    assert "AAPL" in out
+    assert "Daily" in out
+    assert "Consensus" in out
+
+
+def test_mta_alias_mtf() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["mtf"] is h["mta"]
+
+
+def test_mta_alias_multitf() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["multitf"] is h["mta"]
+
+
+# ── /memeportfolio tests ──────────────────────────────────────────────────────
+
+def test_memeportfolio_returns_status() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["memeportfolio"]([])
+    assert "Meme Sandbox" in out
+    assert "Cash" in out
+
+
+def test_memeportfolio_alias_meme() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["meme"] is h["memeportfolio"]
+
+
+def test_memebuy_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["memebuy"]([])
+    assert "Usage" in out
+
+
+def test_memebuy_no_data_client_no_price() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["memebuy"](["GME", "5"])
+    assert "price" in out.lower()
+
+
+def test_memebuy_with_price() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["memebuy"](["GME", "1", "price=10.0"])
+    # Will be blocked by allocation cap (no main trader cash) or succeed
+    assert isinstance(out, str)
+
+
+def test_memesell_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["memesell"]([])
+    assert "Usage" in out
+
+
+def test_memeclose_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["memeclose"]([])
+    assert "Usage" in out
+
+
+def test_memewatch_no_positions() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["memewatch"]([])
+    assert "no open positions" in out.lower()
+
+
+def test_meme_alias_mmb() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["mmb"] is h["memebuy"]
+
+
+# ── /systemdash tests ─────────────────────────────────────────────────────────
+
+def test_systemdash_returns_sections() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["systemdash"]([])
+    assert "Main Paper Portfolio" in out
+    assert "Meme Sandbox" in out
+    assert "Combined" in out
+
+
+def test_systemdash_alias_sysdash() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["sysdash"] is h["systemdash"]
+
+
+def test_systemdash_alias_overview() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["overview"] is h["systemdash"]

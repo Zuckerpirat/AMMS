@@ -7532,6 +7532,141 @@ def build_command_handlers(
         lines += ["", result.verdict]
         return "\n".join(lines)
 
+    def _mta_cmd(args: list[str]) -> str:
+        """Multi-Timeframe Analysis: DE on daily + weekly bars for one symbol.
+
+        Usage: /mta SYMBOL
+        Runs the Decision Engine on daily bars (200) and weekly bars (100),
+        then combines them into a consensus signal. A signal that agrees
+        across timeframes is stronger than one that appears on only one.
+
+        Alignment levels:
+          STRONG ALIGN — both timeframes agree (buy+buy or sell+sell)
+          PARTIAL      — one strong signal, one hold
+          CONFLICT     — opposite signals (usually → hold / caution)
+
+        Example: /mta AAPL
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /mta SYMBOL  e.g. /mta AAPL"
+        symbol = args[0].upper()
+
+        from amms.engine.decision import analyze as de_analyze
+
+        current_mode = "swing"
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                current_mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        # Fetch daily bars
+        daily_bars = None
+        weekly_bars = None
+        try:
+            daily_bars = data.get_bars(symbol, limit=220)
+        except Exception as exc:
+            return f"Could not fetch daily bars for {symbol}: {exc!r}"
+
+        try:
+            weekly_bars = data.get_bars(symbol, timeframe="1Week", limit=100)
+        except Exception:
+            pass  # weekly may not be supported — degrade gracefully
+
+        if not daily_bars or len(daily_bars) < 120:
+            return f"Insufficient daily bars for {symbol} ({len(daily_bars) if daily_bars else 0})"
+
+        # Run DE on daily
+        daily_report = de_analyze(daily_bars, symbol=symbol, min_confidence=0.50, mode=current_mode)
+
+        # Run DE on weekly if available
+        weekly_report = None
+        if weekly_bars and len(weekly_bars) >= 40:
+            try:
+                weekly_report = de_analyze(weekly_bars, symbol=symbol, min_confidence=0.40, mode=current_mode)
+            except Exception:
+                pass
+
+        # ── Format output ──
+        action_labels = {
+            "strong_buy":  "🟢 STRONG BUY",
+            "buy":         "🟩 BUY",
+            "hold":        "⬜ HOLD",
+            "sell":        "🟥 SELL",
+            "strong_sell": "🔴 STRONG SELL",
+        }
+
+        price = float(daily_bars[-1].close)
+        lines = [f"══ Multi-Timeframe Analysis: {symbol} @ ${price:.2f} (mode={current_mode}) ══", ""]
+
+        # Daily
+        if daily_report is None:
+            daily_action = "hold"
+            lines.append("  Daily  (1D): insufficient data")
+        else:
+            daily_action = daily_report.action
+            lines.append(
+                f"  Daily  (1D): {action_labels.get(daily_action, daily_action):<20}"
+                f"  score {daily_report.composite_score:+.0f}  conf {daily_report.confidence:.0%}"
+            )
+
+        # Weekly
+        if weekly_report is None:
+            weekly_action = "hold"
+            if weekly_bars is None:
+                lines.append("  Weekly (1W): not available from data client")
+            else:
+                lines.append(f"  Weekly (1W): insufficient bars ({len(weekly_bars) if weekly_bars else 0})")
+        else:
+            weekly_action = weekly_report.action
+            lines.append(
+                f"  Weekly (1W): {action_labels.get(weekly_action, weekly_action):<20}"
+                f"  score {weekly_report.composite_score:+.0f}  conf {weekly_report.confidence:.0%}"
+            )
+
+        # ── Consensus ──
+        buy_set = {"buy", "strong_buy"}
+        sell_set = {"sell", "strong_sell"}
+
+        def _is_buy(a: str) -> bool:
+            return a in buy_set
+
+        def _is_sell(a: str) -> bool:
+            return a in sell_set
+
+        lines.append("")
+        if weekly_report is None:
+            # Only daily available
+            consensus = daily_action.replace("_", " ").upper()
+            lines.append(f"  Consensus: {consensus}  (daily only — weekly unavailable)")
+        elif _is_buy(daily_action) and _is_buy(weekly_action):
+            strength = "STRONG" if daily_action == "strong_buy" or weekly_action == "strong_buy" else "MODERATE"
+            lines.append(f"  Consensus: ✅ {strength} BUY ALIGNMENT — both timeframes agree")
+        elif _is_sell(daily_action) and _is_sell(weekly_action):
+            strength = "STRONG" if daily_action == "strong_sell" or weekly_action == "strong_sell" else "MODERATE"
+            lines.append(f"  Consensus: 🔴 {strength} SELL ALIGNMENT — both timeframes agree")
+        elif _is_buy(daily_action) and _is_sell(weekly_action):
+            lines.append("  Consensus: ⚠ CONFLICT — daily bullish but weekly bearish → caution")
+        elif _is_sell(daily_action) and _is_buy(weekly_action):
+            lines.append("  Consensus: ⚠ CONFLICT — daily bearish but weekly bullish → wait")
+        elif _is_buy(daily_action) or _is_buy(weekly_action):
+            lines.append("  Consensus: 🟡 PARTIAL BUY — one timeframe bullish, one hold")
+        elif _is_sell(daily_action) or _is_sell(weekly_action):
+            lines.append("  Consensus: 🟡 PARTIAL SELL — one timeframe bearish, one hold")
+        else:
+            lines.append("  Consensus: ⬜ HOLD — no directional signal on either timeframe")
+
+        # Key reasoning (top 3 from daily)
+        if daily_report is not None and daily_report.reasoning:
+            lines += ["", "  Key signals (daily):"]
+            for r in daily_report.reasoning[:3]:
+                lines.append(f"    • {r}")
+
+        return "\n".join(lines)
+
     def _descan_cmd(args: list[str]) -> str:
         """Scan watchlist with the Decision Engine — ranked signal table.
 
@@ -13228,10 +13363,13 @@ def build_command_handlers(
                 pass
 
         # ── Risk guard ──
-        if risk_guard is not None:
-            ks = risk_guard.state.killswitch_armed
-            ks_str = f"ARMED ({risk_guard.state.killswitch_reason})" if ks else "disarmed"
+        try:
+            rg = _get_risk_guard()
+            ks = rg.state.killswitch_armed
+            ks_str = f"ARMED ({rg.state.killswitch_reason})" if ks else "disarmed"
             sections.append(f"══ Risk Guard ══\n  Killswitch: {ks_str}")
+        except Exception:
+            pass
 
         # ── Trading mode ──
         current_mode = "swing"
@@ -13869,6 +14007,9 @@ def build_command_handlers(
         "ultimateosc": _uo_cmd,
         "decide": _decide_cmd,
         "decision": _decide_cmd,
+        "mta": _mta_cmd,
+        "multitf": _mta_cmd,
+        "mtf": _mta_cmd,
         "paper": _paper_cmd,
         "portfolio": _portfolio_cmd,
         "ptrades": _ptrades_cmd,
