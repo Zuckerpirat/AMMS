@@ -7605,7 +7605,23 @@ def build_command_handlers(
         # Sort: strong_buy first (highest score), strong_sell last (lowest)
         rows.sort(key=lambda x: x[0], reverse=True)
 
-        lines = [f"── DE Signal Scan ({len(rows)}/{len(symbols)} symbols) ──"]
+        # Fetch macro regime context
+        macro_line = ""
+        if data is not None:
+            try:
+                from amms.data.macro import compute_regime
+                regime = compute_regime(data)
+                regime_icons = {"calm": "🟢", "elevated": "🟡", "stressed": "🔴"}
+                icon = regime_icons.get(regime.level, "")
+                macro_line = f"Macro: {icon} {regime.level.upper()}  {regime.reason}"
+            except Exception:
+                pass
+
+        header = f"── DE Signal Scan ({len(rows)}/{len(symbols)} symbols, mode={current_mode}) ──"
+        lines = [header]
+        if macro_line:
+            lines.append(macro_line)
+        lines.append("")
         lines += [r for _, r in rows]
         if errors:
             lines += ["", f"Skipped: {', '.join(errors[:5])}"]
@@ -12917,6 +12933,229 @@ def build_command_handlers(
 
         return result["summary"]
 
+    # ── Meme Portfolio Sandbox ─────────────────────────────────────────────
+
+    _meme_portfolio_instance: list = []
+
+    def _get_meme_portfolio():
+        from amms.execution.meme_portfolio import MemePortfolio
+        if not _meme_portfolio_instance:
+            main = _get_paper_trader()
+            _meme_portfolio_instance.append(MemePortfolio.load(main_trader=main))
+        return _meme_portfolio_instance[0]
+
+    def _memeportfolio_cmd(_args: list[str]) -> str:
+        """Show meme sandbox portfolio status.
+
+        Usage: /memeportfolio
+        Displays cash, open positions, total value, allocation vs combined,
+        and recent trades. Meme mode is sandboxed with separate limits:
+        max 3% per position, max 5 positions, max 10% of combined portfolio.
+        """
+        mp = _get_meme_portfolio()
+        lines = [mp.status_summary()]
+
+        # Recent trades
+        trades = mp.recent_trades(5)
+        if trades:
+            lines.append("")
+            lines.append("  Recent trades (last 5):")
+            for t in reversed(trades):
+                lines.append(
+                    f"    {t.side.upper():4} {t.symbol:<6} ×{t.qty:.2f} @ ${t.price:,.2f}"
+                    + (f"  P&L {t.pnl:+,.2f}" if t.pnl else "")
+                )
+        return "\n".join(lines)
+
+    def _memebuy_cmd(args: list[str]) -> str:
+        """Buy in meme sandbox.
+
+        Usage: /memebuy SYM QTY [REASON]
+        Buys SYM in the sandboxed meme portfolio. Limits: max 3% of meme
+        portfolio per position, max 5 concurrent positions, buy blocked if
+        meme total > 10% of combined (main + meme) portfolio.
+
+        Price is fetched live if data client available, otherwise supply price
+        as third positional arg: /memebuy GME 5 price=20.0 reason=wsb
+
+        Example: /memebuy GME 5 wsb spike
+        """
+        if len(args) < 2:
+            return "Usage: /memebuy SYM QTY [REASON]  e.g. /memebuy GME 5 wsb spike"
+        symbol = args[0].upper()
+        try:
+            qty = float(args[1])
+        except ValueError:
+            return "QTY must be a number."
+
+        # Try to get live price
+        price: float | None = None
+        reason_parts: list[str] = []
+        for a in args[2:]:
+            if a.startswith("price="):
+                try:
+                    price = float(a[6:])
+                except ValueError:
+                    return f"Invalid price: {a}"
+            else:
+                reason_parts.append(a)
+
+        if price is None:
+            if data is None:
+                return "No data client — supply price: /memebuy GME 5 price=20.0"
+            try:
+                bars = data.get_bars(symbol, limit=2)
+                if not bars:
+                    return f"Could not fetch price for {symbol}"
+                price = float(bars[-1].close)
+            except Exception as exc:
+                return f"Could not fetch price for {symbol}: {exc!r}"
+
+        reason = " ".join(reason_parts) or "manual meme buy"
+        mp = _get_meme_portfolio()
+        trade = mp.buy(symbol, qty, price, reason=reason)
+        if trade is None:
+            snap = mp.snapshot()
+            cap_ok = mp._allocation_check()
+            if cap_ok:
+                return f"Buy blocked: {cap_ok}"
+            if len(snap.positions) >= mp.config.max_positions:
+                return f"Buy blocked: max positions ({mp.config.max_positions}) reached"
+            return "Buy blocked (insufficient cash or qty <= 0)"
+        return (
+            f"MEME BUY {symbol}: {trade.qty:.4f} shares @ ${price:,.2f}\n"
+            f"Cost: ${trade.qty * price:,.2f}  |  Reason: {reason}\n"
+            f"Sandbox cash remaining: ${mp.snapshot().cash:,.2f}"
+        )
+
+    def _memesell_cmd(args: list[str]) -> str:
+        """Sell shares in meme sandbox.
+
+        Usage: /memesell SYM QTY [REASON]
+        Sells QTY shares of SYM from meme sandbox. Price fetched live.
+
+        Example: /memesell GME 3 taking profits
+        """
+        if len(args) < 2:
+            return "Usage: /memesell SYM QTY [REASON]  e.g. /memesell GME 3 profit"
+        symbol = args[0].upper()
+        try:
+            qty = float(args[1])
+        except ValueError:
+            return "QTY must be a number."
+
+        price: float | None = None
+        reason_parts: list[str] = []
+        for a in args[2:]:
+            if a.startswith("price="):
+                try:
+                    price = float(a[6:])
+                except ValueError:
+                    return f"Invalid price: {a}"
+            else:
+                reason_parts.append(a)
+
+        if price is None:
+            if data is None:
+                return "No data client — supply price: /memesell GME 3 price=22.0"
+            try:
+                bars = data.get_bars(symbol, limit=2)
+                if not bars:
+                    return f"Could not fetch price for {symbol}"
+                price = float(bars[-1].close)
+            except Exception as exc:
+                return f"Could not fetch price for {symbol}: {exc!r}"
+
+        reason = " ".join(reason_parts) or "manual meme sell"
+        mp = _get_meme_portfolio()
+        trade = mp.sell(symbol, qty, price, reason=reason)
+        if trade is None:
+            return f"Sell failed — no position in {symbol} or qty <= 0"
+        return (
+            f"MEME SELL {symbol}: {trade.qty:.4f} shares @ ${price:,.2f}\n"
+            f"P&L: {trade.pnl:+,.2f}  |  Reason: {reason}"
+        )
+
+    def _memeclose_cmd(args: list[str]) -> str:
+        """Close entire meme sandbox position.
+
+        Usage: /memeclose SYM [REASON]
+        Closes all shares of SYM in the meme sandbox. Price fetched live.
+
+        Example: /memeclose GME stop loss hit
+        """
+        if not args:
+            return "Usage: /memeclose SYM [REASON]  e.g. /memeclose GME stop loss"
+        symbol = args[0].upper()
+        reason = " ".join(args[1:]) or "manual close"
+
+        price: float | None = None
+        if data is None:
+            return "No data client — can't fetch live price for meme close"
+        try:
+            bars = data.get_bars(symbol, limit=2)
+            if not bars:
+                return f"Could not fetch price for {symbol}"
+            price = float(bars[-1].close)
+        except Exception as exc:
+            return f"Could not fetch price for {symbol}: {exc!r}"
+
+        mp = _get_meme_portfolio()
+        pos = mp.position(symbol)
+        if pos is None:
+            return f"No meme position in {symbol}"
+        trade = mp.close_position(symbol, price, reason=reason)
+        if trade is None:
+            return f"Close failed for {symbol}"
+        return (
+            f"MEME CLOSE {symbol}: {trade.qty:.4f} shares @ ${price:,.2f}\n"
+            f"P&L: {trade.pnl:+,.2f}  |  Reason: {reason}"
+        )
+
+    def _memewatch_cmd(_args: list[str]) -> str:
+        """Live DE signal check for all meme sandbox positions.
+
+        Usage: /memewatch
+        Fetches a fresh Decision Engine signal for each open meme position
+        and shows whether the DE still agrees with holding. Useful to spot
+        when a meme trade has lost momentum.
+        """
+        mp = _get_meme_portfolio()
+        snap = mp.snapshot()
+        if not snap.positions:
+            return "Meme sandbox has no open positions."
+        if data is None:
+            return mp.status_summary()
+
+        from amms.engine.decision import analyze as de_analyze
+        lines = ["── Meme Position Monitor ──"]
+        for sym in sorted(snap.positions.keys()):
+            pd = snap.positions[sym]
+            try:
+                bars = data.get_bars(sym, limit=220)
+            except Exception as exc:
+                lines.append(f"  {sym}: could not fetch bars — {exc!r}")
+                continue
+            if not bars or len(bars) < 120:
+                lines.append(f"  {sym}: insufficient bars ({len(bars) if bars else 0})")
+                continue
+            report = de_analyze(bars, symbol=sym, min_confidence=0.50, mode="meme")
+            price = float(bars[-1].close)
+            pnl = (price - pd["avg_cost"]) * pd["qty"]
+            pnl_pct = (price / pd["avg_cost"] - 1) * 100 if pd["avg_cost"] > 0 else 0.0
+            if report is None:
+                signal_str = "no signal"
+            else:
+                signal_str = f"{report.action}  score={report.composite_score:+.0f}  conf={report.confidence:.0%}"
+            lines.append(
+                f"  {sym:<8} qty={pd['qty']:.2f}  MV=${price * pd['qty']:,.0f}"
+                f"  P&L {pnl:+,.0f} ({pnl_pct:+.1f}%)"
+            )
+            lines.append(f"           DE: {signal_str}")
+        lines.append("")
+        lines.append(mp.status_summary().split("\n")[0])  # just the header value line
+        return "\n".join(lines)
+
     def _debatch_cmd(args: list[str]) -> str:
         """Batch DE backtest across multiple symbols.
 
@@ -13576,4 +13815,15 @@ def build_command_handlers(
         "regime_perf": _deregime_cmd,
         "setup": _setup_cmd,
         "check": _setup_cmd,
+        "memeportfolio": _memeportfolio_cmd,
+        "memep": _memeportfolio_cmd,
+        "meme": _memeportfolio_cmd,
+        "memebuy": _memebuy_cmd,
+        "mmb": _memebuy_cmd,
+        "memesell": _memesell_cmd,
+        "mms": _memesell_cmd,
+        "memeclose": _memeclose_cmd,
+        "mmc": _memeclose_cmd,
+        "memewatch": _memewatch_cmd,
+        "mmw": _memewatch_cmd,
     }
