@@ -12874,6 +12874,49 @@ def build_command_handlers(
 
         return comparison["summary"]
 
+    def _deregime_cmd(args: list[str]) -> str:
+        """DE backtest split by market regime — when does the DE work best?
+
+        Usage: /deregime SYM [BARS]
+        Classifies each completed trade by the market regime at entry
+        (trending_up / trending_down / ranging_low_vol / ranging_high_vol)
+        and shows win rate and P&L per regime.
+
+        Example: /deregime AAPL 500
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /deregime SYM [BARS]  e.g. /deregime AAPL 500"
+        symbol = args[0].upper()
+        try:
+            limit = int(args[1]) if len(args) > 1 else 500
+            limit = max(210, min(limit, 1000))
+        except ValueError:
+            return "Usage: /deregime SYM [BARS]  — BARS must be a number"
+
+        try:
+            bars = data.get_bars(symbol, limit=limit)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 210:
+            return f"Not enough bars for {symbol} (need 210+, got {len(bars) if bars else 0})"
+
+        from amms.engine.backtest import DEBacktestConfig, run_regime_performance
+        cfg = DEBacktestConfig(
+            starting_cash=100_000.0,
+            position_pct=0.10,
+            commission_pct=0.001,
+            min_confidence=0.60,
+            min_score=35.0,
+        )
+        try:
+            result = run_regime_performance(bars, symbol=symbol, config=cfg)
+        except Exception as exc:
+            return f"Analysis failed: {exc!r}"
+
+        return result["summary"]
+
     def _debatch_cmd(args: list[str]) -> str:
         """Batch DE backtest across multiple symbols.
 
@@ -13049,6 +13092,7 @@ def build_command_handlers(
             "/descan [SYM ...] [BARS] — scan watchlist with Decision Engine, ranked by score\n"
             "/decompare SYM [BARS] — DE strategy vs buy-and-hold: who wins?\n"
             "/dewatch — paper positions monitor with current DE signal (hold/sell?)\n"
+            "/deregime SYM [BARS] — DE performance by market regime (trending/ranging)\n"
             "/setup — show configuration status (API keys, broker, risk guard, scheduler)\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
@@ -13528,6 +13572,8 @@ def build_command_handlers(
         "devsbnh": _decompare_cmd,
         "dewatch": _dewatch_cmd,
         "pmonitor": _dewatch_cmd,
+        "deregime": _deregime_cmd,
+        "regime_perf": _deregime_cmd,
         "setup": _setup_cmd,
         "check": _setup_cmd,
     }

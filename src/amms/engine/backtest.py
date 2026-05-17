@@ -398,6 +398,85 @@ def run_de_vs_buyhold(
     }
 
 
+def run_regime_performance(
+    bars: list[Any],
+    symbol: str = "",
+    config: DEBacktestConfig | None = None,
+    *,
+    regime_lookback: int = 20,
+) -> dict:
+    """Analyse DE backtest performance split by market regime.
+
+    For each bar where the DE made a round-trip trade, classifies the regime
+    at the entry bar and accumulates P&L by regime type.
+
+    Regimes: "trending_up", "trending_down", "ranging_low_vol",
+             "ranging_high_vol" (from amms.analysis.regime_classifier).
+
+    Returns a dict:
+      regime_stats : dict[regime_name, {trades, wins, pnl, win_rate}]
+      de_result    : DEBacktestResult (full backtest)
+      summary      : str (formatted table)
+    """
+    from amms.analysis.regime_classifier import classify as classify_regime
+
+    cfg = config or DEBacktestConfig()
+    de_result = run_de_backtest(bars, symbol=symbol, config=cfg)
+
+    # Map each sell trade back to the regime at entry (buy) bar
+    # Trade list: alternating buy/sell for the same position
+    regime_pnl: dict[str, list[float]] = {}
+    buy_idx: int | None = None
+    buy_bar: int | None = None
+
+    for trade in de_result.trades:
+        if trade.side == "buy":
+            buy_idx = trade.bar_index
+            buy_bar = trade.bar_index
+        elif trade.side == "sell" and buy_idx is not None:
+            # Classify regime at the buy bar
+            entry_bars = bars[: buy_idx + 1]
+            regime = "unknown"
+            if len(entry_bars) >= regime_lookback + 5:
+                r = classify_regime(entry_bars, lookback=regime_lookback)
+                if r is not None:
+                    regime = r.regime
+            regime_pnl.setdefault(regime, []).append(trade.pnl)
+            buy_idx = None
+
+    regime_stats: dict[str, dict] = {}
+    for reg, pnls in regime_pnl.items():
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p <= 0]
+        regime_stats[reg] = {
+            "trades": len(pnls),
+            "wins": len(wins),
+            "pnl": round(sum(pnls), 2),
+            "win_rate": round(len(wins) / len(pnls), 4) if pnls else 0.0,
+            "avg_win": round(sum(wins) / len(wins), 2) if wins else 0.0,
+            "avg_loss": round(abs(sum(losses) / len(losses)), 2) if losses else 0.0,
+        }
+
+    # Format summary
+    lines = [f"── DE Regime Performance: {symbol} ──", ""]
+    if not regime_stats:
+        lines.append("  No completed round-trips to analyse.")
+    else:
+        lines.append(f"  {'Regime':<22}  {'Trades':>6}  {'WinRate':>7}  {'Net P&L':>10}")
+        for reg in sorted(regime_stats, key=lambda r: -regime_stats[r]["pnl"]):
+            s = regime_stats[reg]
+            lines.append(
+                f"  {reg:<22}  {s['trades']:>6}  "
+                f"{s['win_rate']:>6.0%}  ${s['pnl']:>+9,.2f}"
+            )
+
+    return {
+        "regime_stats": regime_stats,
+        "de_result": de_result,
+        "summary": "\n".join(lines),
+    }
+
+
 def format_batch_summary(results: list[DEBacktestResult], *, top_n: int = 10) -> str:
     """Compact leaderboard table for a batch backtest run."""
     if not results:
