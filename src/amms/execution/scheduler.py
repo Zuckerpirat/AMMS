@@ -217,6 +217,28 @@ class TraderScheduler:
             except Exception as exc:
                 logger.debug("Risk guard check failed: %s", exc)
 
+        # Daily loss circuit breaker — arm killswitch and pause if limit hit
+        if self.risk_guard is not None and not self.risk_guard.state.killswitch_armed:
+            try:
+                veto = self.risk_guard.check("buy")
+                if veto and "daily loss" in veto:
+                    self._notify(
+                        f"🛑 Tagesverlust-Limit erreicht — Trading pausiert\n"
+                        f"  Grund: {veto}\n"
+                        f"  Killswitch aktiv. Morgen früh auto-disarm (falls konfiguriert).\n"
+                        f"  Manuell freigeben: /killswitch disarm"
+                    )
+                    logger.warning("Daily loss circuit breaker fired: %s", veto)
+            except Exception as exc:
+                logger.debug("Daily loss check failed: %s", exc)
+
+        # Price alerts — check active alerts against current prices
+        if self.db_conn is not None:
+            try:
+                self._check_price_alerts(syms)
+            except Exception as exc:
+                logger.debug("Price alert check failed: %s", exc)
+
         # Run trading tick
         results = self.auto_trader.run_watchlist(syms)
 
@@ -337,8 +359,43 @@ class TraderScheduler:
         except Exception:
             pass
 
+    def _check_price_alerts(self, symbols: list[str]) -> None:
+        """Fire Telegram notifications for triggered price alerts."""
+        if self.notifier is None or self.db_conn is None:
+            return
+        try:
+            from amms.data.alerts import check_alerts
+            # Collect current prices from broker snapshots
+            prices: dict[str, float] = {}
+            try:
+                snaps = self.auto_trader.data.get_snapshots(symbols)
+                for sym, snap in (snaps or {}).items():
+                    try:
+                        prices[sym.upper()] = float(snap.latest_trade_price or snap.latest_quote_ask or 0)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            if not prices:
+                return
+
+            fired = check_alerts(self.db_conn, prices)
+            for alert in fired:
+                cur = prices.get(alert.symbol, 0)
+                direction_word = "über" if alert.direction == "above" else "unter"
+                self._notify(
+                    f"🔔 Preisalarm ausgelöst: {alert.symbol}\n"
+                    f"  {alert.symbol} ist jetzt ${cur:,.2f} — "
+                    f"{direction_word} deinem Ziel von ${alert.price:,.2f}"
+                )
+                logger.info("Price alert fired: %s %s $%.2f (current $%.2f)",
+                            alert.symbol, alert.direction, alert.price, cur)
+        except Exception as exc:
+            logger.debug("Price alert check failed: %s", exc)
+
     def _send_morning_briefing(self) -> None:
-        """Morning briefing: portfolio status + macro + top signals."""
+        """Morning briefing: portfolio status + macro + positions + top opportunity."""
         if self.notifier is None:
             return
         try:
@@ -347,11 +404,13 @@ class TraderScheduler:
             n_pos = len(snap.positions)
             equity = snap.portfolio_value
             cash = snap.cash
+            total_return = snap.total_return_pct
 
             lines = [
                 f"🌅 Guten Morgen — Markt öffnet jetzt",
-                f"  Portfolio: ${equity:,.2f}  |  Cash: ${cash:,.2f}",
-                f"  Offene Positionen: {n_pos}",
+                f"  Portfolio:  ${equity:,.2f}  ({total_return:+.2f}% gesamt)",
+                f"  Cash:       ${cash:,.2f}",
+                f"  Positionen: {n_pos} offen",
             ]
 
             # Macro regime
@@ -359,21 +418,39 @@ class TraderScheduler:
                 from amms.data.macro import compute_regime
                 regime = compute_regime(self.auto_trader.data)
                 icon = "🔴" if regime.is_stressed else ("🟡" if regime.level == "elevated" else "🟢")
-                lines.append(f"  Makro: {icon} {regime.level.upper()} — {regime.reason[:80]}")
+                lines.append(f"  Makro:      {icon} {regime.level.upper()} — {regime.reason[:70]}")
             except Exception:
                 pass
 
-            # Positions snapshot
+            # Risk guard daily loss progress
+            if self.risk_guard is not None:
+                try:
+                    start_eq = self.risk_guard.state.session_start_equity
+                    if start_eq > 0:
+                        daily_loss = (start_eq - equity) / start_eq * 100.0
+                        limit = self.risk_guard.config.max_daily_loss_pct * 100.0
+                        bar = "🔴" if daily_loss > limit * 0.75 else ("🟡" if daily_loss > limit * 0.40 else "🟢")
+                        lines.append(f"  Verlust:    {bar} {daily_loss:+.2f}% heute (Limit: -{limit:.0f}%)")
+                except Exception:
+                    pass
+
+            # Open positions with unrealized P&L
             if snap.positions:
-                lines.append("  Positionen:")
-                for sym, pos in list(snap.positions.items())[:5]:
+                lines.append("")
+                lines.append("  Offene Positionen:")
+                pos_list = list(snap.positions.items())
+                for sym, pos in pos_list[:6]:
                     pnl_pct = pos.get("unrealized_pnl_pct", 0.0) if isinstance(pos, dict) else 0.0
+                    mv = pos.get("market_value", 0.0) if isinstance(pos, dict) else 0.0
                     sign = "+" if pnl_pct >= 0 else ""
-                    lines.append(f"    {sym}: {sign}{pnl_pct:.1f}%")
+                    lines.append(f"    {sym:<6}  {sign}{pnl_pct:.1f}%  MV ${mv:,.0f}")
+                if len(pos_list) > 6:
+                    lines.append(f"    … +{len(pos_list)-6} weitere")
 
             with self._lock:
                 syms = list(self.symbols)
-            lines.append(f"  Watchlist: {len(syms)} Symbole")
+            lines.append("")
+            lines.append(f"  Watchlist: {len(syms)} Symbole — erster Tick läuft jetzt")
             self._notify("\n".join(lines))
         except Exception as exc:
             logger.debug("Morning briefing failed: %s", exc)
@@ -386,7 +463,7 @@ class TraderScheduler:
             trader = self.auto_trader.trader
             snap = trader.snapshot()
 
-            # Count today's trades
+            # Today's trades
             from datetime import date
             today_str = date.today().isoformat()
             today_trades = []
@@ -400,14 +477,45 @@ class TraderScheduler:
             sells = sum(1 for t in today_trades if t.side == "sell")
             realized = snap.realized_pnl
 
+            # Daily P&L vs session start
+            daily_pnl_str = ""
+            if self.risk_guard is not None:
+                try:
+                    start_eq = self.risk_guard.state.session_start_equity
+                    if start_eq > 0:
+                        daily_pnl = snap.portfolio_value - start_eq
+                        daily_pct = daily_pnl / start_eq * 100.0
+                        sign = "+" if daily_pnl >= 0 else ""
+                        daily_pnl_str = f"\n  Heute P&L:  {sign}${daily_pnl:,.2f} ({sign}{daily_pct:.2f}%)"
+                except Exception:
+                    pass
+
+            # Best and worst open positions
+            pos_lines = []
+            if snap.positions:
+                pos_with_pnl = []
+                for sym, pos in snap.positions.items():
+                    pct = pos.get("unrealized_pnl_pct", 0.0) if isinstance(pos, dict) else 0.0
+                    pos_with_pnl.append((sym, pct))
+                pos_with_pnl.sort(key=lambda x: x[1])
+                worst = pos_with_pnl[0] if pos_with_pnl else None
+                best = pos_with_pnl[-1] if len(pos_with_pnl) > 1 else None
+                if best and best[1] != 0:
+                    pos_lines.append(f"  Bestes:     {best[0]} {best[1]:+.1f}%")
+                if worst and worst[1] != 0:
+                    pos_lines.append(f"  Schlechtst: {worst[0]} {worst[1]:+.1f}%")
+
             lines = [
-                f"🌆 Tagesabschluss",
-                f"  Portfolio: ${snap.portfolio_value:,.2f}",
-                f"  Cash: ${snap.cash:,.2f}",
-                f"  Offene Pos.: {len(snap.positions)}",
-                f"  Heute: {buys} Käufe, {sells} Verkäufe",
-                f"  Realisiert (gesamt): ${realized:+,.2f}",
-                f"  Rendite: {snap.total_return_pct:+.2f}%",
+                f"🌆 Tagesabschluss — {today_str}",
+                f"  Portfolio:  ${snap.portfolio_value:,.2f}  ({snap.total_return_pct:+.2f}% gesamt)"
+                + daily_pnl_str,
+                f"  Cash:       ${snap.cash:,.2f}",
+                f"  Offene Pos: {len(snap.positions)}",
+                f"  Trades:     {buys} Käufe  {sells} Verkäufe",
+                f"  Realisiert: ${realized:+,.2f} (gesamt)",
+            ] + pos_lines + [
+                "",
+                f"  Morgen: /schedstart marketonly zum Weitermachen",
             ]
             self._notify("\n".join(lines))
         except Exception as exc:
