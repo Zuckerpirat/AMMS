@@ -147,15 +147,24 @@ class AutoTrader:
             return AutoTradeDecision(symbol, "skipped", 0.0, 0.0, 0.0, 0.0,
                                      reason="insufficient bar data")
 
-        # 3. Run Decision Engine with risk veto wired in
+        # 3. Run Decision Engine with risk veto + macro regime wired in
         from amms.engine.decision import analyze as decide_analyze
         risk_veto = self.risk_guard.make_veto() if self.risk_guard is not None else None
+
+        macro_regime = None
+        try:
+            from amms.data.macro import compute_regime
+            macro_regime = compute_regime(self.data)
+        except Exception:
+            pass  # macro data unavailable — proceed without regime adjustment
+
         decision = decide_analyze(
             bars,
             symbol=symbol,
             min_confidence=self.config.min_confidence,
             risk_veto=risk_veto,
             mode=self.config.mode,
+            macro_regime=macro_regime,
         )
         if decision is None:
             return AutoTradeDecision(symbol, "skipped", 0.0, 0.0, 0.0, 0.0,

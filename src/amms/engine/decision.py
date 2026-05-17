@@ -134,11 +134,16 @@ def analyze(
     min_modules: int = 3,             # minimum modules that must succeed
     risk_veto = None,                 # optional callable(score, confidence) -> reason | None
     mode: str = "swing",              # trading-mode key for category weight selection
+    macro_regime=None,                # optional MacroRegime object (from amms.data.macro)
 ) -> DecisionReport | None:
     """Run the central decision engine on a symbol's bars.
 
     bars: bar objects with .open, .high, .low, .close, .volume attributes.
     mode: one of "conservative", "swing", "meme", "event" — adjusts category weights.
+    macro_regime: optional MacroRegime from amms.data.macro.compute_regime().
+        When "stressed", buy-side confidence threshold is raised by 0.15 and
+        composite buy score is haircut by 20% to be more defensive.
+        When "elevated", thresholds are raised by 0.08 and buy score by 10%.
     Returns None if too few bars or too few modules succeed.
     """
     if not bars or len(bars) < 50:
@@ -301,6 +306,19 @@ def analyze(
     composite = weighted_sum / total_weight if total_weight > 0 else 0.0
     composite = max(-100.0, min(100.0, composite))
 
+    # ── Macro regime adjustment ────────────────────────────────────
+    # When market is stressed/elevated, haircut buy-side signals and
+    # raise the minimum confidence threshold. Sell signals are never
+    # dampened — exiting positions must always be possible.
+    macro_level = getattr(macro_regime, "level", "calm") if macro_regime is not None else "calm"
+    macro_confidence_penalty = 0.0
+    if macro_level == "stressed" and composite > 0:
+        composite *= 0.80          # −20% on bull score
+        macro_confidence_penalty = 0.15
+    elif macro_level == "elevated" and composite > 0:
+        composite *= 0.90          # −10% on bull score
+        macro_confidence_penalty = 0.08
+
     # ── Confidence: agreement ratio ────────────────────────────────
     bull_count = sum(1 for m in results if m.score >= 20)
     bear_count = sum(1 for m in results if m.score <= -20)
@@ -313,9 +331,17 @@ def analyze(
     risk_blocked = False
     risk_reason = ""
 
-    if confidence < min_confidence:
+    effective_min_confidence = min(0.90, min_confidence + macro_confidence_penalty)
+    if confidence < effective_min_confidence:
         risk_blocked = True
-        risk_reason = f"Confidence {confidence:.0%} below required {min_confidence:.0%}"
+        reason_suffix = (
+            f" (raised +{macro_confidence_penalty:.0%} for macro regime: {macro_level})"
+            if macro_confidence_penalty > 0 else ""
+        )
+        risk_reason = (
+            f"Confidence {confidence:.0%} below required "
+            f"{effective_min_confidence:.0%}{reason_suffix}"
+        )
 
     if not risk_blocked and risk_veto is not None:
         try:
@@ -346,6 +372,12 @@ def analyze(
         direction = "bullish" if cs.score > 10 else ("bearish" if cs.score < -10 else "neutral")
         reasoning.append(
             f"{cat.capitalize()} ({cs.module_count} modules): score {cs.score:+.0f} → {direction}"
+        )
+    if macro_level in ("stressed", "elevated"):
+        reasoning.append(
+            f"Macro regime: {macro_level.upper()} — buy scores reduced "
+            f"{'20%' if macro_level == 'stressed' else '10%'}, "
+            f"confidence bar raised {macro_confidence_penalty:.0%}"
         )
     if confidence < 0.5:
         reasoning.append(f"Low signal agreement ({confidence:.0%}) — mixed market")
