@@ -172,6 +172,14 @@ def build_command_handlers(
     /watchlist with all three layers visible.
     """
 
+    # Load any stored API keys from DB into os.environ (best-effort, silent)
+    if conn is not None:
+        try:
+            from amms.data.secrets import load_all as _load_secrets
+            _load_secrets(conn)
+        except Exception:
+            pass
+
     # Shared across all handlers; built once per scheduler launch.
     from amms.data.isin import IsinLookup as _IsinLookup
     _isin_cache = _IsinLookup()
@@ -7548,6 +7556,96 @@ def build_command_handlers(
                 lines.append(f"           → {r.reason}")
 
         lines += ["", f"Summary: {bought} bought, {closed} closed, {skipped} skipped."]
+        return "\n".join(lines)
+
+    def _setkey_cmd(args: list[str]) -> str:
+        """API-Key direkt im Chat speichern — kein SSH nötig.
+
+        Usage: /setkey NAME WERT
+               /setkey anthropic_key sk-ant-...
+               /setkey alpaca_key PKXXXXXXX
+               /setkey alpaca_secret XXXXXXX
+
+        Bekannte Namen:
+          anthropic_key  → ANTHROPIC_API_KEY   (KI-Analyse)
+          alpaca_key     → ALPACA_API_KEY       (Broker)
+          alpaca_secret  → ALPACA_API_SECRET
+          reddit_id      → REDDIT_CLIENT_ID     (WSB-Sentiment)
+          reddit_secret  → REDDIT_CLIENT_SECRET
+          telegram_token → TELEGRAM_BOT_TOKEN
+          telegram_chat  → TELEGRAM_CHAT_ID
+
+        Der Key wird sofort aktiv und beim Neustart automatisch geladen.
+        WICHTIG: Lösche die Telegram-Nachricht danach um den Key zu schützen!
+        """
+        if conn is None:
+            return "DB nicht verbunden — Key kann nicht gespeichert werden."
+        if len(args) < 2:
+            from amms.data.secrets import known_names
+            names = "\n".join(f"  {k:<20} → {v}" for k, v in sorted(known_names().items()))
+            return f"Verwendung: /setkey NAME WERT\n\nBekannte Namen:\n{names}"
+        name = args[0]
+        value = " ".join(args[1:]).strip()
+        from amms.data.secrets import set_secret
+        ok, msg = set_secret(conn, name, value)
+        if ok:
+            return msg + "\n\n⚠️  Bitte lösche diese Nachricht aus dem Telegram-Chat!"
+        return msg
+
+    def _delkey_cmd(args: list[str]) -> str:
+        """Gespeicherten API-Key löschen.
+
+        Usage: /delkey NAME
+               /delkey anthropic_key
+        """
+        if conn is None:
+            return "DB nicht verbunden."
+        if not args:
+            return "Verwendung: /delkey NAME"
+        from amms.data.secrets import delete_secret
+        ok, msg = delete_secret(conn, args[0])
+        return msg
+
+    def _listkeys_cmd(_args: list[str]) -> str:
+        """Alle gespeicherten API-Keys anzeigen (Werte maskiert).
+
+        Usage: /listkeys
+        Zeigt welche Keys gesetzt sind und ob sie aktiv sind.
+        """
+        if conn is None:
+            return "DB nicht verbunden."
+        from amms.data.secrets import list_secrets, known_names
+        stored = list_secrets(conn)
+
+        lines = ["── API Keys ──"]
+        if not stored:
+            lines.append("  Keine Keys gespeichert.")
+            lines.append("")
+            lines.append("Setze Keys mit: /setkey NAME WERT")
+            lines.append("Bekannte Namen:")
+            for k, v in sorted(known_names().items()):
+                # Check if set via environment directly
+                env_val = __import__("os").environ.get(v, "")
+                status = "✓ via .env" if env_val else "✗ nicht gesetzt"
+                lines.append(f"  {k:<20} {status}")
+        else:
+            # Show stored keys
+            stored_envs = {s["env_var"] for s in stored}
+            for s in stored:
+                active = "✓ aktiv" if s["active_in_env"] else "⚠ gespeichert, nicht aktiv"
+                lines.append(f"  {s['short_name']:<20} {s['masked']}  [{active}]  ({s['updated_at']})")
+
+            # Show known keys not yet stored
+            import os as _os
+            from amms.data.secrets import known_names
+            for k, v in sorted(known_names().items()):
+                if v not in stored_envs:
+                    env_val = _os.environ.get(v, "")
+                    if env_val:
+                        lines.append(f"  {k:<20} (via .env — nicht in DB)")
+                    else:
+                        lines.append(f"  {k:<20} ✗ nicht gesetzt")
+
         return "\n".join(lines)
 
     def _autoconfig_cmd(args: list[str]) -> str:
@@ -15570,6 +15668,9 @@ def build_command_handlers(
             "/summary — AI-generated narrative of the current portfolio state\n"
             "/ping — health check (shows timestamp and equity)\n"
             "/version — git sha and branch of the running bot\n"
+            "/setkey NAME WERT — API-Key direkt im Chat speichern (anthropic_key, alpaca_key, ...)\n"
+            "/delkey NAME — gespeicherten Key löschen\n"
+            "/listkeys — alle gespeicherten Keys anzeigen (Werte maskiert)\n"
             "/pause — stop placing new orders\n"
             "/resume — re-enable placing orders\n"
             "/mta SYM — multi-timeframe analysis: daily + weekly DE signals + consensus\n"
@@ -16025,6 +16126,12 @@ def build_command_handlers(
         "autorun": _autorun_cmd,
         "autotrade": _autorun_cmd,
         "autoconfig": _autoconfig_cmd,
+        "setkey": _setkey_cmd,
+        "addkey": _setkey_cmd,
+        "delkey": _delkey_cmd,
+        "removekey": _delkey_cmd,
+        "listkeys": _listkeys_cmd,
+        "keys": _listkeys_cmd,
         "usebroker": _usebroker_cmd,
         "broker": _usebroker_cmd,
         "killswitch": _killswitch_cmd,

@@ -4755,3 +4755,102 @@ def test_newsanalysis_alias_na() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["na"] is h["newsanalysis"]
+
+
+# ── /setkey / /listkeys / /delkey tests ──────────────────────────────────────
+
+def test_setkey_no_conn() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["setkey"](["anthropic_key", "sk-ant-test"])
+    assert "nicht verbunden" in out.lower() or "not wired" in out.lower() or "db" in out.lower()
+
+
+def test_setkey_with_conn(monkeypatch) -> None:
+    import sqlite3
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["setkey"](["anthropic_key", "sk-ant-testvalue1234"])
+    assert "anthropic" in out.lower() or "✓" in out
+
+
+def test_setkey_unknown_name() -> None:
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["setkey"](["bogus_key_name", "somevalue"])
+    assert "unbekannt" in out.lower() or "unknown" in out.lower()
+
+
+def test_setkey_no_args_shows_help() -> None:
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["setkey"]([])
+    assert "anthropic" in out.lower() or "name" in out.lower()
+
+
+def test_listkeys_no_conn() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["listkeys"]([])
+    assert "nicht verbunden" in out.lower() or "db" in out.lower()
+
+
+def test_listkeys_empty(monkeypatch) -> None:
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["listkeys"]([])
+    assert isinstance(out, str) and "key" in out.lower()
+
+
+def test_listkeys_after_setkey(monkeypatch) -> None:
+    import sqlite3
+    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    h["setkey"](["reddit_id", "myredditid123"])
+    out = h["listkeys"]([])
+    assert "reddit" in out.lower()
+    assert "myredditid123" not in out  # must be masked
+
+
+def test_delkey_no_conn() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["delkey"](["anthropic_key"])
+    assert "nicht verbunden" in out.lower() or "db" in out.lower()
+
+
+def test_delkey_not_stored() -> None:
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, conn=conn)
+    out = h["delkey"](["anthropic_key"])
+    assert "nicht" in out.lower() or "not" in out.lower()
+
+
+def test_setkey_alias_addkey() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["addkey"] is h["setkey"]
+
+
+def test_listkeys_alias_keys() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["keys"] is h["listkeys"]
