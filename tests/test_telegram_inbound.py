@@ -4495,3 +4495,62 @@ def test_topsetups_alias_top3() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["top3"] is h["topsetups"]
+
+
+# ── /deexplain tests ──────────────────────────────────────────────────────────
+
+def test_deexplain_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["deexplain"]([])
+    assert "not wired" in out.lower()
+
+
+def test_deexplain_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["deexplain"]([])
+    assert "Usage" in out
+
+
+def test_deexplain_returns_explanation() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["deexplain"](["AAPL"])
+    assert "AAPL" in out
+    assert "Verdict" in out or "Signal" in out
+
+
+def test_deexplain_includes_macro_section() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["deexplain"](["MSFT"])
+    assert "Macro" in out or "macro" in out.lower()
+
+
+def test_deexplain_with_mode_kwarg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["deexplain"](["TSLA", "mode=meme"])
+    assert "meme" in out
+    assert isinstance(out, str)
+
+
+def test_deexplain_alias_why() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["why"] is h["deexplain"]
+
+
+def test_deexplain_alias_explain2() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["explain2"] is h["deexplain"]
+
+
+def test_deexplain_returns_str() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    result = h["deexplain"](["NVDA"])
+    assert isinstance(result, str)
+    assert len(result) > 20

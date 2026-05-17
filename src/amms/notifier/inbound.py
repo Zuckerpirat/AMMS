@@ -13465,6 +13465,141 @@ def build_command_handlers(
         footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
         return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
 
+    def _deexplain_cmd(args: list[str]) -> str:
+        """Full DE signal explanation: which indicators drove the signal.
+
+        Usage: /deexplain SYM [mode=MODE]
+        Runs the Decision Engine and gives a detailed breakdown of every
+        contributing factor: trend, momentum, oscillator, volume scores,
+        macro regime, and final verdict with reasoning.
+
+        Satisfies CLAUDE.md explainability requirement: every signal must
+        show reasoning, confidence, macro conditions, and horizon.
+
+        Example: /deexplain AAPL mode=swing
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /deexplain SYM [mode=MODE]  e.g. /deexplain AAPL"
+
+        symbol = args[0].upper()
+        mode = "swing"
+        for a in args[1:]:
+            if a.startswith("mode="):
+                mode = a[5:].lower()
+
+        if len(args) == 1 and conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        try:
+            bars = data.get_bars(symbol, limit=220)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 120:
+            return f"Not enough bars for {symbol}"
+
+        price = float(bars[-1].close)
+
+        # Macro regime
+        macro_regime = None
+        macro_level = "calm"
+        try:
+            from amms.data.macro import compute_regime
+            macro_regime = compute_regime(data)
+            macro_level = getattr(macro_regime, "level", "calm")
+        except Exception:
+            pass
+
+        from amms.engine.decision import analyze as de_analyze
+        report = de_analyze(
+            bars, symbol=symbol, min_confidence=0.30, mode=mode,
+            macro_regime=macro_regime,
+        )
+
+        lines = [f"══ DE Explanation: {symbol} @ ${price:.2f} (mode={mode}) ══", ""]
+
+        if report is None:
+            lines.append("  DE returned None — insufficient data for analysis.")
+            return "\n".join(lines)
+
+        action_icons = {
+            "strong_buy": "🟢 STRONG BUY", "buy": "🟩 BUY",
+            "hold": "⬜ HOLD", "sell": "🟥 SELL", "strong_sell": "🔴 STRONG SELL",
+        }
+
+        # ── Verdict ──────────────────────────────────────────────────────
+        lines.append("▸ Verdict")
+        lines.append(f"  Signal:      {action_icons.get(report.action, report.action)}")
+        lines.append(f"  Score:       {report.composite_score:>+.1f} / 100")
+        lines.append(f"  Confidence:  {report.confidence:.1%}")
+        if report.holding_horizon:
+            lines.append(f"  Horizon:     {report.holding_horizon}")
+        if report.risk_blocked:
+            lines.append(f"  Risk gate:   ⛔ {report.risk_reason}")
+
+        # ── Category scores ───────────────────────────────────────────────
+        lines += ["", "▸ Signal Categories"]
+        category_scores = getattr(report, "category_scores", {})
+        if category_scores:
+            for cat, score in sorted(category_scores.items()):
+                bar_chars = "█" * int(abs(score) / 10)
+                sign = "+" if score >= 0 else ""
+                lines.append(f"  {cat:<14} {sign}{score:>+5.1f}  {bar_chars}")
+        else:
+            lines.append("  (category breakdown not available)")
+
+        # ── Reasoning ────────────────────────────────────────────────────
+        lines += ["", "▸ Reasoning"]
+        reasoning = getattr(report, "reasoning", [])
+        if isinstance(reasoning, str):
+            reasoning = [reasoning]
+        if reasoning:
+            for part in reasoning:
+                if part and part.strip():
+                    lines.append(f"  • {part.strip()}")
+        else:
+            verdict = getattr(report, "verdict", "")
+            if verdict:
+                lines.append(f"  {verdict}")
+            else:
+                lines.append("  (no reasoning available)")
+
+        # ── Macro context ─────────────────────────────────────────────────
+        lines += ["", "▸ Macro Context"]
+        macro_icons = {"calm": "🟢", "elevated": "🟡", "stressed": "🔴"}
+        lines.append(f"  Regime:  {macro_icons.get(macro_level, '?')} {macro_level.upper()}")
+        if macro_regime is not None:
+            vixy_1d = getattr(macro_regime, "vixy_1d_pct", None)
+            vixy_1w = getattr(macro_regime, "vixy_1w_pct", None)
+            if vixy_1d is not None:
+                lines.append(f"  VIXY 1d: {vixy_1d:>+.1f}%")
+            if vixy_1w is not None:
+                lines.append(f"  VIXY 1w: {vixy_1w:>+.1f}%")
+            reason = getattr(macro_regime, "reason", "")
+            if reason:
+                lines.append(f"  Reason:  {reason}")
+
+        # ── Risk considerations ───────────────────────────────────────────
+        lines += ["", "▸ Risk Considerations"]
+        try:
+            rg = _get_risk_guard()
+            rg_s = rg.status()
+            dd = rg_s.get("drawdown_pct", 0.0)
+            exp = rg_s.get("gross_exposure_pct", 0.0)
+            lines.append(f"  Drawdown:   {dd:.1f}% from peak")
+            lines.append(f"  Exposure:   {exp:.0f}% of equity")
+            if rg_s.get("killswitch"):
+                lines.append(f"  Killswitch: 🔴 ARMED — {rg_s.get('kill_reason', '')}")
+        except Exception:
+            lines.append("  (risk guard unavailable)")
+
+        return "\n".join(lines)
+
     def _topsetups_cmd(args: list[str]) -> str:
         """Rank watchlist by combined DE + confluence score: best trade setups.
 
@@ -15011,6 +15146,7 @@ def build_command_handlers(
             "/dailyreport [SYM ...] — daily portfolio + DE signals + macro report\n"
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
             "/sigoutcome [days=N] [age=N] — DE signal directional accuracy vs actual price outcomes\n"
+            "/deexplain SYM [mode=MODE] — full DE signal explanation: categories, reasoning, macro, risk\n"
             "/topsetups [SYM ...] [top=N] — rank watchlist by DE + confluence score: best buy setups\n"
             "/monthreport [DAYS] — comprehensive monthly performance report\n"
             "/morning [SYM ...] — morning briefing: macro + risk + positions + top opportunities\n"
@@ -15510,6 +15646,9 @@ def build_command_handlers(
         "sigoutcome": _sigoutcome_cmd,
         "sigaccuracy": _sigoutcome_cmd,
         "outcome": _sigoutcome_cmd,
+        "deexplain": _deexplain_cmd,
+        "explain2": _deexplain_cmd,
+        "why": _deexplain_cmd,
         "topsetups": _topsetups_cmd,
         "top3": _topsetups_cmd,
         "setups": _topsetups_cmd,
