@@ -486,7 +486,7 @@ class TraderScheduler:
 
             buys = sum(1 for t in today_trades if t.side == "buy")
             sells = sum(1 for t in today_trades if t.side == "sell")
-            realized = snap.realized_pnl
+            realized = snap.total_realized_pnl
 
             # Daily P&L vs session start
             daily_pnl_str = ""
