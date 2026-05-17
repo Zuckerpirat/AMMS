@@ -1223,7 +1223,7 @@ def dashboard(
         help="Pfad zur AMMS-SQLite-Datenbank (für Equity-Historie).",
     ),
     refresh: float = typer.Option(
-        5.0,
+        1.0,
         "--refresh",
         help="Aktualisierungsintervall in Sekunden (0 deaktiviert Auto-Refresh).",
     ),

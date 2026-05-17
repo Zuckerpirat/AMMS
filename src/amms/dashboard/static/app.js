@@ -61,23 +61,20 @@
     async function refresh() {
         if (inFlight || document.hidden) return;
         inFlight = true;
-        setState('syncing');
+        // Only show the 'syncing' visual if the fetch is actually slow,
+        // otherwise it would flicker on every fast tick.
+        const slowTimer = window.setTimeout(function () { setState('syncing'); }, 300);
         try {
             const r = await fetch('/api/grid', { headers: { 'Accept': 'text/html' } });
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const html = await r.text();
-            // Swap with a brief opacity fade for smoothness.
-            grid.style.transition = 'opacity .15s ease';
-            grid.style.opacity = '0.6';
-            window.setTimeout(function () {
-                grid.innerHTML = html;
-                grid.style.opacity = '1';
-            }, 80);
+            grid.innerHTML = html;
             setState('ok');
         } catch (e) {
             setState('error');
             if (indicator) indicator.title = 'Fehler beim Aktualisieren: ' + e.message;
         } finally {
+            window.clearTimeout(slowTimer);
             inFlight = false;
         }
     }

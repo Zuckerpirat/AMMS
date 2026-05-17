@@ -177,7 +177,7 @@ a {
     border-radius: 50%;
     background: var(--positive);
     box-shadow: 0 0 0 0 var(--positive);
-    animation: live-pulse 2s ease-out infinite;
+    animation: live-pulse 1.2s ease-out infinite;
 }
 
 @keyframes live-pulse {

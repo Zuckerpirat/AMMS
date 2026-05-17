@@ -54,7 +54,7 @@ def _format_pct(value: float) -> str:
     return f"{sign}{abs(value):.2f}%".replace(".", ",")
 
 
-def create_app(layout_path: Path, db_path: Path, refresh_ms: int = 5000) -> FastAPI:
+def create_app(layout_path: Path, db_path: Path, refresh_ms: int = 1000) -> FastAPI:
     app = FastAPI(title="AMMS Dashboard", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["currency"] = _format_currency
@@ -127,7 +127,7 @@ def run(
     port: int = 8787,
     layout_path: Path | None = None,
     db_path: Path | None = None,
-    refresh_ms: int = 5000,
+    refresh_ms: int = 1000,
 ) -> None:
     import uvicorn
 
