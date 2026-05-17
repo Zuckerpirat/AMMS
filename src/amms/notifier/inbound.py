@@ -1419,7 +1419,7 @@ def build_command_handlers(
 
         return "\n\n".join(parts)
 
-    def _forecast_cmd(args: list[str]) -> str:
+    def _newsforecast_cmd(args: list[str]) -> str:
         """News-basierte Kursprognose für eine Aktie via KI.
 
         Usage: /forecast SYM [SYM ...]
@@ -1461,6 +1461,54 @@ def build_command_handlers(
             articles = data.get_news([sym], limit=6)
             fc = forecast_from_news(sym, articles, conn=conn)
             parts.append(format_forecast(fc))
+
+        return "\n\n".join(parts)
+
+    def _deepforecast_cmd(args: list[str]) -> str:
+        """Tiefenanalyse: Kursprognose aus News + Kursdaten + Verhaltenspsychologie + Marktzyklen.
+
+        Usage: /deepforecast SYM [SYM ...]
+               /df NVDA
+               /df AAPL TSLA
+
+        Kombiniert 5 Analyseschichten:
+          1. Aktuelle News (Katalysatoren, Ereignisse)
+          2. Kursdaten (30T/1J-Renditen, 52W-Range, Volatilität)
+          3. Technische Indikatoren (RSI, MA50/200, Trend)
+          4. Verhaltenspsychologie (Panik/FOMO/Kapitulations-Zonen)
+          5. Marktzyklen + historische Vergleiche (z.B. NVDA 2016, CSCO 2000)
+
+        Claude denkt wie ein Senior Research Analyst:
+          „AI-Zyklus ähnelt 2016 NVDA-Onset, aber mit stärkeren Fundamentaldaten
+           — erwarte 15-25% Anstieg wenn Nachfrage hält."
+
+        Erfordert ANTHROPIC_API_KEY (/setkey anthropic_key ...).
+        """
+        if data is None:
+            return "Market data client nicht konfiguriert."
+
+        if not args:
+            return "Gib mindestens eine Aktie an: /deepforecast NVDA AAPL"
+
+        syms = [a.upper() for a in args[:3]]
+
+        from amms.analysis.deep_forecast import deep_forecast, format_deep_forecast
+        from amms.data.macro import compute_regime
+
+        # Get macro level
+        macro_level = "calm"
+        try:
+            regime = compute_regime(data)
+            macro_level = regime.level
+        except Exception:
+            pass
+
+        parts = []
+        for sym in syms:
+            bars = data.get_bars(sym, limit=300) if hasattr(data, "get_bars") else []
+            articles = data.get_news([sym], limit=6) if hasattr(data, "get_news") else []
+            fc = deep_forecast(sym, bars, articles, macro_level=macro_level, conn=conn)
+            parts.append(format_deep_forecast(fc))
 
         return "\n\n".join(parts)
 
@@ -5086,10 +5134,10 @@ def build_command_handlers(
             lines.append(f"  {name:<20}  {param_str or '(no params)'}")
         return "\n".join(lines)
 
-    def _forecast_cmd(args: list[str]) -> str:
+    def _statforecast_cmd(args: list[str]) -> str:
         """Statistical price forecast with confidence intervals.
 
-        Usage: /forecast [SYM] [DAYS]
+        Usage: /statforecast [SYM] [DAYS]
         Uses historical volatility to project 68%% and 95%% price ranges.
         Default: 10 trading days. NOT a prediction — statistical baseline only.
         """
@@ -15796,6 +15844,7 @@ def build_command_handlers(
             "/marketnews [SYM ...] [top=N] — alle aktuellen News mit KI-Auswirkung, sortiert nach Stärke\n"
             "/forecast [SYM ...] — KI-Kursprognose aus News: Richtung, % Bewegung, Zeithorizont, Treiber\n"
             "/marketforecast [top=N] — Prognosen für alle Positionen und Watchlist auf einen Blick\n"
+            "/deepforecast SYM — Tiefenanalyse: News + Kursdaten + Psychologie + Marktzyklen + hist. Vergleiche\n"
             "/export [N] — export last N filled orders as CSV text\n"
             "/fees [BPS] — estimate simulated transaction cost (default 5 bps)\n"
             "/summary — AI-generated narrative of the current portfolio state\n"
@@ -15880,12 +15929,16 @@ def build_command_handlers(
         "marketnews": _marketnews_cmd,
         "mn": _marketnews_cmd,
         "newsscan": _marketnews_cmd,
-        "forecast": _forecast_cmd,
-        "fc": _forecast_cmd,
-        "predict": _forecast_cmd,
+        "forecast": _newsforecast_cmd,
+        "newsforecast": _newsforecast_cmd,
+        "fc": _newsforecast_cmd,
+        "predict": _newsforecast_cmd,
         "marketforecast": _marketforecast_cmd,
         "mf": _marketforecast_cmd,
         "allforecast": _marketforecast_cmd,
+        "deepforecast": _deepforecast_cmd,
+        "df": _deepforecast_cmd,
+        "deepanalysis": _deepforecast_cmd,
         "journal": _journal,
         "budget": _budget,
         "corr": _corr,
@@ -15975,8 +16028,8 @@ def build_command_handlers(
         "vwap": _vwap_cmd,
         "volprofile": _volprofile_cmd,
         "vp": _volprofile_cmd,
-        "forecast": _forecast_cmd,
-        "fc": _forecast_cmd,
+        "statforecast": _statforecast_cmd,
+        "volforecast": _statforecast_cmd,
         "swings": _swings_cmd,
         "swing": _swings_cmd,
         "aging": _aging_cmd,

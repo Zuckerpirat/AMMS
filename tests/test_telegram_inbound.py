@@ -3930,19 +3930,18 @@ def test_forecast_no_data_client() -> None:
     assert "not wired" in h["forecast"]([]).lower()
 
 
-def test_forecast_returns_output() -> None:
+def test_statforecast_returns_output() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
-    out = h["forecast"](["AAPL"])
+    out = h["statforecast"](["AAPL"])
     assert "AAPL" in out
     assert "Forecast" in out or "CI" in out or "Expected" in out
 
 
-def test_forecast_accepts_days_arg() -> None:
+def test_statforecast_accepts_days_arg() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_TrendDataClient())
-    out = h["forecast"](["AAPL", "20"])
-    # Should mention 20d horizon
+    out = h["statforecast"](["AAPL", "20"])
     assert "20" in out or "Forecast" in out
 
 
@@ -4914,3 +4913,32 @@ def test_marketforecast_alias_mf() -> None:
     p = PauseFlag()
     h = build_command_handlers(broker=_FakeBroker(), pause=p)
     assert h["mf"] is h["marketforecast"]
+
+
+def test_deepforecast_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["deepforecast"](["NVDA"])
+    assert "nicht konfiguriert" in out.lower() or "not wired" in out.lower()
+
+
+def test_deepforecast_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["deepforecast"]([])
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_deepforecast_with_symbol(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["deepforecast"](["NVDA"])
+    assert isinstance(out, str) and len(out) > 10
+    assert "NVDA" in out
+
+
+def test_deepforecast_alias_df() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["df"] is h["deepforecast"]
