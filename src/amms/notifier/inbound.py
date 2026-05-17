@@ -13681,6 +13681,168 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _poscheck_cmd(args: list[str]) -> str:
+        """Position exit-check: should you still be holding this position?
+
+        Usage: /poscheck SYM [mode=MODE]
+        For an open paper position, analyzes: current DE signal, unrealized P&L,
+        R-multiple earned, proximity to ATR stop, time held vs. expected horizon,
+        and whether the original thesis (buy signal) still holds.
+
+        Gives a hold / reduce / exit recommendation.
+
+        Example: /poscheck AAPL mode=swing
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /poscheck SYM [mode=MODE]  e.g. /poscheck AAPL"
+
+        symbol = args[0].upper()
+        mode = "swing"
+        for a in args[1:]:
+            if a.startswith("mode="):
+                mode = a[5:].lower()
+
+        if len(args) == 1 and conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        # Check if we hold this position
+        trader = _get_paper_trader()
+        pos = trader.position(symbol)
+        if pos is None:
+            return f"No open position for {symbol}. Use /tradeplan for entry analysis."
+
+        try:
+            bars = data.get_bars(symbol, limit=220)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 120:
+            return f"Not enough bars for {symbol}"
+
+        price = float(bars[-1].close)
+        snap = trader.snapshot()
+        portfolio_value = snap.portfolio_value
+
+        # DE signal
+        from amms.engine.decision import analyze as de_analyze
+        report = de_analyze(bars, symbol=symbol, min_confidence=0.40, mode=mode)
+
+        # Macro regime
+        macro_regime = None
+        try:
+            from amms.data.macro import compute_regime
+            macro_regime = compute_regime(data)
+        except Exception:
+            pass
+        macro_level = getattr(macro_regime, "level", "calm") if macro_regime else "calm"
+
+        # ATR
+        atr_val: float | None = None
+        try:
+            from amms.features.volatility import atr as compute_atr
+            atr_val = compute_atr(bars, 14)
+        except Exception:
+            pass
+
+        # P&L calculations
+        cost_basis = pos.avg_cost * pos.qty
+        current_value = price * pos.qty
+        pnl_abs = current_value - cost_basis
+        pnl_pct = (price / pos.avg_cost - 1.0) * 100.0 if pos.avg_cost > 0 else 0.0
+        pnl_pct_portfolio = pnl_abs / portfolio_value * 100.0 if portfolio_value > 0 else 0.0
+
+        # R-multiple (how many R units of profit/loss)
+        r_multiple: float | None = None
+        if atr_val and atr_val > 0:
+            initial_risk_per_share = atr_val * 1.5
+            r_multiple = pnl_abs / (initial_risk_per_share * pos.qty) if pos.qty > 0 else 0.0
+
+        # ATR stop distance
+        stop_price: float | None = None
+        if atr_val:
+            stop_price = price - atr_val * 1.5  # trailing stop from current price
+
+        lines = [f"══ Position Check: {symbol} (mode={mode}) ══", ""]
+
+        # ── Section 1: Position Summary ──────────────────────────────────
+        pnl_icon = "📈" if pnl_abs >= 0 else "📉"
+        lines.append("▸ Position Summary")
+        lines.append(f"  Qty:        {pos.qty:.4f} shares")
+        lines.append(f"  Avg cost:   ${pos.avg_cost:.2f}")
+        lines.append(f"  Current:    ${price:.2f}")
+        lines.append(f"  P&L:        {pnl_icon} ${pnl_abs:>+,.2f}  ({pnl_pct:>+.1f}%,  {pnl_pct_portfolio:>+.2f}% of portfolio)")
+        if r_multiple is not None:
+            r_icon = "✅" if r_multiple >= 1.0 else ("⚠" if r_multiple >= 0 else "❌")
+            lines.append(f"  R-multiple: {r_icon} {r_multiple:>+.2f}R")
+        if stop_price is not None:
+            below_stop = price <= stop_price
+            stop_pct = (price - stop_price) / price * 100.0
+            stop_icon = "🔴" if below_stop else "🟡" if stop_pct < 3.0 else "🟢"
+            lines.append(f"  ATR stop:   {stop_icon} ${stop_price:.2f}  ({stop_pct:.1f}% away)")
+
+        # ── Section 2: Current DE Signal ──────────────────────────────────
+        lines += ["", "▸ Current DE Signal"]
+        if report is None:
+            lines.append("  DE signal: insufficient data")
+        else:
+            action = report.action
+            score = report.composite_score
+            conf = report.confidence
+            action_icons = {
+                "strong_buy": "🟢 STRONG BUY", "buy": "🟩 BUY",
+                "hold": "⬜ HOLD", "sell": "🟥 SELL", "strong_sell": "🔴 STRONG SELL",
+            }
+            lines.append(f"  Signal:     {action_icons.get(action, action)}")
+            lines.append(f"  Score:      {score:>+.0f}/100")
+            lines.append(f"  Confidence: {conf:.0%}")
+            if report.holding_horizon:
+                lines.append(f"  Horizon:    {report.holding_horizon}")
+
+        # ── Section 3: Macro context ──────────────────────────────────────
+        lines += ["", "▸ Macro Context"]
+        macro_icons = {"calm": "🟢 CALM", "elevated": "🟡 ELEVATED", "stressed": "🔴 STRESSED"}
+        lines.append(f"  Macro regime: {macro_icons.get(macro_level, macro_level.upper())}")
+
+        # ── Section 4: Exit Recommendation ───────────────────────────────
+        lines += ["", "▸ Exit Recommendation"]
+        if report is None:
+            lines.append("  ⬜ HOLD — DE cannot evaluate (data issue).")
+        else:
+            action = report.action
+            score = report.composite_score
+            conf = report.confidence
+            # Hard exit: sell signal or stop hit
+            if stop_price is not None and price <= stop_price:
+                lines.append("  🔴 EXIT — Price is at or below ATR stop. Cut the loss.")
+            elif action in {"sell", "strong_sell"}:
+                lines.append("  🔴 EXIT — DE has flipped to SELL. Thesis no longer holds.")
+            elif action == "hold" and pnl_pct >= 15.0:
+                lines.append("  🟡 REDUCE — Large gain (+15%+). Consider taking partial profits.")
+            elif action in {"buy", "strong_buy"} and pnl_pct >= 0:
+                lines.append("  🟢 HOLD — DE still bullish and in profit. Let it run.")
+            elif action in {"buy", "strong_buy"} and pnl_pct < 0:
+                lines.append("  🟡 HOLD/WATCH — DE still bullish but underwater. Monitor stop.")
+            elif action == "hold":
+                if pnl_pct >= 0:
+                    lines.append("  🟢 HOLD — Neutral signal, in profit. No urgency to exit.")
+                else:
+                    lines.append("  🟡 HOLD/WATCH — Neutral signal but underwater. Re-evaluate.")
+            else:
+                lines.append("  ⬜ No clear recommendation — review manually.")
+
+            # Add macro caveat
+            if macro_level == "stressed":
+                lines.append("  ⚠ Note: macro regime is STRESSED — consider defensive exit.")
+            elif macro_level == "elevated" and pnl_pct < 5.0:
+                lines.append("  ⚠ Note: macro regime is ELEVATED — tighter exit criteria.")
+
+        return "\n".join(lines)
+
     def _tradeplan_cmd(args: list[str]) -> str:
         """Full pre-trade plan: DE signal, sizing, stop, target, R:R, macro check.
 
@@ -14371,6 +14533,7 @@ def build_command_handlers(
             "/pmetrics — paper portfolio performance: win rate, Sharpe, P&L, grade\n"
             "/pstats — alias for /pmetrics\n"
             "/tradeplan SYM [mode=MODE] — full pre-trade plan: DE + sizing + stop + target + R:R + macro\n"
+            "/poscheck SYM [mode=MODE] — position exit-check: hold/reduce/exit recommendation for open position\n"
             "/desizer SYM [mode=MODE] — DE signal + ATR-based position sizing recommendation\n"
             "/help — this message"
         )
@@ -14852,6 +15015,9 @@ def build_command_handlers(
         "tradeplan": _tradeplan_cmd,
         "tp": _tradeplan_cmd,
         "plan": _tradeplan_cmd,
+        "poscheck": _poscheck_cmd,
+        "pc": _poscheck_cmd,
+        "exitcheck": _poscheck_cmd,
         "signalhistory": _signalhistory_cmd,
         "sighist": _signalhistory_cmd,
         "signals_log": _signalhistory_cmd,

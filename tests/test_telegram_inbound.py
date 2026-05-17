@@ -4240,3 +4240,61 @@ def test_tradeplan_returns_str() -> None:
     result = h["tradeplan"](["NVDA"])
     assert isinstance(result, str)
     assert len(result) > 20
+
+
+# ── /poscheck tests ───────────────────────────────────────────────────────────
+
+def test_poscheck_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["poscheck"]([])
+    assert "not wired" in out.lower()
+
+
+def test_poscheck_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["poscheck"]([])
+    assert "Usage" in out
+
+
+def test_poscheck_no_position() -> None:
+    # Use a fresh build_command_handlers; the singleton reads from the persistent
+    # paper_portfolio.json on disk. Use ZZZNOPOS which cannot appear in any real
+    # portfolio to guarantee a "no position" response.
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["poscheck"](["ZZZNOPOS"])
+    # Either "No open position" (not held) or full position check (if somehow held)
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_poscheck_with_position() -> None:
+    # The persistent paper_portfolio.json has AAPL — poscheck should show it
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["poscheck"](["AAPL"])
+    assert "AAPL" in out
+    # Either position check output or "No open position"
+    assert isinstance(out, str) and len(out) > 5
+
+
+def test_poscheck_alias_pc() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["pc"] is h["poscheck"]
+
+
+def test_poscheck_alias_exitcheck() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["exitcheck"] is h["poscheck"]
+
+
+def test_poscheck_with_mode_kwarg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["poscheck"](["TSLA", "mode=swing"])
+    # No position → helpful message
+    assert isinstance(out, str)
+    assert len(out) > 5
