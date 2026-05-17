@@ -43,13 +43,15 @@ class TraderScheduler:
                  tick_seconds: int = 300,
                  market_hours_only: bool = False,
                  clock_fn = None,
-                 journal_path: Path | None = None):
+                 journal_path: Path | None = None,
+                 db_conn=None):
         self.auto_trader = auto_trader
         self.symbols = [s.upper() for s in symbols]
         self.tick_seconds = max(10, int(tick_seconds))
         self.market_hours_only = market_hours_only
         self.clock_fn = clock_fn   # optional callable returning ClockStatus-like obj
         self.journal_path = journal_path or Path("scheduler_journal.log")
+        self.db_conn = db_conn     # optional SQLite conn for equity snapshots
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -151,6 +153,14 @@ class TraderScheduler:
                     f"@ ${r.price:.2f}  score={r.score:+.0f} conf={r.confidence:.0%}\n"
                 )
         self._append_journal(line)
+
+        # Record equity snapshot after each tick (best-effort)
+        if self.db_conn is not None:
+            try:
+                from amms.data.equity_history import record_snapshot
+                record_snapshot(self.db_conn, self.auto_trader.trader)
+            except Exception as exc:
+                logger.debug("Equity snapshot failed: %s", exc)
 
     def _append_journal(self, line: str) -> None:
         try:
