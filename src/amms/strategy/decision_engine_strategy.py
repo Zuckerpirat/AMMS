@@ -39,6 +39,7 @@ class DecisionEngineStrategy:
     min_confidence: float = 0.60
     min_score: float = 35.0
     allow_strong_only: bool = False
+    mode: str = "swing"           # "conservative" | "swing" | "meme" | "event"
     name: str = "decision_engine"
 
     @property
@@ -60,6 +61,7 @@ class DecisionEngineStrategy:
             bars,
             symbol=symbol,
             min_confidence=self.min_confidence,
+            mode=self.mode,
         )
 
         if report is None:

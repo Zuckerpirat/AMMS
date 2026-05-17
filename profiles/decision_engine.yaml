@@ -1,0 +1,51 @@
+# Decision Engine strategy profile
+# Uses the full 16-indicator Decision Engine for trade signals.
+#
+# Recommended for: swing trading with comprehensive technical analysis.
+# Needs at least 200 bars of history per symbol (fetched automatically).
+#
+# To use this profile:
+#   export AMMS_CONFIG_PATH=profiles/decision_engine.yaml
+#   amms run
+
+watchlist:
+  - AAPL
+  - MSFT
+  - NVDA
+  - AMD
+  - TSLA
+  - META
+  - GOOGL
+  - AMZN
+  - SPY
+  - QQQ
+
+strategy:
+  name: decision_engine
+  timeframe: 1Day
+  params:
+    min_confidence: 0.60      # require at least 60% module agreement
+    min_score: 35.0           # |composite_score| must exceed this (0-100)
+    allow_strong_only: false  # set true to only act on strong_buy/strong_sell
+
+risk:
+  max_open_positions: 8
+  max_position_pct: 0.10      # 10% per symbol (DE is confident, wider sizing ok)
+  daily_loss_pct: -0.03
+  min_hold_days: 1            # hold at least 1 day (the DE is not day-trading)
+  max_buys_per_tick: 3
+  force_close_minutes_before_close: 0
+  stop_loss_pct: 0.07         # 7% stop-loss
+
+scheduler:
+  tick_seconds: 3600          # run every hour during market hours
+  timezone: America/New_York
+  tick_notify: decisions      # Telegram message when signals fire
+
+# Uncomment to enable WSB-driven watchlist expansion (needs Reddit keys)
+# wsb_discovery:
+#   enabled: true
+#   top_n: 3
+#   min_mentions: 10
+#   min_sentiment: 0.1
+#   refresh_hours: 6

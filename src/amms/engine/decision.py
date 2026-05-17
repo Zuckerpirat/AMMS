@@ -76,12 +76,36 @@ class DecisionReport:
     bars_used: int
 
 
-# Category weights (must sum to 1.0)
+# Category weights (must sum to 1.0) — default (swing / balanced)
 _CATEGORY_WEIGHTS = {
     "trend":      0.30,
     "momentum":   0.30,
     "oscillator": 0.25,
     "volume":     0.15,
+}
+
+# Per-mode weight overrides (each dict must sum to 1.0).
+# Keys are the trading-mode names from the scheduler / Telegram /mode command.
+_MODE_WEIGHTS: dict[str, dict[str, float]] = {
+    "conservative": {  # slow, fundamentals-heavy; trend is king
+        "trend":      0.40,
+        "momentum":   0.20,
+        "oscillator": 0.25,
+        "volume":     0.15,
+    },
+    "swing": _CATEGORY_WEIGHTS,   # default — no change
+    "meme": {  # retail hype / momentum chasing
+        "trend":      0.15,
+        "momentum":   0.45,
+        "oscillator": 0.20,
+        "volume":     0.20,
+    },
+    "event": {  # earnings / macro shocks — reaction speed matters
+        "trend":      0.20,
+        "momentum":   0.25,
+        "oscillator": 0.30,
+        "volume":     0.25,
+    },
 }
 
 
@@ -109,10 +133,12 @@ def analyze(
     min_confidence: float = 0.50,     # block action below this signal-agreement level
     min_modules: int = 3,             # minimum modules that must succeed
     risk_veto = None,                 # optional callable(score, confidence) -> reason | None
+    mode: str = "swing",              # trading-mode key for category weight selection
 ) -> DecisionReport | None:
     """Run the central decision engine on a symbol's bars.
 
     bars: bar objects with .open, .high, .low, .close, .volume attributes.
+    mode: one of "conservative", "swing", "meme", "event" — adjusts category weights.
     Returns None if too few bars or too few modules succeed.
     """
     if not bars or len(bars) < 50:
@@ -264,10 +290,11 @@ def analyze(
         )
 
     # ── Weighted composite ─────────────────────────────────────────
+    weights = _MODE_WEIGHTS.get(mode, _CATEGORY_WEIGHTS)
     total_weight = 0.0
     weighted_sum = 0.0
     for cat, cs in categories.items():
-        w = _CATEGORY_WEIGHTS.get(cat, 0.10)
+        w = weights.get(cat, _CATEGORY_WEIGHTS.get(cat, 0.10))
         weighted_sum += cs.score * w
         total_weight += w
 

@@ -7359,6 +7359,15 @@ def build_command_handlers(
 
         from amms.engine.decision import analyze as decide_analyze
 
+        # Read current trading mode for weight adjustment
+        current_mode = "swing"
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                current_mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
         try:
             bars = data.get_bars(symbol, limit=bar_count)
         except Exception:
@@ -7367,7 +7376,7 @@ def build_command_handlers(
         if not bars:
             return f"No bar data for {symbol}."
 
-        result = decide_analyze(bars, symbol=symbol)
+        result = decide_analyze(bars, symbol=symbol, mode=current_mode)
         if result is None:
             return f"Not enough data for {symbol} (need 120+ bars)."
 
@@ -7388,7 +7397,7 @@ def build_command_handlers(
         conf_pct = f"{result.confidence:.0%}"
 
         lines = [
-            f"══ Decision Engine: {result.symbol} ({result.bars_used} bars) ══",
+            f"══ Decision Engine: {result.symbol} ({result.bars_used} bars, mode={current_mode}) ══",
             "",
             f"  {action_str}",
             f"  Score:      {result.composite_score:+.0f}/100  [{score_bar}]",
@@ -7448,6 +7457,15 @@ def build_command_handlers(
 
         from amms.engine.decision import analyze as decide_analyze
 
+        # Read current trading mode for weight adjustment
+        current_mode = "swing"
+        if conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                current_mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
         action_icons = {
             "strong_buy":  "🟢",
             "buy":         "🟩",
@@ -7467,7 +7485,7 @@ def build_command_handlers(
             if not bars or len(bars) < 120:
                 errors.append(f"{sym}: too few bars ({len(bars) if bars else 0})")
                 continue
-            report = decide_analyze(bars, symbol=sym)
+            report = decide_analyze(bars, symbol=sym, mode=current_mode)
             if report is None:
                 errors.append(f"{sym}: insufficient data")
                 continue
