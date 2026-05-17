@@ -1916,6 +1916,97 @@ def build_command_handlers(
         except Exception:
             return f"pong! {ts}  (broker unreachable)"
 
+    def _setup_cmd(_args: list[str]) -> str:
+        """System setup status — shows what's configured and what's missing.
+
+        Checks: Alpaca keys, Telegram, data client, paper trader,
+        auto-trader, risk guard, scheduler, and live-guard status.
+        """
+        import os
+        lines = ["── AMMS Setup Status ──", ""]
+
+        # ── Alpaca credentials ──────────────────────────────────────
+        api_key = os.environ.get("ALPACA_API_KEY", "")
+        api_secret = os.environ.get("ALPACA_API_SECRET", "")
+        base_url = os.environ.get("ALPACA_BASE_URL", "")
+        key_ok = bool(api_key and api_key != "test-key" and len(api_key) > 5)
+        sec_ok = bool(api_secret and api_secret != "test-secret" and len(api_secret) > 5)
+        url_ok = "paper-api" in base_url
+        lines.append(f"Alpaca API Key:    {'✅' if key_ok else '❌ not set'}  {('(' + api_key[:4] + '…)') if key_ok else ''}")
+        lines.append(f"Alpaca Secret:     {'✅' if sec_ok else '❌ not set'}")
+        lines.append(f"Alpaca URL:        {'✅ paper' if url_ok else '❌ not set or not paper-api'}")
+        if not (key_ok and sec_ok and url_ok):
+            lines.append("  → Create .env from .env.example and fill in Alpaca Paper keys:")
+            lines.append("    https://app.alpaca.markets/paper/dashboard/overview")
+
+        # ── Broker connectivity ─────────────────────────────────────
+        lines.append("")
+        try:
+            acc = broker.get_account()
+            lines.append(f"Broker connection: ✅  equity ${acc.equity:,.2f}")
+        except Exception as exc:
+            lines.append(f"Broker connection: ❌  {exc!r}")
+
+        # ── Data client ─────────────────────────────────────────────
+        lines.append(f"Data client:       {'✅ wired' if data is not None else '❌ not wired'}")
+
+        # ── Paper trader ────────────────────────────────────────────
+        try:
+            pt = _get_paper_trader()
+            snap = pt.snapshot()
+            lines.append(
+                f"Paper trader:      ✅  cash ${snap.cash:,.2f}  "
+                f"{len(snap.positions)} positions"
+            )
+        except Exception as exc:
+            lines.append(f"Paper trader:      ❌  {exc!r}")
+
+        # ── Auto-trader ─────────────────────────────────────────────
+        try:
+            at = _get_auto_trader()
+            lines.append(
+                f"Auto-trader:       ✅  mode={at.config.mode}  "
+                f"broker={getattr(at.trader, 'name', type(at.trader).__name__)}"
+            )
+        except Exception as exc:
+            lines.append(f"Auto-trader:       ❌  {exc!r}")
+
+        # ── Risk guard ──────────────────────────────────────────────
+        try:
+            rg = _get_risk_guard()
+            ks = "🛑 ARMED" if rg.state.killswitch_armed else "✅ clear"
+            lines.append(
+                f"Risk guard:        {ks}  "
+                f"{'reason: ' + rg.state.killswitch_reason if rg.state.killswitch_armed else ''}"
+            )
+            if rg.state.killswitch_armed:
+                lines.append("  → To disarm: /killswitch disarm")
+        except Exception as exc:
+            lines.append(f"Risk guard:        ❌  {exc!r}")
+
+        # ── Scheduler ───────────────────────────────────────────────
+        try:
+            sched = _get_scheduler()
+            running = sched._running if hasattr(sched, '_running') else False
+            lines.append(f"Scheduler:         {'✅ running' if running else '⏸ stopped'}  /schedstart to activate")
+        except Exception as exc:
+            lines.append(f"Scheduler:         ⏸ not initialized  ({exc!r})")
+
+        # ── Live guard ──────────────────────────────────────────────
+        from amms.execution.live_guard import check_live_allowed
+        limits = check_live_allowed()
+        if limits.allowed:
+            lines.append(f"Live guard:        ✅ live trading acknowledged (max ${limits.max_position_usd:,.0f}/position)")
+        else:
+            lines.append("Live guard:        ✅ paper-only mode (safe)")
+
+        # ── DB ──────────────────────────────────────────────────────
+        lines.append(f"Database (conn):   {'✅ connected' if conn is not None else '⚠ not wired (no DB commands)'}")
+
+        lines.append("")
+        lines.append("Run /help for all commands.")
+        return "\n".join(lines)
+
     def _version(_args: list[str]) -> str:
         import subprocess
 
@@ -12824,6 +12915,7 @@ def build_command_handlers(
             "/debacktest SYM [BARS] — Decision Engine backtest from live data (no DB needed)\n"
             "/debatch [SYM ...] [BARS] — batch DE backtest leaderboard across symbols\n"
             "/descan [SYM ...] [BARS] — scan watchlist with Decision Engine, ranked by score\n"
+            "/setup — show configuration status (API keys, broker, risk guard, scheduler)\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"
@@ -13298,4 +13390,6 @@ def build_command_handlers(
         "deb": _debatch_cmd,
         "descan": _descan_cmd,
         "des": _descan_cmd,
+        "setup": _setup_cmd,
+        "check": _setup_cmd,
     }
