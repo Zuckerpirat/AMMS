@@ -1374,6 +1374,43 @@ def build_command_handlers(
                 lines.append(f"    {url}")
         return "\n".join(lines)
 
+    def _newsanalysis_cmd(args: list[str]) -> str:
+        """AI-powered news analysis: Claude reads headlines and draws conclusions.
+
+        Usage: /newsanalysis SYM [SYM ...]
+               /na AAPL NVDA
+
+        Fetches recent Alpaca news for each symbol, sends them to Claude Haiku,
+        and returns a structured sentiment assessment with score (−1..+1),
+        one-line conclusion, and key reasoning points.
+
+        Results are cached per symbol per day (no double billing).
+        Requires ANTHROPIC_API_KEY in environment.
+        """
+        if data is None:
+            return "Market data client not wired."
+
+        if args:
+            syms = [a.upper() for a in args[:4]]
+        else:
+            try:
+                positions = broker.get_positions()
+                syms = [p.symbol for p in positions[:3]]
+            except Exception:
+                syms = []
+        if not syms:
+            return "Provide at least one symbol: /newsanalysis AAPL NVDA"
+
+        from amms.analysis.news_sentiment import analyze_news, format_news_sentiment
+
+        parts = []
+        for sym in syms:
+            articles = data.get_news([sym], limit=6)
+            result = analyze_news(sym, articles, conn=conn)
+            parts.append(format_news_sentiment(result))
+
+        return "\n\n".join(parts)
+
     def _streak(_args: list[str]) -> str:
         """Show the current win/loss streak from completed round-trip trades."""
         if conn is None:
@@ -15410,6 +15447,7 @@ def build_command_handlers(
             "/journal [SYM] — completed trade pairs (BUY→SELL) with realized P&L\n"
             "/top — best and worst open positions by unrealized P&L %%\n"
             "/news [SYM] — recent news headlines for a ticker (or open positions)\n"
+            "/newsanalysis [SYM ...] — AI news analysis: Claude reads headlines and draws conclusions\n"
             "/export [N] — export last N filled orders as CSV text\n"
             "/fees [BPS] — estimate simulated transaction cost (default 5 bps)\n"
             "/summary — AI-generated narrative of the current portfolio state\n"
@@ -15485,6 +15523,9 @@ def build_command_handlers(
         "summary": _summary,
         "top": _top,
         "news": _news,
+        "newsanalysis": _newsanalysis_cmd,
+        "na": _newsanalysis_cmd,
+        "aianalysis": _newsanalysis_cmd,
         "journal": _journal,
         "budget": _budget,
         "corr": _corr,

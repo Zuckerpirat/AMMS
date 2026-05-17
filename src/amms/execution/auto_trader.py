@@ -1,15 +1,17 @@
 """Auto-Trader: runs the Decision Engine on a watchlist and executes paper trades.
 
 Wiring:
-  Watchlist  →  Decision Engine  →  Risk Filter  →  Paper Trader
+  Watchlist  →  ATR-Stop check  →  Decision Engine  →  Risk Filter  →  Paper Trader
 
 Safety guards (all configurable):
-  - max_position_pct   : max % of portfolio per single symbol
+  - max_position_pct   : max % of portfolio per single symbol (hard cap)
   - max_positions      : max number of concurrent positions
   - cooldown_minutes   : minimum gap between trades for the same symbol
   - min_confidence     : skip if Decision Engine confidence below this
   - min_score          : skip if |score| below this
   - allow_strong_only  : only act on strong_buy / strong_sell signals
+  - atr_stop_mult      : ATR multiplier for automatic stop-loss (default 1.5×)
+  - risk_pct           : % of equity to risk per trade for ATR-based sizing (default 1%)
 
 State is persisted via the PaperTrader's JSON file plus a separate
 cooldown ledger so restarts don't immediately re-trade.
@@ -43,15 +45,16 @@ class AutoTradeDecision:
 
 @dataclass
 class AutoTraderConfig:
-    max_position_pct: float = 0.10        # 10% of portfolio per symbol
+    max_position_pct: float = 0.10        # hard cap: max % of portfolio per symbol
     max_positions: int = 10
     cooldown_minutes: int = 60
     min_confidence: float = 0.60
     min_score: float = 35.0
     allow_strong_only: bool = False       # if True, only act on strong_* signals
-    # When sell triggered but no position is held, skip (no shorting in paper)
     enable_close_on_sell: bool = True     # close existing long if sell signal
     mode: str = "swing"                   # trading mode for DE weight selection
+    atr_stop_mult: float = 1.5            # ATR multiplier for automatic stop-loss
+    risk_pct: float = 1.0                 # % of equity risked per trade (ATR-based sizing)
 
 
 class AutoTrader:
@@ -110,12 +113,43 @@ class AutoTrader:
             logger.warning("Could not fetch bars for %s: %s", symbol, exc)
             return None
 
-    def _calc_qty(self, price: float, portfolio_value: float) -> float:
-        """How many shares to buy given position size limit."""
-        if price <= 0:
+    def _calc_qty(self, price: float, equity: float, bars) -> float:
+        """ATR-based position sizing (fixed-fraction risk), capped by max_position_pct.
+
+        Risks self.config.risk_pct % of equity per trade: one ATR-stop move
+        = one unit of risk. Falls back to max_position_pct if ATR unavailable.
+        """
+        if price <= 0 or equity <= 0:
             return 0.0
-        max_dollar = portfolio_value * self.config.max_position_pct
+        try:
+            from amms.features.volatility import atr as compute_atr
+            atr_val = compute_atr(bars, 14)
+            if atr_val and atr_val > 0:
+                stop_dist = atr_val * self.config.atr_stop_mult
+                stop_pct = stop_dist / price * 100.0
+                from amms.risk.position_sizing import fixed_fraction
+                result = fixed_fraction(
+                    equity, price, stop_pct,
+                    risk_pct=self.config.risk_pct,
+                    max_position_pct=self.config.max_position_pct * 100.0,
+                )
+                return float(result.shares)
+        except Exception:
+            pass
+        # Fallback: flat max_position_pct sizing
+        max_dollar = equity * self.config.max_position_pct
         return round(max_dollar / price, 4)
+
+    def _atr_stop_price(self, bars, avg_cost: float) -> float | None:
+        """Compute the ATR-based stop price for an existing position."""
+        try:
+            from amms.features.volatility import atr as compute_atr
+            atr_val = compute_atr(bars, 14)
+            if atr_val and atr_val > 0:
+                return avg_cost - atr_val * self.config.atr_stop_mult
+        except Exception:
+            pass
+        return None
 
     def process_symbol(self, symbol: str) -> AutoTradeDecision:
         """Run the full decision + execution pipeline for one symbol.
@@ -148,7 +182,37 @@ class AutoTrader:
             return AutoTradeDecision(symbol, "skipped", 0.0, 0.0, 0.0, 0.0,
                                      reason="insufficient bar data")
 
-        # 3. Run Decision Engine with risk veto + macro regime wired in
+        # 3. ATR stop-loss check — enforce before DE to cut losses quickly.
+        #    Killswitch already handled above; this is a position-level guard.
+        cur_pos_pre = self.trader.position(symbol)
+        if cur_pos_pre is not None:
+            price_now = float(bars[-1].close)
+            stop_px = self._atr_stop_price(bars, cur_pos_pre.avg_cost)
+            if stop_px is not None and price_now <= stop_px:
+                reason = (
+                    f"ATR stop triggered: price ${price_now:.2f} ≤ "
+                    f"stop ${stop_px:.2f} ({self.config.atr_stop_mult}×ATR below avg_cost)"
+                )
+                logger.info("Auto-trader ATR stop %s: %s", symbol, reason)
+                trade = self.trader.close_position(symbol, price_now, reason=reason)
+                if trade is not None:
+                    self.trader.save()
+                    if self.signal_db is not None:
+                        try:
+                            from amms.data.signal_history import record_signal
+                            record_signal(
+                                self.signal_db, symbol=symbol, mode=self.config.mode,
+                                action="sell", score=-80.0, confidence=1.0,
+                                horizon="immediate", price=price_now, macro_level="calm",
+                            )
+                        except Exception:
+                            pass
+                    return AutoTradeDecision(
+                        symbol, "closed", -80.0, 1.0, trade.qty, price_now,
+                        reason=reason,
+                    )
+
+        # 4. Run Decision Engine with risk veto + macro regime wired in
         from amms.engine.decision import analyze as decide_analyze
 
         macro_regime = None
@@ -208,7 +272,7 @@ class AutoTrader:
             except Exception:
                 pass  # signal history failure never blocks trading
 
-        # 4. Filter on signal strength
+        # 5. Filter on signal strength
         if abs(decision.composite_score) < self.config.min_score:
             return AutoTradeDecision(symbol, "skipped",
                                      decision.composite_score, decision.confidence,
@@ -227,7 +291,7 @@ class AutoTrader:
                                      0.0, price,
                                      reason=f"action {decision.action} not strong_*")
 
-        # 5. Act — cooldown gates BUYs only; sells always proceed.
+        # 6. Act — cooldown gates BUYs only; sells always proceed.
         if decision.action in {"buy", "strong_buy"}:
             if cooldown_active:
                 return AutoTradeDecision(
@@ -236,7 +300,7 @@ class AutoTrader:
                     0.0, price,
                     reason="cooldown active (buy blocked, sells still allowed)",
                 )
-            return self._do_buy(symbol, decision, price, cur_pos, snap)
+            return self._do_buy(symbol, decision, price, cur_pos, snap, bars)
 
         if decision.action in {"sell", "strong_sell"}:
             return self._do_sell(symbol, decision, price, cur_pos)
@@ -246,7 +310,7 @@ class AutoTrader:
                                  0.0, price,
                                  reason=f"hold action")
 
-    def _do_buy(self, symbol, decision, price, cur_pos, snap) -> AutoTradeDecision:
+    def _do_buy(self, symbol, decision, price, cur_pos, snap, bars=None) -> AutoTradeDecision:
         if cur_pos is not None:
             return AutoTradeDecision(symbol, "skipped",
                                      decision.composite_score, decision.confidence,
@@ -259,7 +323,7 @@ class AutoTrader:
                                      0.0, price,
                                      reason=f"max positions ({self.config.max_positions}) reached")
 
-        qty = self._calc_qty(price, snap.portfolio_value)
+        qty = self._calc_qty(price, snap.portfolio_value, bars)
         if qty <= 0:
             return AutoTradeDecision(symbol, "skipped",
                                      decision.composite_score, decision.confidence,

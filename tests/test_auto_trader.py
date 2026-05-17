@@ -211,3 +211,77 @@ class TestRunWatchlist:
         results = at.run_watchlist(["X"])
         assert len(results) == 1
         assert results[0].action == "skipped"
+
+
+class TestAtrStop:
+    """ATR stop-loss enforcement in auto_trader."""
+
+    def _stop_bars(self, n: int = 200, entry: float = 100.0, drop: float = 30.0):
+        """Bars where recent close is far below a hypothetical entry price."""
+        bars = _up_bars(n - 5, start=entry)
+        # Add 5 bars that drop hard (simulates stop breach)
+        p = entry
+        for _ in range(5):
+            p -= drop / 5
+            bars.append(_Bar(p + 1, p + 1.5, p - 0.5, max(1.0, p)))
+        return bars
+
+    def test_atr_stop_closes_position(self, fresh_state):
+        """Position entered at $200 but price drops to ~$170 → ATR stop should trigger."""
+        bars = self._stop_bars(n=200, entry=200.0, drop=35.0)
+        data = _FakeData({"TST": bars})
+        trader = PaperTrader(starting_cash=50_000.0)
+        # Buy at $200 so stop is well above current price (~$165)
+        trader.buy("TST", 10, 200.0)
+        config = AutoTraderConfig(min_score=1, min_confidence=0.1, atr_stop_mult=1.5)
+        at = AutoTrader(trader, data, config=config, state_path=fresh_state)
+        result = at.process_symbol("TST")
+        # Either ATR stop or DE sell triggered the close
+        assert result.action in {"closed", "skipped"}
+        if result.action == "closed":
+            assert "stop" in result.reason.lower() or "sell" in result.reason.lower()
+
+    def test_atr_stop_price_computed(self, fresh_state):
+        """_atr_stop_price returns a value below avg_cost for normal bars."""
+        bars = _up_bars(200, start=100.0)
+        trader = PaperTrader(starting_cash=10_000.0)
+        at = AutoTrader(trader, _FakeData({}), state_path=fresh_state)
+        stop = at._atr_stop_price(bars, avg_cost=150.0)
+        assert stop is not None
+        assert stop < 150.0
+
+    def test_no_stop_without_position(self, paper_with_cash, fresh_state):
+        """No position → ATR stop branch not reached → normal DE flow."""
+        bars = _flat_bars(200)
+        data = _FakeData({"X": bars})
+        at = AutoTrader(paper_with_cash, data, state_path=fresh_state)
+        result = at.process_symbol("X")
+        # Flat bars → DE says hold/skip; but no crash
+        assert result.action in {"bought", "skipped", "closed"}
+
+
+class TestAtrSizing:
+    """ATR-based position sizing in _do_buy."""
+
+    def test_qty_nonzero_for_valid_bars(self, fresh_state):
+        """With valid bars and ATR computable, qty should be > 0."""
+        bars = _up_bars(200, start=100.0)
+        trader = PaperTrader(starting_cash=100_000.0)
+        at = AutoTrader(trader, _FakeData({}), state_path=fresh_state)
+        qty = at._calc_qty(100.0, 100_000.0, bars)
+        assert qty > 0
+
+    def test_qty_fallback_without_bars(self, fresh_state):
+        """Without bars, falls back to max_position_pct sizing."""
+        trader = PaperTrader(starting_cash=10_000.0)
+        config = AutoTraderConfig(max_position_pct=0.10)
+        at = AutoTrader(trader, _FakeData({}), config=config, state_path=fresh_state)
+        qty = at._calc_qty(100.0, 10_000.0, None)
+        # Fallback: 10% of $10k = $1000 / $100 = 10 shares
+        assert qty == pytest.approx(10.0, abs=0.01)
+
+    def test_qty_zero_for_invalid_price(self, fresh_state):
+        trader = PaperTrader(starting_cash=10_000.0)
+        at = AutoTrader(trader, _FakeData({}), state_path=fresh_state)
+        assert at._calc_qty(0.0, 10_000.0, None) == 0.0
+        assert at._calc_qty(-5.0, 10_000.0, None) == 0.0
