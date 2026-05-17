@@ -4172,3 +4172,71 @@ def test_desizer_returns_str() -> None:
     result = h["desizer"](["MSFT"])
     assert isinstance(result, str)
     assert len(result) > 10
+
+
+# ── /tradeplan tests ──────────────────────────────────────────────────────────
+
+def test_tradeplan_no_data_client() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    out = h["tradeplan"]([])
+    assert "not wired" in out.lower()
+
+
+def test_tradeplan_no_args() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["tradeplan"]([])
+    assert "Usage" in out
+
+
+def test_tradeplan_returns_sections() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["tradeplan"](["AAPL"])
+    assert "Trade Plan" in out
+    assert "AAPL" in out
+    assert "Signal" in out or "signal" in out.lower()
+
+
+def test_tradeplan_shows_macro_section() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["tradeplan"](["MSFT"])
+    assert "Macro" in out or "macro" in out.lower()
+
+
+def test_tradeplan_with_mode_kwarg() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["tradeplan"](["TSLA", "mode=conservative"])
+    assert "conservative" in out
+    assert isinstance(out, str)
+
+
+def test_tradeplan_alias_tp() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["tp"] is h["tradeplan"]
+
+
+def test_tradeplan_alias_plan() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p)
+    assert h["plan"] is h["tradeplan"]
+
+
+def test_tradeplan_shows_go_nogo() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    out = h["tradeplan"](["SPY"])
+    # Must have a go/no-go verdict
+    assert "GO" in out or "TRADE" in out or "SELL" in out
+
+
+def test_tradeplan_returns_str() -> None:
+    p = PauseFlag()
+    h = build_command_handlers(broker=_FakeBroker(), pause=p, data=_FakeDataClient())
+    result = h["tradeplan"](["NVDA"])
+    assert isinstance(result, str)
+    assert len(result) > 20

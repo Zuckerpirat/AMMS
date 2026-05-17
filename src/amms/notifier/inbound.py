@@ -13681,6 +13681,187 @@ def build_command_handlers(
 
         return "\n".join(lines)
 
+    def _tradeplan_cmd(args: list[str]) -> str:
+        """Full pre-trade plan: DE signal, sizing, stop, target, R:R, macro check.
+
+        Usage: /tradeplan SYM [mode=MODE]
+        Runs the Decision Engine, computes a confidence-scaled position size,
+        ATR-based stop-loss, 2R take-profit target, and checks macro regime.
+        Gives a complete go/no-go recommendation for a prospective trade.
+
+        Example: /tradeplan AAPL mode=swing
+        """
+        if data is None:
+            return "Data client not wired."
+        if not args:
+            return "Usage: /tradeplan SYM [mode=MODE]  e.g. /tradeplan AAPL"
+
+        symbol = args[0].upper()
+        mode = "swing"
+        for a in args[1:]:
+            if a.startswith("mode="):
+                mode = a[5:].lower()
+
+        if len(args) == 1 and conn is not None:
+            try:
+                from amms.runtime_overrides import get_overrides
+                mode = get_overrides(conn).get("trading_mode", "swing")
+            except Exception:
+                pass
+
+        try:
+            bars = data.get_bars(symbol, limit=220)
+        except Exception as exc:
+            return f"Could not fetch bars for {symbol}: {exc!r}"
+        if not bars or len(bars) < 120:
+            return f"Not enough bars for {symbol}"
+
+        price = float(bars[-1].close)
+
+        # DE signal
+        from amms.engine.decision import analyze as de_analyze
+        report = de_analyze(bars, symbol=symbol, min_confidence=0.40, mode=mode)
+
+        # Macro regime
+        macro_regime = None
+        try:
+            from amms.data.macro import compute_regime
+            macro_regime = compute_regime(data)
+        except Exception:
+            pass
+        macro_level = getattr(macro_regime, "level", "calm") if macro_regime else "calm"
+
+        # Portfolio sizing
+        trader = _get_paper_trader()
+        snap = trader.snapshot()
+        portfolio_value = snap.portfolio_value
+        max_pos_pct = 0.10
+
+        # ATR
+        atr_val: float | None = None
+        try:
+            from amms.features.volatility import atr as compute_atr
+            atr_val = compute_atr(bars, 14)
+        except Exception:
+            pass
+
+        # Risk guard state
+        rg_block: str | None = None
+        try:
+            rg = _get_risk_guard()
+            rg_block = rg.check(side="buy")
+            if rg_block is None and macro_regime is not None:
+                rg_block = rg.macro_check(macro_regime, side="buy")
+        except Exception:
+            pass
+
+        lines = [f"══ Trade Plan: {symbol} @ ${price:.2f} (mode={mode}) ══", ""]
+
+        # ── Section 1: Signal ──────────────────────────────────────────────
+        lines.append("▸ Decision Engine Signal")
+        if report is None:
+            lines.append("  Insufficient data for DE signal.")
+            return "\n".join(lines)
+
+        action = report.action
+        score = report.composite_score
+        conf = report.confidence
+
+        action_icons = {
+            "strong_buy": "🟢 STRONG BUY", "buy": "🟩 BUY",
+            "hold": "⬜ HOLD", "sell": "🟥 SELL", "strong_sell": "🔴 STRONG SELL",
+        }
+        lines.append(f"  Signal:     {action_icons.get(action, action)}")
+        lines.append(f"  Score:      {score:>+.0f}/100")
+        lines.append(f"  Confidence: {conf:.0%}")
+        if report.holding_horizon:
+            lines.append(f"  Horizon:    {report.holding_horizon}")
+
+        # ── Section 2: Macro filter ────────────────────────────────────────
+        lines += ["", "▸ Macro & Risk Filters"]
+        macro_icons = {"calm": "🟢 CALM", "elevated": "🟡 ELEVATED", "stressed": "🔴 STRESSED"}
+        lines.append(f"  Macro regime: {macro_icons.get(macro_level, macro_level.upper())}")
+        if rg_block:
+            lines.append(f"  Risk guard:   ⛔ BLOCKED — {rg_block}")
+        elif report.risk_blocked:
+            lines.append(f"  Risk guard:   ⛔ BLOCKED — {report.risk_reason}")
+        else:
+            lines.append("  Risk guard:   ✅ clear")
+
+        # ── Section 3: Position sizing ─────────────────────────────────────
+        lines += ["", "▸ Position Sizing"]
+        is_buy = action in {"buy", "strong_buy"}
+        blocked = rg_block is not None or report.risk_blocked
+
+        if is_buy and not blocked:
+            if conf >= 0.75 and abs(score) >= 60:
+                scale, scale_label = 1.00, "100% (strong signal)"
+            elif conf >= 0.60 and abs(score) >= 35:
+                scale, scale_label = 0.75, "75% (moderate signal)"
+            elif conf >= 0.50:
+                scale, scale_label = 0.50, "50% (weak signal)"
+            else:
+                scale, scale_label = 0.0, "0% (below threshold)"
+
+            max_dollar = portfolio_value * max_pos_pct * scale
+            qty = round(max_dollar / price, 4) if price > 0 and scale > 0 else 0.0
+
+            lines.append(f"  Scale:      {scale_label}")
+            lines.append(f"  Max $:      ${max_dollar:,.2f}  ({max_pos_pct:.0%} × {scale:.0%})")
+            lines.append(f"  Quantity:   {qty:.4f} shares  (@ ${price:.2f})")
+            lines.append(f"  Notional:   ${qty * price:,.2f}")
+
+            # ── Section 4: ATR-based levels ────────────────────────────────
+            lines += ["", "▸ Trade Levels"]
+            lines.append(f"  Entry:      ${price:.2f}")
+            if atr_val and qty > 0:
+                stop_dist = atr_val * 1.5
+                stop_price = price - stop_dist
+                target_price = price + stop_dist * 2.0  # 2R
+                risk_per_trade = qty * stop_dist
+                reward_per_trade = qty * stop_dist * 2.0
+                lines.append(f"  ATR-14:     ${atr_val:.2f}")
+                lines.append(f"  Stop:       ${stop_price:.2f}  (-{stop_dist/price*100:.1f}%,  risk ${risk_per_trade:,.2f})")
+                lines.append(f"  Target 2R:  ${target_price:.2f}  (+{stop_dist*2/price*100:.1f}%,  gain ${reward_per_trade:,.2f})")
+                lines.append(f"  R:R ratio:  1 : 2.0")
+                lines.append(f"  Portfolio risk: {risk_per_trade/portfolio_value*100:.2f}%")
+            elif atr_val:
+                stop_dist = atr_val * 1.5
+                lines.append(f"  ATR-14:     ${atr_val:.2f}")
+                lines.append(f"  Stop:       ${price - stop_dist:.2f}  (-{stop_dist/price*100:.1f}%)")
+                lines.append(f"  Target 2R:  ${price + stop_dist*2:.2f}  (+{stop_dist*2/price*100:.1f}%)")
+            else:
+                lines.append("  (ATR unavailable — stop levels not computed)")
+
+        elif action in {"sell", "strong_sell"}:
+            pos = trader.position(symbol)
+            lines += ["", "▸ SELL Signal — Existing Position Check"]
+            if pos is not None:
+                pnl = (price - pos.avg_cost) * pos.qty
+                lines.append(f"  Current qty:  {pos.qty:.4f}  avg cost ${pos.avg_cost:.2f}")
+                lines.append(f"  Unrealized:   ${pnl:>+,.2f}  ({(price/pos.avg_cost-1)*100:>+.1f}%)")
+                lines.append("  → Consider closing position to lock in P&L.")
+            else:
+                lines.append("  No position held. No action recommended (no shorting).")
+        else:
+            lines += ["", "▸ No Trade Recommended"]
+            lines.append("  Signal is HOLD or blocked — stay in cash for this symbol.")
+
+        # ── Section 5: Go / No-Go ──────────────────────────────────────────
+        lines += ["", "▸ Go / No-Go"]
+        if blocked:
+            lines.append("  ⛔ NO-GO — risk guard or macro filter is blocking new buys.")
+        elif action in {"buy", "strong_buy"} and scale == 0.0:
+            lines.append("  ⚠ NO-GO — signal below confidence/score threshold.")
+        elif action in {"buy", "strong_buy"}:
+            lines.append("  ✅ GO — signal, sizing, and risk filters all clear.")
+        elif action in {"sell", "strong_sell"}:
+            lines.append("  ✅ SELL signal confirmed — evaluate closing open position.")
+        else:
+            lines.append("  ⬜ NO TRADE — hold signal, no action recommended.")
+
+        return "\n".join(lines)
+
     def _dewalkforward_cmd(args: list[str]) -> str:
         """Walk-forward validation: test DE consistency across time periods.
 
@@ -14189,6 +14370,8 @@ def build_command_handlers(
             "/signalhistory [N] [SYM] [mode=] [action=] — view DE signal audit log\n"
             "/pmetrics — paper portfolio performance: win rate, Sharpe, P&L, grade\n"
             "/pstats — alias for /pmetrics\n"
+            "/tradeplan SYM [mode=MODE] — full pre-trade plan: DE + sizing + stop + target + R:R + macro\n"
+            "/desizer SYM [mode=MODE] — DE signal + ATR-based position sizing recommendation\n"
             "/help — this message"
         )
 
@@ -14666,6 +14849,9 @@ def build_command_handlers(
         "desizer": _desizer_cmd,
         "dsize": _desizer_cmd,
         "sizer": _desizer_cmd,
+        "tradeplan": _tradeplan_cmd,
+        "tp": _tradeplan_cmd,
+        "plan": _tradeplan_cmd,
         "signalhistory": _signalhistory_cmd,
         "sighist": _signalhistory_cmd,
         "signals_log": _signalhistory_cmd,
