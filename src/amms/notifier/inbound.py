@@ -13395,6 +13395,75 @@ def build_command_handlers(
         lines.append(mp.status_summary().split("\n")[0])  # just the header value line
         return "\n".join(lines)
 
+    def _memeautorun_cmd(args: list[str]) -> str:
+        """Run Decision Engine in meme mode and auto-trade the meme sandbox.
+
+        Usage: /memeautorun [SYM SYM ...]
+        Scans each symbol with the DE in meme mode. Buys on strong_buy/buy
+        signals (if sandbox limits allow), closes on strong_sell/sell signals.
+        Uses live price from the latest bar.
+
+        This is the meme-sandbox equivalent of /autorun — fully sandboxed
+        with the separate meme portfolio limits (3% per position, 5 max,
+        10% combined cap).
+
+        Example: /memeautorun GME AMC BBBY MSTR
+        """
+        if data is None:
+            return "Data client not wired."
+
+        symbols = [a.upper() for a in args] if args else list(static_watchlist)[:10]
+        if not symbols:
+            return "No symbols. Pass tickers: /memeautorun GME AMC"
+
+        from amms.engine.decision import analyze as de_analyze
+        mp = _get_meme_portfolio()
+        results: list[str] = []
+
+        for sym in symbols:
+            try:
+                bars = data.get_bars(sym, limit=220)
+            except Exception as exc:
+                results.append(f"{sym}: bars fetch failed — {exc!r}")
+                continue
+            if not bars or len(bars) < 120:
+                results.append(f"{sym}: insufficient bars")
+                continue
+
+            price = float(bars[-1].close)
+            report = de_analyze(bars, symbol=sym, min_confidence=0.50, mode="meme")
+            if report is None:
+                results.append(f"{sym}: no signal")
+                continue
+
+            action = report.action
+            score = report.composite_score
+            pos = mp.position(sym)
+
+            if action in {"buy", "strong_buy"} and pos is None:
+                trade = mp.buy(sym, qty=9999, price=price,
+                               reason=f"meme-autorun {action} score={score:+.0f}")
+                if trade:
+                    results.append(f"{sym}: BOUGHT {trade.qty:.4f} @ ${price:.2f}  score={score:+.0f}")
+                else:
+                    results.append(f"{sym}: buy blocked (cap/limit)")
+
+            elif action in {"sell", "strong_sell"} and pos is not None:
+                trade = mp.close_position(sym, price,
+                                          reason=f"meme-autorun {action} score={score:+.0f}")
+                if trade:
+                    results.append(f"{sym}: CLOSED {trade.qty:.4f} @ ${price:.2f}  P&L={trade.pnl:+,.2f}")
+                else:
+                    results.append(f"{sym}: close failed")
+
+            else:
+                results.append(f"{sym}: HOLD  score={score:+.0f}  conf={report.confidence:.0%}")
+
+        snap = mp.snapshot()
+        header = f"── Meme Autorun ({len(symbols)} symbols) ──"
+        footer = f"Sandbox cash: ${snap.cash:,.2f}  positions: {len(snap.positions)}"
+        return header + "\n" + "\n".join(f"  {r}" for r in results) + "\n" + footer
+
     def _signalhistory_cmd(args: list[str]) -> str:
         """Show recent Decision Engine signal history.
 
@@ -14323,6 +14392,8 @@ def build_command_handlers(
         "mmc": _memeclose_cmd,
         "memewatch": _memewatch_cmd,
         "mmw": _memewatch_cmd,
+        "memeautorun": _memeautorun_cmd,
+        "mar": _memeautorun_cmd,
         "systemdash": _systemdash_cmd,
         "sysdash": _systemdash_cmd,
         "overview": _systemdash_cmd,
