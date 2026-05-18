@@ -136,3 +136,14 @@ def resize_widget(layout: Layout, widget_id: str, size: str) -> Layout:
         if w.id == widget_id:
             w.size = size
     return layout
+
+
+def reorder_widget(layout: Layout, widget_id: str, new_index: int) -> Layout:
+    """Move a widget to an arbitrary new index in the layout."""
+    src = next((i for i, w in enumerate(layout.widgets) if w.id == widget_id), -1)
+    if src < 0:
+        return layout
+    widget = layout.widgets.pop(src)
+    target = max(0, min(len(layout.widgets), new_index))
+    layout.widgets.insert(target, widget)
+    return layout

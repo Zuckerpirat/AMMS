@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field, replace
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -26,7 +28,39 @@ INDICES: dict[str, tuple[str, str]] = {
 }
 
 CACHE_TTL_SEC = 60.0
+DISPLAY_TZ = ZoneInfo("Europe/Berlin")
 _cache: dict[str, tuple[float, IndexQuote]] = {}
+
+
+@dataclass(frozen=True)
+class IndexChart:
+    width: int = 260
+    height: int = 90
+    pad_left: int = 40
+    pad_right: int = 8
+    pad_top: int = 8
+    pad_bottom: int = 18
+    polyline: str = ""
+    area: str = ""
+    y_ticks: list[tuple[float, str]] = field(default_factory=list)
+    x_ticks: list[tuple[float, str]] = field(default_factory=list)
+    has_data: bool = False
+
+    @property
+    def plot_w(self) -> int:
+        return self.width - self.pad_left - self.pad_right
+
+    @property
+    def plot_h(self) -> int:
+        return self.height - self.pad_top - self.pad_bottom
+
+    @property
+    def plot_right_x(self) -> int:
+        return self.width - self.pad_right
+
+    @property
+    def plot_bottom_y(self) -> float:
+        return self.pad_top + self.plot_h
 
 
 @dataclass(frozen=True)
@@ -39,21 +73,74 @@ class IndexQuote:
     day_change_abs: float
     day_change_pct: float
     history: list[float] = field(default_factory=list)
-    sparkline_points: str = ""
+    chart: IndexChart = field(default_factory=IndexChart)
     is_stale: bool = False
     error: str = ""
 
 
-def _sparkline(values: list[float], width: int = 220, height: int = 50) -> str:
+def _fmt_index_value(v: float) -> str:
+    if abs(v) >= 100:
+        return f"{v:,.0f}".replace(",", ".")
+    return f"{v:.1f}".replace(".", ",")
+
+
+def _build_index_chart(timestamps: list[int], values: list[float]) -> IndexChart:
+    chart = IndexChart()
     if len(values) < 2:
-        return ""
-    lo = min(values)
-    hi = max(values)
-    span = hi - lo if hi > lo else 1.0
+        return chart
+
+    lo, hi = min(values), max(values)
+    if hi == lo:
+        hi = lo + max(abs(lo) * 0.001, 0.1)
+    span = hi - lo
+    pad = span * 0.08
+    lo, hi = lo - pad, hi + pad
+    span = hi - lo
+
     n = len(values)
-    return " ".join(
-        f"{(i / (n - 1)) * width:.1f},{height - ((v - lo) / span) * height:.1f}"
-        for i, v in enumerate(values)
+    points: list[tuple[float, float]] = []
+    for i, v in enumerate(values):
+        x = chart.pad_left + (i / (n - 1)) * chart.plot_w
+        y = chart.pad_top + chart.plot_h - ((v - lo) / span) * chart.plot_h
+        points.append((x, y))
+
+    polyline = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    bottom = chart.plot_bottom_y
+    area_seg = " ".join(f"L {x:.1f},{y:.1f}" for x, y in points)
+    area = (
+        f"M {points[0][0]:.1f},{bottom:.1f} "
+        f"L {points[0][0]:.1f},{points[0][1]:.1f} "
+        f"{area_seg} "
+        f"L {points[-1][0]:.1f},{bottom:.1f} Z"
+    )
+
+    y_ticks = [
+        (chart.pad_top + 4, _fmt_index_value(hi - pad)),
+        (chart.plot_bottom_y - 2, _fmt_index_value(lo + pad)),
+    ]
+
+    x_ticks: list[tuple[float, str]] = []
+    if timestamps and len(timestamps) == n:
+        idxs = [0, n // 2, n - 1] if n >= 3 else [0, n - 1]
+        seen: set[int] = set()
+        for i in idxs:
+            if i in seen:
+                continue
+            seen.add(i)
+            x = chart.pad_left + (i / (n - 1)) * chart.plot_w
+            ts = timestamps[i]
+            try:
+                label = datetime.fromtimestamp(ts, tz=DISPLAY_TZ).strftime("%H:%M")
+            except (ValueError, OSError):
+                label = ""
+            x_ticks.append((x, label))
+
+    return IndexChart(
+        polyline=polyline,
+        area=area,
+        y_ticks=y_ticks,
+        x_ticks=x_ticks,
+        has_data=True,
     )
 
 
@@ -73,7 +160,15 @@ def _parse(key: str, symbol: str, name: str, data: dict) -> IndexQuote:
     result = data["chart"]["result"][0]
     meta = result["meta"]
     quote = result["indicators"]["quote"][0]
-    closes = [float(c) for c in quote.get("close", []) if c is not None]
+    timestamps_raw = result.get("timestamp", []) or []
+    closes_raw = quote.get("close", []) or []
+    pairs = [
+        (int(t), float(c))
+        for t, c in zip(timestamps_raw, closes_raw, strict=False)
+        if c is not None
+    ]
+    timestamps = [t for t, _ in pairs]
+    closes = [c for _, c in pairs]
     price = float(meta["regularMarketPrice"])
     prev = float(meta.get("chartPreviousClose", meta.get("previousClose", price)))
     abs_change = price - prev
@@ -87,7 +182,7 @@ def _parse(key: str, symbol: str, name: str, data: dict) -> IndexQuote:
         day_change_abs=abs_change,
         day_change_pct=pct,
         history=closes,
-        sparkline_points=_sparkline(closes),
+        chart=_build_index_chart(timestamps, closes),
     )
 
 

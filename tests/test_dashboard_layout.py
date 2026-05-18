@@ -9,6 +9,7 @@ from amms.dashboard.layout import (
     load_layout,
     move_widget,
     remove_widget,
+    reorder_widget,
     resize_widget,
     save_layout,
 )
@@ -78,3 +79,27 @@ def test_corrupted_file_falls_back_to_default(tmp_path: Path) -> None:
     path.write_text("{ not json")
     layout = load_layout(path)
     assert layout.widgets, "should recover with default layout"
+
+
+def test_reorder_moves_widget_to_new_index() -> None:
+    layout = default_layout()
+    types_before = [w.type for w in layout.widgets]
+    last = layout.widgets[-1]
+    reorder_widget(layout, last.id, 0)
+    assert layout.widgets[0].id == last.id
+    # Same widgets, just rearranged
+    assert sorted(w.type for w in layout.widgets) == sorted(types_before)
+
+
+def test_reorder_clamps_index() -> None:
+    layout = default_layout()
+    first = layout.widgets[0]
+    reorder_widget(layout, first.id, 999)
+    assert layout.widgets[-1].id == first.id
+
+
+def test_reorder_unknown_id_noop() -> None:
+    layout = default_layout()
+    before = [w.id for w in layout.widgets]
+    reorder_widget(layout, "no-such-id", 0)
+    assert [w.id for w in layout.widgets] == before

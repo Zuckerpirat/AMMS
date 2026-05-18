@@ -14,6 +14,7 @@ def _yahoo_payload(price: float = 4500.0, prev: float = 4400.0) -> dict:
                         "regularMarketPrice": price,
                         "chartPreviousClose": prev,
                     },
+                    "timestamp": [1700000000, 1700000300, 1700000600, 1700000900],
                     "indicators": {
                         "quote": [
                             {"close": [4400.0, 4450.0, 4480.0, 4500.0]}
@@ -42,7 +43,10 @@ def test_fetch_parses_yahoo_payload() -> None:
     assert q.price == 4500.0
     assert q.day_change_abs == 100.0
     assert round(q.day_change_pct, 2) == round(100.0 / 4400.0 * 100, 2)
-    assert q.sparkline_points
+    assert q.chart.has_data
+    assert q.chart.polyline
+    assert q.chart.y_ticks
+    assert q.chart.x_ticks
     assert q.error == ""
 
 

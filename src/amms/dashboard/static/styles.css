@@ -589,20 +589,123 @@ a {
     color: var(--negative);
 }
 
-.index-spark {
+.index-chart {
     width: 100%;
-    height: 50px;
+    height: 90px;
     display: block;
-    color: var(--accent);
 }
 
-.index-spark.positive { color: var(--positive); }
-.index-spark.negative { color: var(--negative); }
+.index-chart .grid-line {
+    stroke: var(--border);
+    stroke-width: 1;
+    stroke-dasharray: 2 4;
+}
+
+.index-chart .axis-bottom {
+    stroke: var(--border);
+    stroke-width: 1;
+}
+
+.index-chart .y-label,
+.index-chart .x-label {
+    fill: var(--text-muted);
+    font-size: 9px;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+}
+
+.index-chart .series-line {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.8;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.index-chart .series-line.positive { stroke: var(--positive); }
+.index-chart .series-line.negative { stroke: var(--negative); }
+
+.index-chart .series-area {
+    fill: var(--accent);
+    opacity: 0.10;
+}
+
+.index-chart .series-area.positive { fill: var(--positive); }
+.index-chart .series-area.negative { fill: var(--negative); }
 
 .index-stale {
     font-size: 11px;
     color: var(--negative);
     opacity: 0.7;
+}
+
+/* Tighter padding for compact index widgets */
+.widget[data-widget-type^="index_"] {
+    padding: 16px 18px;
+    min-height: 0;
+}
+
+.widget[data-widget-type^="index_"] .widget-head {
+    margin-bottom: 8px;
+}
+
+.widget[data-widget-type^="index_"] .index-price {
+    font-size: 20px;
+}
+
+.widget[data-widget-type^="index_"] .index-pct {
+    font-size: 14px;
+}
+
+/* ---------- drag handle ---------- */
+
+.drag-handle {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: grab;
+    opacity: 0;
+    transition: opacity .15s, background-color .15s;
+    color: var(--text-muted);
+}
+
+.widget:hover .drag-handle {
+    opacity: 0.6;
+}
+
+.drag-handle:hover {
+    opacity: 1 !important;
+    background: var(--surface-muted);
+    color: var(--text);
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+.drag-handle svg {
+    width: 12px;
+    height: 12px;
+    fill: currentColor;
+}
+
+.widget.is-dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+}
+
+.widget.is-drag-over-before {
+    box-shadow: -3px 0 0 0 var(--accent), var(--shadow-md);
+}
+
+.widget.is-drag-over-after {
+    box-shadow: 3px 0 0 0 var(--accent), var(--shadow-md);
 }
 
 /* ---------- positions table ---------- */

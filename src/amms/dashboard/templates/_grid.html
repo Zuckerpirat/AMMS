@@ -1,19 +1,11 @@
 {% for widget in layout.widgets %}
-    <article class="widget widget--{{ widget.size }}" data-widget-type="{{ widget.type }}">
+    <article class="widget widget--{{ widget.size }}"
+             data-widget-type="{{ widget.type }}"
+             data-widget-id="{{ widget.id }}">
         <header class="widget-head">
             <h2 class="widget-title">{{ registry[widget.type].title }}</h2>
             {% if edit_mode %}
                 <div class="widget-controls">
-                    <form method="post" action="/layout/move">
-                        <input type="hidden" name="widget_id" value="{{ widget.id }}">
-                        <input type="hidden" name="direction" value="-1">
-                        <button type="submit" title="Nach oben">↑</button>
-                    </form>
-                    <form method="post" action="/layout/move">
-                        <input type="hidden" name="widget_id" value="{{ widget.id }}">
-                        <input type="hidden" name="direction" value="1">
-                        <button type="submit" title="Nach unten">↓</button>
-                    </form>
                     <form method="post" action="/layout/resize">
                         <input type="hidden" name="widget_id" value="{{ widget.id }}">
                         <select name="size" onchange="this.form.submit()" title="Größe">
@@ -31,6 +23,14 @@
         </header>
         <div class="widget-body">
             {% include "widgets/" + widget.type + ".html" %}
+        </div>
+        <div class="drag-handle" data-drag-handle title="Ziehen zum Verschieben">
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+                <circle cx="3" cy="3" r="1.2" />
+                <circle cx="9" cy="3" r="1.2" />
+                <circle cx="3" cy="9" r="1.2" />
+                <circle cx="9" cy="9" r="1.2" />
+            </svg>
         </div>
     </article>
 {% endfor %}

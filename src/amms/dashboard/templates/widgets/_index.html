@@ -16,11 +16,27 @@
             <div class="index-abs">{{ idx.day_change_abs | signed }}</div>
         </div>
     </div>
-    {% if idx.sparkline_points %}
-        <svg class="index-spark {% if idx.day_change_abs >= 0 %}positive{% else %}negative{% endif %}"
-             viewBox="0 0 220 50" preserveAspectRatio="none">
-            <polyline points="{{ idx.sparkline_points }}" fill="none" stroke="currentColor"
-                      stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+    {% if idx.chart.has_data %}
+        {% set ch = idx.chart %}
+        {% set positive = idx.day_change_abs >= 0 %}
+        <svg class="index-chart {% if positive %}positive{% else %}negative{% endif %}"
+             viewBox="0 0 {{ ch.width }} {{ ch.height }}" preserveAspectRatio="none">
+            {% for y, label in ch.y_ticks %}
+                <line class="grid-line" x1="{{ ch.pad_left }}" y1="{{ y }}"
+                      x2="{{ ch.plot_right_x }}" y2="{{ y }}" />
+                <text class="y-label" x="{{ ch.pad_left - 4 }}" y="{{ y + 3 }}"
+                      text-anchor="end">{{ label }}</text>
+            {% endfor %}
+            <path class="series-area {% if positive %}positive{% else %}negative{% endif %}"
+                  d="{{ ch.area }}" />
+            <polyline class="series-line {% if positive %}positive{% else %}negative{% endif %}"
+                      points="{{ ch.polyline }}" />
+            <line class="axis-bottom" x1="{{ ch.pad_left }}" y1="{{ ch.plot_bottom_y }}"
+                  x2="{{ ch.plot_right_x }}" y2="{{ ch.plot_bottom_y }}" />
+            {% for x, label in ch.x_ticks %}
+                <text class="x-label" x="{{ x }}" y="{{ ch.height - 4 }}"
+                      text-anchor="middle">{{ label }}</text>
+            {% endfor %}
         </svg>
     {% endif %}
     {% if idx.is_stale %}<div class="index-stale">veraltete Daten — Verbindung gestört</div>{% endif %}

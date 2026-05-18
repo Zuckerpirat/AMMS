@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -17,6 +17,7 @@ from amms.dashboard.layout import (
     load_layout,
     move_widget,
     remove_widget,
+    reorder_widget,
     resize_widget,
     save_layout,
 )
@@ -108,6 +109,13 @@ def create_app(layout_path: Path, db_path: Path, refresh_ms: int = 1000) -> Fast
         resize_widget(layout, widget_id, size)
         save_layout(layout_path, layout)
         return RedirectResponse("/?edit=1", status_code=303)
+
+    @app.post("/layout/reorder")
+    def layout_reorder(widget_id: str = Form(...), new_index: int = Form(...)):
+        layout = load_layout(layout_path)
+        reorder_widget(layout, widget_id, new_index)
+        save_layout(layout_path, layout)
+        return Response(status_code=204)
 
     @app.post("/layout/reset")
     def layout_reset():
