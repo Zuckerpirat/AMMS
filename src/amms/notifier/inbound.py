@@ -7855,11 +7855,20 @@ def build_command_handlers(
             try:
                 from amms.data.wsb_scanner import WSBScanner
                 from amms.execution.auto_scanner import AutoScanner, DEFAULT_UNIVERSE
+                from amms.execution.broad_scanner import BroadMarketScanner
                 wsb_client = WSBScanner()
+                broad = BroadMarketScanner(
+                    data,
+                    wsb_client=wsb_client,
+                    min_change_pct=3.0,
+                    min_volume_ratio=1.5,
+                    penny_mode=True,
+                )
                 scanner = AutoScanner(
                     data, DEFAULT_UNIVERSE,
                     max_additions=5, min_score=25.0, decay_ticks=6,
                     wsb_client=wsb_client, wsb_min_mentions=50,
+                    broad_scanner=broad,
                 )
             except Exception as exc:
                 logger.debug("Auto-scanner init failed: %s", exc)

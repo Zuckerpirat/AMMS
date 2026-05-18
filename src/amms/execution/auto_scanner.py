@@ -63,6 +63,7 @@ class AutoScanner:
         decay_ticks: int = 6,
         wsb_client=None,
         wsb_min_mentions: int = 50,
+        broad_scanner=None,
     ):
         self.data = data_client
         self.universe = [s.upper() for s in universe]
@@ -71,6 +72,7 @@ class AutoScanner:
         self.decay_ticks = decay_ticks
         self._wsb_client = wsb_client
         self._wsb_min_mentions = wsb_min_mentions
+        self._broad_scanner = broad_scanner  # BroadMarketScanner instance
 
         self._lock = threading.Lock()
         self._last_scan: float = 0.0
@@ -102,28 +104,42 @@ class AutoScanner:
 
         watchlist_set = {s.upper() for s in current_watchlist}
 
-        # Fetch WSB trending data and extend universe with hot symbols
+        # 1. BroadMarketScanner — ganzer Markt (NASDAQ/NYSE + News + WSB)
         wsb_mentions: dict[str, int] = {}
-        if self._wsb_client is not None:
+        if self._broad_scanner is not None:
+            try:
+                movers = self._broad_scanner.scan()
+                for mover in movers:
+                    sym = mover.symbol
+                    if sym not in universe and sym not in watchlist_set:
+                        universe.append(sym)
+                # Build WSB data from broad scanner results
+                for mover in movers:
+                    # Extract WSB mentions from catalysts text
+                    for c in mover.catalysts:
+                        if "WSB" in c:
+                            import re as _re
+                            m = _re.search(r"(\d+)×", c)
+                            if m:
+                                wsb_mentions[mover.symbol] = int(m.group(1))
+                logger.info(
+                    "BroadMarketScanner added %d candidates to universe",
+                    len(movers),
+                )
+            except Exception as exc:
+                logger.warning("BroadMarketScanner failed: %s", exc)
+        elif self._wsb_client is not None:
+            # Fallback: nur WSB wenn kein BroadScanner
             try:
                 trending = self._wsb_client.scan(
                     min_mentions=self._wsb_min_mentions, top_n=30
                 )
                 wsb_mentions = {t.symbol: t.mentions for t in trending}
-                # Auto-add WSB symbols not in universe
                 for sym, mentions in wsb_mentions.items():
                     if mentions >= 100 and sym not in universe:
                         universe.append(sym)
-                logger.info(
-                    "WSB scan: %d trending symbols (top: %s)",
-                    len(wsb_mentions),
-                    ", ".join(
-                        f"{s}={m}" for s, m in
-                        sorted(wsb_mentions.items(), key=lambda x: -x[1])[:5]
-                    ),
-                )
             except Exception as exc:
-                logger.debug("WSB scan failed in auto_scanner: %s", exc)
+                logger.debug("WSB scan failed: %s", exc)
 
         # Scan all universe symbols not already in watchlist
         candidates: list[ScanResult] = []

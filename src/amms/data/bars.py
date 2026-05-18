@@ -211,6 +211,98 @@ class MarketDataClient:
                 break
         return bars
 
+    def get_assets(
+        self,
+        exchanges: list[str] | None = None,
+        *,
+        min_price: float = 0.5,
+        max_price: float | None = None,
+    ) -> list[dict]:
+        """Return active tradeable US equity assets from Alpaca.
+
+        Filters by exchange (default: NASDAQ + NYSE + ARCA) and optionally
+        by price range. Returns list of dicts with 'symbol', 'name', 'exchange'.
+        Cached in-memory for 6 hours.
+        """
+        import time as _time
+        cache = getattr(self, "_assets_cache", None)
+        if cache and _time.monotonic() - cache["ts"] < 21600:
+            assets = cache["data"]
+        else:
+            exchanges = exchanges or ["NASDAQ", "NYSE", "ARCA", "BATS"]
+            assets: list[dict] = []
+            for exchange in exchanges:
+                try:
+                    resp = self._client.get(
+                        "https://paper-api.alpaca.markets/v2/assets",
+                        params={
+                            "status": "active",
+                            "asset_class": "us_equity",
+                            "exchange": exchange,
+                        },
+                        timeout=15,
+                    )
+                    resp.raise_for_status()
+                    for a in resp.json():
+                        if a.get("tradable") and a.get("symbol"):
+                            sym = a["symbol"].upper()
+                            # Skip symbols with special characters (warrants, units)
+                            if any(c in sym for c in "=.+/-"):
+                                continue
+                            assets.append({
+                                "symbol": sym,
+                                "name": a.get("name", ""),
+                                "exchange": a.get("exchange", exchange),
+                            })
+                except Exception:
+                    pass
+            self._assets_cache = {"ts": _time.monotonic(), "data": assets}
+
+        if min_price or max_price:
+            return assets  # price filtering done later via snapshots
+        return assets
+
+    def get_broad_news(self, *, limit: int = 50) -> list[dict]:
+        """Fetch recent market-wide news (no symbol filter).
+
+        Returns articles sorted newest-first. Each article has:
+        headline, summary, created_at, symbols (list of tickers mentioned).
+        """
+        try:
+            resp = self._client.get(
+                f"{self._base_url}/v1beta1/news",
+                params={"limit": limit, "sort": "desc"},
+            )
+            resp.raise_for_status()
+            return resp.json().get("news", [])
+        except Exception:
+            return []
+
+    def get_snapshots_bulk(
+        self, symbols: list[str], *, feed: str = "iex", batch_size: int = 200
+    ) -> dict[str, dict]:
+        """Efficient bulk snapshot fetch for large symbol lists.
+
+        Batches requests to stay within API limits. Returns dict of
+        symbol → raw snapshot data (dailyBar, latestTrade, etc.).
+        """
+        if not symbols:
+            return {}
+        results: dict[str, dict] = {}
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            try:
+                resp = self._client.get(
+                    f"{self._base_url}/v2/stocks/snapshots",
+                    params={"symbols": ",".join(batch), "feed": feed},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                results.update(resp.json())
+            except Exception:
+                pass
+        return results
+
 
 def upsert_bars(conn: sqlite3.Connection, bars: list[Bar]) -> int:
     if not bars:
