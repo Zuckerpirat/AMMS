@@ -1,0 +1,28 @@
+{% set key = widget.type|replace("index_", "") %}
+{% set idx = indices.get(key) %}
+{% if not idx %}
+    <div class="muted">Index nicht verfügbar.</div>
+{% elif idx.error and not idx.history %}
+    <div class="muted">Daten nicht verfügbar: {{ idx.error }}</div>
+{% else %}
+<div class="index-card">
+    <div class="index-head">
+        <div class="index-info">
+            <div class="index-symbol">{{ idx.symbol }} · {{ idx.name }}</div>
+            <div class="index-price">{{ idx.price | currency }}</div>
+        </div>
+        <div class="index-change {% if idx.day_change_abs >= 0 %}positive{% else %}negative{% endif %}">
+            <div class="index-pct">{{ idx.day_change_pct | pct }}</div>
+            <div class="index-abs">{{ idx.day_change_abs | signed }}</div>
+        </div>
+    </div>
+    {% if idx.sparkline_points %}
+        <svg class="index-spark {% if idx.day_change_abs >= 0 %}positive{% else %}negative{% endif %}"
+             viewBox="0 0 220 50" preserveAspectRatio="none">
+            <polyline points="{{ idx.sparkline_points }}" fill="none" stroke="currentColor"
+                      stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        </svg>
+    {% endif %}
+    {% if idx.is_stale %}<div class="index-stale">veraltete Daten — Verbindung gestört</div>{% endif %}
+</div>
+{% endif %}

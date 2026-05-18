@@ -72,7 +72,7 @@ WIDGET_REGISTRY: dict[str, WidgetDef] = {
     "equity_sparkline": WidgetDef(
         type="equity_sparkline",
         title="Equity-Verlauf",
-        description="Kleine Kurve über die letzten 30 Tage.",
+        description="Chart über 30 Tage mit Achsen und Umschalter (Wert / Δ % / Δ $).",
         default_size="lg",
     ),
     "positions_table": WidgetDef(
@@ -80,6 +80,48 @@ WIDGET_REGISTRY: dict[str, WidgetDef] = {
         title="Positionen",
         description="Tabelle aller offenen Positionen mit Symbol, Stück, P/L.",
         default_size="lg",
+    ),
+    "index_sp500": WidgetDef(
+        type="index_sp500",
+        title="S&P 500",
+        description="US-Leitindex (500 größte börsennotierte Unternehmen).",
+        default_size="md",
+    ),
+    "index_nasdaq": WidgetDef(
+        type="index_nasdaq",
+        title="Nasdaq",
+        description="US-Tech-lastiger Composite-Index.",
+        default_size="md",
+    ),
+    "index_dow": WidgetDef(
+        type="index_dow",
+        title="Dow Jones",
+        description="30 große US-Industriewerte.",
+        default_size="md",
+    ),
+    "index_dax": WidgetDef(
+        type="index_dax",
+        title="DAX",
+        description="Deutscher Leitindex (40 größte Unternehmen).",
+        default_size="md",
+    ),
+    "index_ftse": WidgetDef(
+        type="index_ftse",
+        title="FTSE 100",
+        description="UK-Leitindex.",
+        default_size="md",
+    ),
+    "index_nikkei": WidgetDef(
+        type="index_nikkei",
+        title="Nikkei 225",
+        description="Japans Leitindex.",
+        default_size="md",
+    ),
+    "index_vix": WidgetDef(
+        type="index_vix",
+        title="VIX",
+        description="Volatilitätsindex — 'Angstbarometer' des Marktes.",
+        default_size="md",
     ),
 }
 

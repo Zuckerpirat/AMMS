@@ -399,13 +399,210 @@ a {
     color: var(--text-muted);
 }
 
-/* ---------- sparkline ---------- */
+/* ---------- sparkline (legacy / generic) ---------- */
 
 .sparkline {
     width: 100%;
     height: 80px;
     color: var(--accent);
     display: block;
+}
+
+/* ---------- equity chart ---------- */
+
+.equity-chart {
+    --chart-active: equity;
+    position: relative;
+}
+
+.chart-toggle {
+    display: inline-flex;
+    gap: 2px;
+    margin-bottom: 10px;
+    padding: 3px;
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+}
+
+.chart-toggle button {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background-color .15s, color .15s;
+}
+
+.chart-toggle button:hover {
+    color: var(--text);
+}
+
+.chart-toggle button.is-active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+}
+
+.chart-svg {
+    width: 100%;
+    height: auto;
+    display: block;
+    overflow: visible;
+}
+
+.chart-series {
+    display: none;
+}
+
+.equity-chart[data-view="equity"] .chart-series--equity,
+.equity-chart[data-view="pct"] .chart-series--pct,
+.equity-chart[data-view="abs"] .chart-series--abs {
+    display: block;
+}
+
+.chart-svg .grid-line {
+    stroke: var(--border);
+    stroke-width: 1;
+    stroke-dasharray: 2 4;
+}
+
+.chart-svg .axis-bottom {
+    stroke: var(--border);
+    stroke-width: 1;
+}
+
+.chart-svg .y-label,
+.chart-svg .x-label {
+    fill: var(--text-muted);
+    font-size: 11px;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+}
+
+.chart-svg .series-line {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.chart-svg .series-line.positive {
+    stroke: var(--positive);
+}
+
+.chart-svg .series-line.negative {
+    stroke: var(--negative);
+}
+
+.chart-svg .series-area {
+    fill: var(--accent);
+    opacity: 0.10;
+}
+
+.chart-svg .series-area.positive {
+    fill: var(--positive);
+    opacity: 0.10;
+}
+
+.chart-svg .series-area.negative {
+    fill: var(--negative);
+    opacity: 0.10;
+}
+
+.chart-svg .last-label {
+    font-size: 11px;
+    font-weight: 600;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    fill: var(--text);
+}
+
+.chart-svg .last-label.positive {
+    fill: var(--positive);
+}
+
+.chart-svg .last-label.negative {
+    fill: var(--negative);
+}
+
+/* ---------- index card ---------- */
+
+.index-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.index-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.index-info {
+    min-width: 0;
+}
+
+.index-symbol {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+    letter-spacing: 0.02em;
+}
+
+.index-price {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+
+.index-change {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.index-pct {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.index-abs {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.index-change.positive .index-pct {
+    color: var(--positive);
+}
+
+.index-change.negative .index-pct {
+    color: var(--negative);
+}
+
+.index-spark {
+    width: 100%;
+    height: 50px;
+    display: block;
+    color: var(--accent);
+}
+
+.index-spark.positive { color: var(--positive); }
+.index-spark.negative { color: var(--negative); }
+
+.index-stale {
+    font-size: 11px;
+    color: var(--negative);
+    opacity: 0.7;
 }
 
 /* ---------- positions table ---------- */

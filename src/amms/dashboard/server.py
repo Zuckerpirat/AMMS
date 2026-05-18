@@ -9,7 +9,9 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from amms.dashboard.chart import build_equity_chart
 from amms.dashboard.data import get_portfolio
+from amms.dashboard.indices import get_index
 from amms.dashboard.layout import (
     add_widget,
     load_layout,
@@ -25,19 +27,12 @@ TEMPLATES_DIR = PKG_DIR / "templates"
 STATIC_DIR = PKG_DIR / "static"
 
 
-def _sparkline_points(history: list[tuple[str, float]], width: int = 280, height: int = 60) -> str:
-    if len(history) < 2:
-        return ""
-    values = [v for _, v in history]
-    lo, hi = min(values), max(values)
-    span = hi - lo if hi > lo else 1.0
-    n = len(values)
-    pts: list[str] = []
-    for i, v in enumerate(values):
-        x = (i / (n - 1)) * width
-        y = height - ((v - lo) / span) * height
-        pts.append(f"{x:.1f},{y:.1f}")
-    return " ".join(pts)
+def _needed_index_keys(layout) -> set[str]:
+    return {
+        w.type.removeprefix("index_")
+        for w in layout.widgets
+        if w.type.startswith("index_")
+    }
 
 
 def _format_currency(value: float) -> str:
@@ -65,6 +60,7 @@ def create_app(layout_path: Path, db_path: Path, refresh_ms: int = 1000) -> Fast
     def _context(edit: bool) -> dict:
         layout = load_layout(layout_path)
         portfolio = get_portfolio(db_path)
+        indices = {key: get_index(key) for key in _needed_index_keys(layout)}
         return {
             "layout": layout,
             "portfolio": portfolio,
@@ -72,7 +68,8 @@ def create_app(layout_path: Path, db_path: Path, refresh_ms: int = 1000) -> Fast
             "available_widgets": list(WIDGET_REGISTRY.values()),
             "edit_mode": edit,
             "sizes": SIZES,
-            "sparkline": _sparkline_points(portfolio.equity_history),
+            "chart": build_equity_chart(portfolio.equity_history),
+            "indices": indices,
             "refresh_ms": refresh_ms,
         }
 

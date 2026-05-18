@@ -1,8 +1,36 @@
-{% if sparkline %}
-    <svg class="sparkline" viewBox="0 0 280 60" preserveAspectRatio="none" aria-hidden="true">
-        <polyline points="{{ sparkline }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-    </svg>
-    <div class="metric-sub muted">letzte 30 Tage</div>
-{% else %}
+{% if not chart.has_data %}
     <div class="muted">Noch keine Equity-Historie. Lass den Bot laufen, dann füllt sich die Kurve.</div>
+{% else %}
+<div class="equity-chart" data-equity-chart>
+    <div class="chart-toggle" role="group" aria-label="Anzeigeart">
+        <button type="button" data-chart-view="equity">Wert</button>
+        <button type="button" data-chart-view="pct">Δ %</button>
+        <button type="button" data-chart-view="abs">Δ $</button>
+    </div>
+    <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" class="chart-svg" preserveAspectRatio="none">
+        {% for key, series in chart.series.items() %}
+            <g class="chart-series chart-series--{{ key }}">
+                {% for y, label in series.y_ticks %}
+                    <line class="grid-line" x1="{{ chart.pad_left }}" y1="{{ y }}"
+                          x2="{{ chart.plot_right_x }}" y2="{{ y }}" />
+                    <text class="y-label" x="{{ chart.pad_left - 8 }}" y="{{ y + 4 }}"
+                          text-anchor="end">{{ label }}</text>
+                {% endfor %}
+                <path class="series-area {% if series.is_positive %}positive{% else %}negative{% endif %}"
+                      d="{{ series.area }}" />
+                <polyline class="series-line {% if series.is_positive %}positive{% else %}negative{% endif %}"
+                          points="{{ series.polyline }}" />
+                <text class="last-label {% if series.is_positive %}positive{% else %}negative{% endif %}"
+                      x="{{ chart.plot_right_x + 6 }}" y="{{ chart.pad_top + 6 }}">{{ series.last_label }}</text>
+            </g>
+        {% endfor %}
+        <g class="axis-x">
+            <line class="axis-bottom" x1="{{ chart.pad_left }}" y1="{{ chart.plot_bottom_y }}"
+                  x2="{{ chart.plot_right_x }}" y2="{{ chart.plot_bottom_y }}" />
+            {% for x, label in chart.x_ticks %}
+                <text class="x-label" x="{{ x }}" y="{{ chart.height - 8 }}" text-anchor="middle">{{ label }}</text>
+            {% endfor %}
+        </g>
+    </svg>
+</div>
 {% endif %}

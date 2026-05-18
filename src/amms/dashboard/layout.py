@@ -59,21 +59,43 @@ def default_layout() -> Layout:
         widgets=[
             WidgetInstance.new("equity"),
             WidgetInstance.new("day_change"),
-            WidgetInstance.new("cash"),
-            WidgetInstance.new("buying_power"),
+            WidgetInstance.new("index_sp500"),
+            WidgetInstance.new("index_nasdaq"),
+            WidgetInstance.new("index_dax"),
+            WidgetInstance.new("index_vix"),
             WidgetInstance.new("equity_sparkline"),
             WidgetInstance.new("positions_table"),
         ]
     )
 
 
+_OLD_DEFAULT_TYPES = [
+    "equity", "day_change", "cash", "buying_power",
+    "equity_sparkline", "positions_table",
+]
+
+
+def _maybe_migrate(layout: Layout, path: Path) -> Layout:
+    """Replace the previous default layout (cash/buying_power) with the
+    new default that ships international indices. Only triggers when the
+    saved layout is the previous default exactly — never overwrites a
+    customised layout.
+    """
+    if [w.type for w in layout.widgets] == _OLD_DEFAULT_TYPES:
+        migrated = default_layout()
+        save_layout(path, migrated)
+        return migrated
+    return layout
+
+
 def load_layout(path: Path) -> Layout:
     if not path.exists():
         return default_layout()
     try:
-        return Layout.from_json(path.read_text(encoding="utf-8"))
+        layout = Layout.from_json(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return default_layout()
+    return _maybe_migrate(layout, path)
 
 
 def save_layout(path: Path, layout: Layout) -> None:
