@@ -7853,10 +7853,13 @@ def build_command_handlers(
         scanner = None
         if use_scanner and data is not None:
             try:
+                from amms.data.wsb_scanner import WSBScanner
                 from amms.execution.auto_scanner import AutoScanner, DEFAULT_UNIVERSE
+                wsb_client = WSBScanner()
                 scanner = AutoScanner(
                     data, DEFAULT_UNIVERSE,
-                    max_additions=5, min_score=40.0, decay_ticks=6,
+                    max_additions=5, min_score=25.0, decay_ticks=6,
+                    wsb_client=wsb_client, wsb_min_mentions=50,
                 )
             except Exception as exc:
                 logger.debug("Auto-scanner init failed: %s", exc)

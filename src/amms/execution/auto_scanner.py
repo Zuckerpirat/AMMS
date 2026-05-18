@@ -59,14 +59,18 @@ class AutoScanner:
         universe: list[str],
         *,
         max_additions: int = 5,
-        min_score: float = 40.0,
+        min_score: float = 25.0,
         decay_ticks: int = 6,
+        wsb_client=None,
+        wsb_min_mentions: int = 50,
     ):
         self.data = data_client
         self.universe = [s.upper() for s in universe]
         self.max_additions = max_additions
         self.min_score = min_score
         self.decay_ticks = decay_ticks
+        self._wsb_client = wsb_client
+        self._wsb_min_mentions = wsb_min_mentions
 
         self._lock = threading.Lock()
         self._last_scan: float = 0.0
@@ -98,13 +102,36 @@ class AutoScanner:
 
         watchlist_set = {s.upper() for s in current_watchlist}
 
+        # Fetch WSB trending data and extend universe with hot symbols
+        wsb_mentions: dict[str, int] = {}
+        if self._wsb_client is not None:
+            try:
+                trending = self._wsb_client.scan(
+                    min_mentions=self._wsb_min_mentions, top_n=30
+                )
+                wsb_mentions = {t.symbol: t.mentions for t in trending}
+                # Auto-add WSB symbols not in universe
+                for sym, mentions in wsb_mentions.items():
+                    if mentions >= 100 and sym not in universe:
+                        universe.append(sym)
+                logger.info(
+                    "WSB scan: %d trending symbols (top: %s)",
+                    len(wsb_mentions),
+                    ", ".join(
+                        f"{s}={m}" for s, m in
+                        sorted(wsb_mentions.items(), key=lambda x: -x[1])[:5]
+                    ),
+                )
+            except Exception as exc:
+                logger.debug("WSB scan failed in auto_scanner: %s", exc)
+
         # Scan all universe symbols not already in watchlist
         candidates: list[ScanResult] = []
         for sym in universe:
             if sym in watchlist_set:
                 continue
             try:
-                result = self._score_symbol(sym)
+                result = self._score_symbol(sym, wsb_mentions=wsb_mentions)
                 if result is not None and result.score >= self.min_score:
                     candidates.append(result)
             except Exception as exc:
@@ -146,7 +173,9 @@ class AutoScanner:
                 if ticks >= self.decay_ticks
             ]
 
-    def _score_symbol(self, symbol: str) -> ScanResult | None:
+    def _score_symbol(
+        self, symbol: str, wsb_mentions: dict[str, int] | None = None
+    ) -> ScanResult | None:
         """Score a single symbol on momentum, volume, and news signals."""
         try:
             bars = self.data.get_bars(symbol, limit=60)
@@ -227,6 +256,21 @@ class AutoScanner:
                     reasons.append(f"News: {len(recent)} Artikel (24h)")
             except Exception:
                 pass
+
+        # ── Signal 4: WSB Social Momentum ─────────────────────────────
+        mentions = (wsb_mentions or {}).get(symbol, 0)
+        if mentions >= 500:
+            score += 40.0
+            reasons.append(f"WSB Hype: {mentions}× Erwähnungen 🔥🔥")
+        elif mentions >= 200:
+            score += 25.0
+            reasons.append(f"WSB trending: {mentions}× Erwähnungen 🔥")
+        elif mentions >= 100:
+            score += 15.0
+            reasons.append(f"WSB aktiv: {mentions}× Erwähnungen")
+        elif mentions >= 50:
+            score += 8.0
+            reasons.append(f"WSB: {mentions}× Erwähnungen")
 
         if score < self.min_score:
             return None
