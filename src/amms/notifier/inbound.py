@@ -2486,7 +2486,7 @@ def build_command_handlers(
             except Exception as exc:
                 checks.append(("❌", "Broker", f"Alpaca nicht erreichbar: {exc!r}"))
         else:
-            checks.append(("⚠️", "Broker", "LOCAL (Simulation) — für Alpaca Paper Trading: /usebroker alpaca"))
+            checks.append(("⚠️", "Broker", "LOCAL (Simulation) — Paper Trading: /usebroker alpaca  oder  /usebroker ibkr"))
 
         # 9. Scheduler
         if _scheduler_instance and _scheduler_instance[0].is_running():
@@ -7652,12 +7652,12 @@ def build_command_handlers(
 
     # ── Broker Switch / Risk Guard / Scheduler / Live Guard ──────────────
 
-    _broker_choice: list[str] = ["local"]   # "local" or "alpaca"
+    _broker_choice: list[str] = ["local"]   # "local", "alpaca", or "ibkr"
     _risk_guard_instance: list = []
     _scheduler_instance: list = []
 
     def _get_broker():
-        """Return active broker — local paper trader or Alpaca paper broker."""
+        """Return active broker — local paper trader, Alpaca, or IBKR."""
         choice = _broker_choice[0]
         if choice == "alpaca":
             if not hasattr(_get_broker, "_alpaca"):
@@ -7670,6 +7670,15 @@ def build_command_handlers(
                     _broker_choice[0] = "local"
                     raise RuntimeError(f"Alpaca init failed: {exc}")
             return _get_broker._alpaca
+        if choice == "ibkr":
+            if not hasattr(_get_broker, "_ibkr"):
+                try:
+                    from amms.execution.ibkr_broker import IBKRBroker
+                    _get_broker._ibkr = IBKRBroker.from_env()
+                except Exception as exc:
+                    _broker_choice[0] = "local"
+                    raise RuntimeError(f"IBKR init failed: {exc}")
+            return _get_broker._ibkr
         return _get_paper_trader()
 
     def _get_risk_guard():
@@ -7681,14 +7690,14 @@ def build_command_handlers(
     def _usebroker_cmd(args: list[str]) -> str:
         """Switch the active broker.
 
-        Usage: /usebroker [local|alpaca]
+        Usage: /usebroker [local|alpaca|ibkr]
         Without arg: show current.
         """
         if not args:
             return f"Current broker: {_broker_choice[0]}"
         choice = args[0].lower()
-        if choice not in {"local", "alpaca"}:
-            return "Choices: local | alpaca"
+        if choice not in {"local", "alpaca", "ibkr"}:
+            return "Choices: local | alpaca | ibkr"
 
         if choice == "alpaca":
             try:
@@ -7701,11 +7710,31 @@ def build_command_handlers(
             except Exception as exc:
                 return f"Alpaca init failed: {exc}"
 
+        if choice == "ibkr":
+            try:
+                from amms.execution.ibkr_broker import IBKRBroker
+                if hasattr(_get_broker, "_ibkr"):
+                    try:
+                        _get_broker._ibkr.close()
+                    except Exception:
+                        pass
+                    delattr(_get_broker, "_ibkr")
+                _get_broker._ibkr = IBKRBroker.from_env()
+            except Exception as exc:
+                return (
+                    f"IBKR Verbindung fehlgeschlagen: {exc}\n\n"
+                    "Stelle sicher dass IB Gateway läuft:\n"
+                    "  docker compose --profile ibkr up -d\n"
+                    "Und diese Variablen in .env gesetzt sind:\n"
+                    "  IBKR_USERNAME=dein_ibkr_benutzername\n"
+                    "  IBKR_PASSWORD=dein_ibkr_passwort"
+                )
+
         _broker_choice[0] = choice
         # Reset cached auto-trader / risk guard so they pick up the new broker
         _auto_trader_instance.clear()
         _risk_guard_instance.clear()
-        return f"Broker switched to: {choice}"
+        return f"✅ Broker gewechselt zu: {choice}"
 
     def _killswitch_cmd(args: list[str]) -> str:
         """Arm or disarm the killswitch.
@@ -16126,7 +16155,7 @@ def build_command_handlers(
             "/deregime SYM [BARS] — DE performance by market regime (trending/ranging)\n"
             "/setup — show configuration status (API keys, broker, risk guard, scheduler)\n"
             "/preflight — Pre-Flight-Check vor dem Trading-Tag: API, Markt, Makro, Risiko\n"
-            "/usebroker [local|alpaca] — Broker wechseln: local=Simulation, alpaca=echtes Paper Trading\n"
+            "/usebroker [local|alpaca|ibkr] — Broker wechseln: local=Simulation, alpaca=Alpaca Paper, ibkr=Interactive Brokers\n"
             "/meanrev [SYM] — mean reversion score: how stretched is price from mean (0-100)\n"
             "/breadth — portfolio breadth: pct positions above VWAP/RSI50/SMA20/OBV\n"
             "/trendlines [SYM] — auto-detect support/resistance trend lines + pattern\n"

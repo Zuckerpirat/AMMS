@@ -16,5 +16,28 @@ services:
     command: ["run"]
     restart: unless-stopped
 
+  # ── Interactive Brokers Gateway (optional) ──────────────────────────────
+  # Start with: docker compose --profile ibkr up -d
+  # Requires IBKR_USERNAME and IBKR_PASSWORD in .env
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    profiles: [ibkr]
+    container_name: ib-gateway
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TWS_USERID: ${IBKR_USERNAME:-}
+      TWS_PASSWORD: ${IBKR_PASSWORD:-}
+      TRADING_MODE: ${IBKR_TRADING_MODE:-paper}
+      READ_ONLY_API: "no"
+    ports:
+      - "4003:4003"   # paper API port
+      - "4001:4001"   # live API port (unused until live trading enabled)
+    volumes:
+      - ib-gateway-data:/home/ibgateway/Jts
+    restart: unless-stopped
+
 volumes:
   amms-data:
+  ib-gateway-data:
