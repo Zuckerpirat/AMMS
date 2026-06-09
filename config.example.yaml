@@ -1,40 +1,36 @@
-# AMMS — Paper Trading Configuration
-# Angepasst für Paper Trading. Alle Einstellungen konservativ gewählt.
-# Ändere die Watchlist nach deinen Präferenzen.
+# AMMS — Autonomous Trading Configuration
 
 # ── Watchlist ──────────────────────────────────────────────────────────────
-# Symbole die der Bot beobachtet und traden darf.
-# Der Auto-Scanner kann zusätzlich Symbole aus dem DEFAULT_UNIVERSE hinzufügen.
+# Startsymbole. Der Bot erweitert diese Liste automatisch durch den
+# Markt-Scanner (NASDAQ/NYSE, News, WSB). Nichts manuell hinzufügen nötig.
 watchlist:
   - AAPL
   - MSFT
   - NVDA
   - AMZN
-  - GOOGL
   - META
   - TSLA
   - AMD
-  - JPM
-  - V
+  - MU
 
 # ── Strategie ──────────────────────────────────────────────────────────────
 strategy:
-  name: decision_engine        # Nutzt den zentralen Decision Engine (empfohlen)
-  timeframe: 1Day              # Tages-Bars (stabiler als Intraday)
+  name: decision_engine
+  timeframe: 1Day
   params:
-    min_score: 35              # Mindest-Score für Kauf-Signal (-100..+100)
-    min_confidence: 0.60       # Mindest-Konfidenz (0..1)
-    mode: swing                # Trading-Modus: conservative / swing / meme / event
+    min_score: 20              # Niedrig = aktiver (war 35). Score 0–100.
+    min_confidence: 0.45       # 45% Indikator-Einigkeit reicht (war 0.60)
+    mode: meme                 # Meme-Modus: Momentum + Volumen stark gewichtet
 
 # ── Risiko-Management ──────────────────────────────────────────────────────
 risk:
-  max_open_positions: 8        # Maximal 8 gleichzeitige Positionen
-  max_position_pct: 0.10       # Max 10% des Portfolios pro Symbol
-  daily_loss_pct: -0.03        # Stop-All bei -3% Tagesverlust
-  max_buys_per_tick: 2         # Max 2 Käufe pro Tick (verhindert Overtrading)
+  max_open_positions: 10       # Bis zu 10 gleichzeitige Positionen
+  max_position_pct: 0.08       # Max 8% pro Symbol
+  daily_loss_pct: -0.05        # Stop-All bei -5% Tagesverlust
+  max_buys_per_tick: 3         # Max 3 Käufe pro 5-Minuten-Tick
 
 # ── Scheduler ──────────────────────────────────────────────────────────────
 scheduler:
-  tick_seconds: 300            # Alle 5 Minuten einen Tick
+  tick_seconds: 300            # Alle 5 Minuten
   timezone: America/New_York
-  tick_notify: orders_only     # Telegram nur bei echten Orders (kein Spam)
+  tick_notify: orders_only     # Telegram nur bei echten Orders
