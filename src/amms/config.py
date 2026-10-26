@@ -36,11 +36,15 @@ def _require(name: str) -> str:
     return value
 
 
-def load_settings(env_file: Path | None = None) -> Settings:
+def load_settings(env_file: Path | None = None, *, require_broker: bool = True) -> Settings:
     """Load settings from environment variables (and an optional .env file).
 
-    Refuses to return unless ALPACA_BASE_URL points at the paper endpoint.
-    This is the single hard guarantee that the bot can never hit live trading.
+    Refuses to return unless ALPACA_BASE_URL points at the paper endpoint —
+    the single hard guarantee that the bot can never hit live trading.
+
+    ``require_broker=False`` returns empty Alpaca fields instead of raising
+    when the keys are missing. Used by the standalone simulator, which
+    pulls prices from Yahoo Finance and executes trades locally.
     """
     if env_file is not None:
         if not env_file.exists():
@@ -49,16 +53,26 @@ def load_settings(env_file: Path | None = None) -> Settings:
     else:
         load_dotenv(override=False)
 
-    base_url = _require("ALPACA_BASE_URL")
-    if PAPER_HOST_MARKER not in base_url:
+    base_url = os.environ.get("ALPACA_BASE_URL", "").strip()
+    if base_url and PAPER_HOST_MARKER not in base_url:
         raise ConfigError(
             "Refusing to start: ALPACA_BASE_URL must point at the paper endpoint "
             f"(contain {PAPER_HOST_MARKER!r}). Got: {base_url!r}"
         )
+    if require_broker and not base_url:
+        raise ConfigError("Missing required environment variable: ALPACA_BASE_URL")
+
+    api_key = os.environ.get("ALPACA_API_KEY", "")
+    api_secret = os.environ.get("ALPACA_API_SECRET", "")
+    if require_broker:
+        if not api_key:
+            raise ConfigError("Missing required environment variable: ALPACA_API_KEY")
+        if not api_secret:
+            raise ConfigError("Missing required environment variable: ALPACA_API_SECRET")
 
     return Settings(
-        alpaca_api_key=_require("ALPACA_API_KEY"),
-        alpaca_api_secret=_require("ALPACA_API_SECRET"),
+        alpaca_api_key=api_key,
+        alpaca_api_secret=api_secret,
         alpaca_base_url=base_url.rstrip("/"),
         alpaca_data_url=os.environ.get(
             "ALPACA_DATA_URL", "https://data.alpaca.markets"

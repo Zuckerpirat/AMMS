@@ -34,9 +34,9 @@ app = typer.Typer(
 console = Console()
 
 
-def _settings_or_die() -> object:
+def _settings_or_die(*, require_broker: bool = True) -> object:
     try:
-        return load_settings()
+        return load_settings(require_broker=require_broker)
     except ConfigError as e:
         console.print(f"[red]Configuration error:[/red] {e}")
         raise typer.Exit(code=2) from e
@@ -82,6 +82,31 @@ def run(
         f"amms {__version__} starting ({'live (paper)' if execute else 'dry-run'})"
     )
     run_loop(settings, config, execute=execute, bars_back=bars_back)
+
+
+@app.command()
+def simulate(
+    tick_seconds: int = typer.Option(
+        300,
+        "--tick-seconds",
+        help="How often to re-evaluate the watchlist (seconds).",
+    ),
+) -> None:
+    """Run the standalone simulator — no Alpaca account needed.
+
+    Virtual $100k portfolio, Yahoo Finance for prices, local state file.
+    Decides buys/sells with the Decision Engine; posts Telegram alerts
+    on each trade if TELEGRAM_BOT_TOKEN/CHAT_ID are set.
+    """
+    from amms.simulate import run_simulation
+
+    settings = _settings_or_die(require_broker=False)
+    config = _app_config_or_die()
+    _configure_logging(settings.log_level)
+    console.print(
+        f"amms {__version__} simulate — $100k virtual, tick every {tick_seconds}s"
+    )
+    run_simulation(settings, config, tick_seconds=tick_seconds)
 
 
 @app.command(name="init-db")

@@ -13,7 +13,7 @@ services:
       - ./config.yaml:/app/config.yaml:ro
     environment:
       AMMS_CONFIG_PATH: /app/config.yaml
-    command: ["run", "--execute"]
+    command: ["simulate"]
     restart: unless-stopped
 
 volumes:
