@@ -13,6 +13,10 @@ services:
       - ./config.yaml:/app/config.yaml:ro
     environment:
       AMMS_CONFIG_PATH: /app/config.yaml
+      AMMS_PAPER_STATE: /data/paper_portfolio.json
+      AMMS_AUTOTRADER_STATE: /data/auto_trader_state.json
+      AMMS_SIM_JOURNAL: /data/sim_journal.log
+      AMMS_DB_PATH: /data/amms.sqlite
     command: ["simulate"]
     restart: unless-stopped
 
