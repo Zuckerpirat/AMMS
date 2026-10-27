@@ -107,11 +107,10 @@ def maybe_refresh(
     if elapsed_hours < config.refresh_hours:
         return no_change
 
-    if not os.environ.get("REDDIT_CLIENT_ID", "").strip():
-        logger.info("wsb-discovery skipped: REDDIT_CLIENT_ID not set")
-        state.last_refresh_ts = now_seconds  # don't hammer log every tick
-        return no_change
-
+    # No REDDIT_CLIENT_ID → WSBScanner falls back to ApeWisdom (no API key
+    # needed). We used to abort here; that silently crippled discovery for
+    # anyone without Reddit credentials. Now we let it run and only skip
+    # if there's really no data source.
     state.last_refresh_ts = now_seconds
 
     owns_scanner = scanner is None
